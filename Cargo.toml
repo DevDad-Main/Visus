@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/visus-core", "crates/visus-app", "crates/visus-platform-windows"]
+members = ["crates/visus-core", "crates/visus-app", "crates/visus-platform"]
 
 [profile.release]
 lto = true

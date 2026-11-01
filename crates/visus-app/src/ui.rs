@@ -504,9 +504,9 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> bool {
     for (b, r) in buttons(notch) {
         if r.contains(x, y) {
             match b {
-                Button::Prev => visus_platform_windows::media_command(MediaCommand::Previous),
-                Button::PlayPause => visus_platform_windows::media_command(MediaCommand::PlayPause),
-                Button::Next => visus_platform_windows::media_command(MediaCommand::Next),
+                Button::Prev => visus_platform::media_command(MediaCommand::Previous),
+                Button::PlayPause => visus_platform::media_command(MediaCommand::PlayPause),
+                Button::Next => visus_platform::media_command(MediaCommand::Next),
                 Button::TimerToggle => notch.toggle_timer(),
                 Button::TimerReset => notch.reset_timer(),
             }

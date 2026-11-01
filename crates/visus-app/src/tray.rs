@@ -65,7 +65,7 @@ pub fn create(proxy: EventLoopProxy<UserEvent>, s: &Settings) -> Option<Tray> {
     check("Idle eye", s.mascot, Change::ToggleMascot)?;
     check("Hide in full screen", s.hide_in_fullscreen, Change::ToggleHideFullscreen)?;
 
-    let autostart = CheckMenuItem::new("Start with Windows", true, visus_platform_windows::autostart_enabled(), None);
+    let autostart = CheckMenuItem::new("Start with Windows", true, visus_platform::autostart_enabled(), None);
     menu.append(&autostart).ok()?;
     actions.push((autostart.id().clone(), Action::Autostart));
     menu.append(&PredefinedMenuItem::separator()).ok()?;

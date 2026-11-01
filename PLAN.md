@@ -56,7 +56,7 @@ Cargo workspace in `crates/`:
 |---|---|---|
 | `visus-core` | done (skeleton) | Platform-independent state: `Notch` (modes Closed/Peek/Open, hover, page switching, alert peeks), `Spring` animation. No OS or rendering code. Unit tested. |
 | `visus-app` | done (skeleton) | winit window (borderless, transparent, always-on-top, top-center), tiny-skia drawing, softbuffer present, input handling. |
-| `visus-platform-windows` | not started | SMTC media sessions, power/network/Bluetooth events, keyboard hook for HUD keys, click-through outside the pill (`WS_EX_TRANSPARENT`/hit-test), fullscreen detection, tray icon, drag & drop. |
+| `visus-platform` | not started | SMTC media sessions, power/network/Bluetooth events, keyboard hook for HUD keys, click-through outside the pill (`WS_EX_TRANSPARENT`/hit-test), fullscreen detection, tray icon, drag & drop. |
 | `visus-pages` | not started | One module per feature page. |
 | `visus-plugins` | not started | WASM plugin host. |
 

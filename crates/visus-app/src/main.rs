@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use softbuffer::{Context, Surface};
 use tiny_skia::Pixmap;
 use visus_core::{Alert, Event, Notch};
-use visus_platform_windows as platform;
+use visus_platform as platform;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -320,6 +320,15 @@ fn snapshot(page: &str, out: &str) {
     notch.hover(true);
     for _ in 0..200 {
         notch.tick(Duration::from_millis(16));
+    }
+    // Let the OS event sources report once so the snapshot shows real media/battery state.
+    let (tx, rx) = std::sync::mpsc::channel();
+    platform::start(Arc::new(move |ev| {
+        let _ = tx.send(ev);
+    }));
+    std::thread::sleep(Duration::from_millis(1500));
+    while let Ok(ev) = rx.try_recv() {
+        notch.handle(ev);
     }
     let idx = ["music", "timer", "stats", "shelf", "todo"].iter().position(|p| *p == page).unwrap_or(0);
     notch.next_page(idx as i32);
