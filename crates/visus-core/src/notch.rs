@@ -106,6 +106,9 @@ enum Mode {
 const MINIMAL: (f32, f32) = (190.0, 6.0);
 /// Extra closed-pill width while the music visualizer is shown.
 const VISUALIZER_EXTRA: f32 = 76.0;
+/// Layout of the in-game HUD: side padding and width of each reading.
+pub const GAME_PAD: f32 = 12.0;
+pub const GAME_ITEM_W: f32 = 124.0;
 /// The idle pill drops the empty visualizer slot and tightens around battery and clock.
 const IDLE_TRIM: f32 = 16.0;
 const MOOD_PERIOD: f32 = 16.0;
@@ -143,6 +146,9 @@ pub struct Notch {
     on_ac: Option<bool>,
     battery: Option<(bool, u8)>,
     hidden: bool,
+    fullscreen: bool,
+    game: bool,
+    game_stats: crate::GameStats,
     timer: Timer,
     settings: Settings,
     stats: Stats,
@@ -222,6 +228,9 @@ impl Notch {
             on_ac: None,
             battery: None,
             hidden: false,
+            fullscreen: false,
+            game: false,
+            game_stats: crate::GameStats::default(),
             timer: Timer::new(FOCUS),
             settings: Settings::default(),
             stats: Stats::default(),
@@ -346,7 +355,22 @@ impl Notch {
                 }
             }
             Event::Hud(Hud::Volume { level, muted }) => self.alert(Alert::Volume { level, muted }),
-            Event::Fullscreen(f) => self.hidden = f && self.settings.hide_in_fullscreen,
+            Event::Fullscreen(f) => {
+                self.fullscreen = f;
+                self.refresh_hidden();
+            }
+            Event::Game(g) => {
+                self.game = g;
+                self.refresh_hidden();
+                if self.game_active() {
+                    self.mode = Mode::Closed;
+                }
+                self.retarget();
+            }
+            Event::GameStats(s) => {
+                self.game_stats = s;
+                self.retarget();
+            }
             Event::Apps(apps) => self.palette.set_apps(apps),
             Event::Windows(w) => {
                 self.windows = (*w).clone();
@@ -380,8 +404,39 @@ impl Notch {
         }
     }
 
+    /// The pill shows live game stats instead of hiding while a game is in the foreground.
+    pub fn game_active(&self) -> bool {
+        self.game && self.settings.game_hud && !self.settings.minimal
+    }
+
+    fn refresh_hidden(&mut self) {
+        self.hidden = self.fullscreen && self.settings.hide_in_fullscreen && !self.game_active();
+    }
+
+    pub fn game_stats(&self) -> crate::GameStats {
+        self.game_stats
+    }
+
+    /// HUD readings the machine provides, in display order.
+    pub fn game_items(&self) -> Vec<crate::GameItem> {
+        use crate::GameItem::*;
+        let g = &self.game_stats;
+        let mut v = vec![Cpu];
+        if g.cpu_temp.is_some() {
+            v.push(CpuTemp);
+        }
+        if g.gpu.is_some() {
+            v.push(Gpu);
+        }
+        if g.gpu_temp.is_some() {
+            v.push(GpuTemp);
+        }
+        v.push(Ram);
+        v
+    }
+
     pub fn alert(&mut self, a: Alert) {
-        if self.hidden || self.mode == Mode::Open || self.palette_open || self.settings_open {
+        if self.game_active() || self.hidden || self.mode == Mode::Open || self.palette_open || self.settings_open {
             return;
         }
         if self.settings.quiet && !matches!(a, Alert::TimerDone | Alert::TodoDue) {
@@ -629,7 +684,7 @@ impl Notch {
             None
         };
         // Flip cards animate for the first half second of each minute; LED colons and analog hands tick.
-        let clock = if self.hidden || self.settings.minimal {
+        let clock = if self.hidden || self.game_active() || self.settings.minimal {
             None
         } else {
             match self.settings.clock_style {
@@ -657,7 +712,7 @@ impl Notch {
 
     /// The closed pill shows an equalizer (and widens) only while music plays.
     pub fn visualizer_active(&self) -> bool {
-        !self.hidden && !self.settings.minimal && self.settings.visualizer && self.media.has_session && self.media.playing
+        !self.hidden && !self.game_active() && !self.settings.minimal && self.settings.visualizer && self.media.has_session && self.media.playing
     }
 
     /// True while the closed pill shows the visualizer, i.e. the host should sample audio.
@@ -885,9 +940,7 @@ impl Notch {
         if !self.timer.is_running() && self.timer.total() != total {
             self.timer.set_total(total);
         }
-        if self.hidden && !self.settings.hide_in_fullscreen {
-            self.hidden = false;
-        }
+        self.refresh_hidden();
         self.dirty = true;
         self.retarget();
     }
@@ -1341,7 +1394,7 @@ impl Notch {
     }
 
     pub fn eye_state(&self) -> EyeState {
-        if !self.settings.mascot || self.hidden || self.palette_open || self.settings_open || self.mode != Mode::Closed || self.settings.minimal {
+        if !self.settings.mascot || self.game_active() || self.hidden || self.palette_open || self.settings_open || self.mode != Mode::Closed || self.settings.minimal {
             return EyeState::Hidden;
         }
         let idle = self.idle_for();
@@ -1492,7 +1545,7 @@ impl Notch {
 
     /// When the eye next needs a redraw (blink, glance, cursor follow or state change).
     fn eye_wake(&self) -> Option<Duration> {
-        if !self.settings.mascot || self.hidden || self.palette_open || self.settings_open || self.mode != Mode::Closed || self.settings.minimal {
+        if !self.settings.mascot || self.game_active() || self.hidden || self.palette_open || self.settings_open || self.mode != Mode::Closed || self.settings.minimal {
             return None;
         }
         let idle = self.idle_for();
@@ -1539,7 +1592,7 @@ impl Notch {
     }
 
     pub fn hover(&mut self, inside: bool) {
-        if self.hidden || self.palette_open || self.settings_open || self.todo_input.is_some() || self.location_input.is_some() || self.folder_input.is_some() {
+        if self.game_active() || self.hidden || self.palette_open || self.settings_open || self.todo_input.is_some() || self.location_input.is_some() || self.folder_input.is_some() {
             return;
         }
         if inside {
@@ -1647,6 +1700,7 @@ impl Notch {
 
     fn retarget(&mut self) {
         let ((w, h), r) = match self.mode {
+            Mode::Closed if self.game_active() => ((GAME_PAD * 2.0 + GAME_ITEM_W * self.game_items().len() as f32, self.settings.closed_height), self.settings.closed_height * 0.5),
             Mode::Closed if self.settings.minimal => (MINIMAL, 3.0),
             Mode::Closed => {
                 // While the idle eye shows, the pill tightens around it; hovering grows it again.
@@ -1748,6 +1802,21 @@ mod tests {
         assert!(n.alert_kind().is_none());
         n.handle(Event::Power { on_ac: true, percent: 70 });
         assert_eq!(n.alert_kind(), Some(Alert::Charging { percent: 70 }));
+    }
+
+    #[test]
+    fn game_shows_hud_instead_of_hiding() {
+        let mut n = Notch::new(800.0);
+        n.handle(Event::Fullscreen(true));
+        n.handle(Event::Game(true));
+        assert!(n.game_active() && !n.is_hidden());
+        n.handle(Event::GameStats(crate::GameStats { cpu: 0.5, gpu: Some(0.7), gpu_temp: Some(60.0), ..Default::default() }));
+        assert_eq!(n.game_items().len(), 4);
+        n.update_settings(|s| s.game_hud = false);
+        assert!(n.is_hidden());
+        n.handle(Event::Game(false));
+        n.handle(Event::Fullscreen(false));
+        assert!(!n.is_hidden() && !n.game_active());
     }
 
     #[test]

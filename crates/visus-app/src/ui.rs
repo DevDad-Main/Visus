@@ -3,7 +3,7 @@ use tiny_skia::{
     SpreadMode, FilterQuality, Pattern,
     Stroke, Transform, LineCap,
 };
-use visus_core::{Alert, AppKind, ClockStyle, Radio, EyeMood, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, WIN_GRID, current_index, weather_label};
+use visus_core::{Alert, AppKind, ClockStyle, Radio, EyeMood, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, GAME_ITEM_W, GameItem, WIN_GRID, current_index, weather_label};
 
 use crate::text::{Align, Text};
 
@@ -75,6 +75,7 @@ pub enum Toggle {
     Clipboard,
     EyeMoods,
     ClockStyle,
+    GameHud,
 }
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -798,7 +799,9 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     let open_a = ((r.h - 150.0) / 70.0).clamp(0.0, 1.0);
 
     if closed_a > 0.0 {
-        if notch.eye_state() == EyeState::Hidden {
+        if notch.game_active() {
+            draw_game(&mut cx, notch, closed_a);
+        } else if notch.eye_state() == EyeState::Hidden {
             draw_closed(&mut cx, notch, closed_a);
         } else {
             draw_eye(&mut cx, notch, closed_a);
@@ -1319,6 +1322,41 @@ fn anim_secs() -> f32 {
 
 fn clock_fmt(notch: &Notch) -> &'static str {
     if notch.settings().clock_24h { "%H:%M" } else { "%-I:%M %p" }
+}
+
+/// Load or temperature colour: green when comfortable, amber when busy, red when hot.
+fn heat(frac: f32) -> [u8; 3] {
+    if frac < 0.6 {
+        GREEN
+    } else if frac < 0.85 {
+        [255, 204, 64]
+    } else {
+        [255, 69, 58]
+    }
+}
+
+/// In-game HUD: one capsule per reading, each with a label, a coloured ring and the value.
+fn draw_game(cx: &mut Ctx, notch: &Notch, a: f32) {
+    let r = notch.shape().rect;
+    let g = notch.game_stats();
+    let items = notch.game_items();
+    let mid = r.y + r.h / 2.0;
+    let x0 = r.x + (r.w - items.len() as f32 * GAME_ITEM_W) / 2.0;
+    for (i, it) in items.iter().enumerate() {
+        let (label, frac, text) = match it {
+            GameItem::Cpu => ("CPU", g.cpu, format!("{:.0}%", g.cpu * 100.0)),
+            GameItem::CpuTemp => ("CPU", g.cpu_temp.unwrap_or(0.0) / 100.0, format!("{:.0}\u{b0}C", g.cpu_temp.unwrap_or(0.0))),
+            GameItem::Gpu => ("GPU", g.gpu.unwrap_or(0.0), format!("{:.0}%", g.gpu.unwrap_or(0.0) * 100.0)),
+            GameItem::GpuTemp => ("GPU", g.gpu_temp.unwrap_or(0.0) / 100.0, format!("{:.0}\u{b0}C", g.gpu_temp.unwrap_or(0.0))),
+            GameItem::Ram => ("RAM", g.ram, format!("{:.1}GB", g.ram_used_gb)),
+        };
+        let ix = x0 + i as f32 * GAME_ITEM_W;
+        cx.rrect(rect(ix + 3.0, mid - 12.0, GAME_ITEM_W - 6.0, 24.0), 12.0, color(WHITE, 0.07 * a));
+        let lw = cx.text_width(label, 10.0);
+        cx.t(label, ix + 14.0, mid + 3.5, 10.0, color(GRAY, a), Align::Left);
+        cx.ring(ix + 14.0 + lw + 14.0, mid, 6.5, 2.4, frac.clamp(0.0, 1.0), heat(frac), a);
+        cx.t(&text, ix + GAME_ITEM_W - 12.0, mid + 5.0, 14.0, color(WHITE, a), Align::Right);
+    }
 }
 
 fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
@@ -1864,6 +1902,7 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                 Toggle::Clipboard => notch.update_settings(|s| s.clipboard_history = !s.clipboard_history),
                 Toggle::EyeMoods => notch.update_settings(|s| s.eye_moods = !s.eye_moods),
                 Toggle::ClockStyle => notch.update_settings(|s| s.clock_style = s.clock_style.next()),
+                Toggle::GameHud => notch.update_settings(|s| s.game_hud = !s.game_hud),
                 Toggle::Autostart => {
                     let _ = visus_platform::set_autostart(!visus_platform::autostart_enabled());
                 }
@@ -2628,7 +2667,7 @@ fn settings_buttons_raw(x0: f32) -> Vec<(Button, Rect)> {
     v
 }
 
-const CHIPS: [(Toggle, &str); 7] = [
+const CHIPS: [(Toggle, &str); 8] = [
     (Toggle::Quiet, "Quiet"),
     (Toggle::Clock24, "24h clock"),
     (Toggle::Visualizer, "Visualizer"),
@@ -2636,6 +2675,7 @@ const CHIPS: [(Toggle, &str); 7] = [
     (Toggle::Clipboard, "Clipboard"),
     (Toggle::EyeMoods, "Eye moods"),
     (Toggle::ClockStyle, "Clock"),
+    (Toggle::GameHud, "Game HUD"),
 ];
 
 fn chip_rect(x0: f32, i: usize) -> Rect {
@@ -2832,6 +2872,7 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
             Toggle::Clipboard => s.clipboard_history,
             Toggle::EyeMoods => s.eye_moods,
             Toggle::ClockStyle => false,
+            Toggle::GameHud => s.game_hud,
             _ => s.show_battery,
         };
         let rc = chip_rect(x0, i);

@@ -16,6 +16,7 @@
   <a class="brand" href="#top"><img src="assets/icon.png" alt="" width="26" height="26"><span>Visus</span></a>
   <nav>
     <a href="#pill">The pill</a>
+    <a href="#game">Game mode</a>
     <a href="#tour">Tour</a>
     <a href="#features">Features</a>
     <a href="#looks">Looks</a>
@@ -26,14 +27,13 @@
 <main id="top">
   <section class="hero">
     <div class="glow" aria-hidden="true"></div>
-    <div class="stage" aria-hidden="true">
-      <div class="notch" id="notch">
-        <div class="slot l"><svg viewBox="0 0 24 24" class="ring"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="8.5" class="fill"/></svg></div>
-        <div class="slot c"><span class="clock" id="clock">12:00</span></div>
-        <div class="slot r"><span class="viz"><i></i><i></i><i></i><i></i><i></i></span></div>
-        <div class="eye"><span></span></div>
-      </div>
+    <div class="stage">
+      <img class="p on" data-cap="Idle: battery and time" src="assets/shots/pill_idle.webp" alt="Visus idle pill showing battery and clock" style="--w:297px" width="297" height="58">
+      <img class="p" data-cap="Playing music: a live visualiser appears" src="assets/shots/pill_music.webp" alt="Visus pill while music plays" style="--w:445px" width="445" height="58">
+      <img class="p" data-cap="Downloading: speed readout slides in" src="assets/shots/pill_download.webp" alt="Visus pill during a download" style="--w:458px" width="458" height="58">
+      <img class="p" data-cap="In a game: live CPU, GPU and RAM" src="assets/shots/pill_game.webp" alt="Visus pill as a game HUD" style="--w:1078px" width="1078" height="58">
     </div>
+    <p class="stagecap" id="stagecap">Idle: battery and time</p>
     <p class="eyebrow">Windows &amp; Linux · free · native</p>
     <h1>Your desktop<br>has a <em>pulse</em>.</h1>
     <p class="lede">Visus lives at the top of your screen as a small, quiet pill. Hover, and it opens into music, timers, notes, your clipboard and more. Look away, and it falls asleep.</p>
@@ -51,11 +51,26 @@
         <h2>It only grows<br>when there is something to show.</h2>
         <p>Idle, Visus is just your battery and the time. Play a song and the pill widens to make room for a live visualiser. Start a download and a speed readout slides in. Plug in the charger and it greets you with a face.</p>
       </div>
-      <div class="states" aria-hidden="true">
-        <div class="mini"><span class="mb"></span><b>12:41</b></div>
-        <div class="mini wide"><span class="mb"></span><b>12:41</b><span class="viz"><i></i><i></i><i></i><i></i><i></i></span></div>
-        <div class="mini wide dl"><span class="mb"></span><b>12:41</b><span class="rate">&darr; 4.2 MB/s</span></div>
+      <div class="states">
+        <figure><img src="assets/shots/pill_idle.webp" alt="Idle pill" style="width:186px" loading="lazy"><figcaption>Idle</figcaption></figure>
+        <figure><img src="assets/shots/pill_music.webp" alt="Pill with visualiser" style="width:278px" loading="lazy"><figcaption>Music</figcaption></figure>
+        <figure><img src="assets/shots/pill_download.webp" alt="Pill with download speed" style="width:286px" loading="lazy"><figcaption>Download</figcaption></figure>
+        <figure><img src="assets/shots/pill_alert.webp" alt="Charging alert" style="width:372px;max-width:100%" loading="lazy"><figcaption>Alert</figcaption></figure>
       </div>
+    </div>
+  </section>
+
+
+  <section class="gamesec" id="game">
+    <div class="wrap center">
+      <p class="eyebrow">Game mode</p>
+      <h2>When the game starts,<br>the pill becomes a HUD.</h2>
+      <p class="sub">Visus notices when a game takes the screen and turns into a quiet row of live readings: CPU and GPU load, temperatures, memory. No overlay to set up. When you quit, it goes back to being a clock.</p>
+      <div class="scene">
+        <div class="scene-bg" aria-hidden="true"></div>
+        <img src="assets/shots/pill_game.webp" alt="Visus game HUD showing CPU, GPU, temperature and RAM" width="674" height="36" loading="lazy">
+      </div>
+      <p class="fine">Shows the readings your machine exposes: GPU stats need an NVIDIA card (AMD on Linux), CPU temperature is available on Linux.</p>
     </div>
   </section>
 

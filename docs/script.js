@@ -9,15 +9,17 @@
     return "other";
   })();
 
-  // Live clock in the hero pill.
-  const pad = (n) => String(n).padStart(2, "0");
-  const tick = () => {
-    const d = new Date();
-    const el = document.getElementById("clock");
-    if (el) el.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
-  tick();
-  setInterval(tick, 1000);
+  // Hero pill cycles through its real states.
+  const pills = [...document.querySelectorAll(".stage .p")];
+  const cap = document.getElementById("stagecap");
+  let cur = 0;
+  setInterval(() => {
+    if (!pills.length) return;
+    pills[cur].classList.remove("on");
+    cur = (cur + 1) % pills.length;
+    pills[cur].classList.add("on");
+    if (cap) cap.textContent = pills[cur].dataset.cap;
+  }, 3400);
 
   // Page tour tabs.
   const img = document.getElementById("show-img");
@@ -38,7 +40,7 @@
   document.querySelector(".tabs")?.addEventListener("click", () => clearInterval(auto));
 
   // Scroll reveal.
-  const targets = document.querySelectorAll(".split > *, .frame, .grid article, .looks figure, .download .wrap > *, .features .wrap > p, .features h2");
+  const targets = document.querySelectorAll(".split > *, .states figure, .scene, .frame, .grid article, .looks figure, .download .wrap > *, .features .wrap > p, .features h2");
   targets.forEach((el, i) => {
     el.classList.add("rv");
     el.style.transitionDelay = `${(i % 3) * 90}ms`;

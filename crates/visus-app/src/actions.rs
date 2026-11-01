@@ -28,6 +28,9 @@ pub fn pump(notch: &mut visus_core::Notch, emit: Option<&Emit>) {
         });
     }
     request_icons(notch, emit);
+    if let Some(e) = emit {
+        crate::game::set_active(notch.game_active(), e);
+    }
     notch.set_hour(chrono::Timelike::hour(&chrono::Local::now()) as u8);
     if let (true, Some(e)) = (notch.take_window_request() || notch.wants_windows(), emit) {
         let e = e.clone();

@@ -44,6 +44,9 @@ pub enum Event {
     Media(MediaInfo),
     Hud(Hud),
     Fullscreen(bool),
+    /// A game took the foreground (true) or ended (false).
+    Game(bool),
+    GameStats(crate::GameStats),
     /// Installed applications the launcher can start.
     Apps(Arc<Vec<App>>),
     /// Global hotkey pressed.

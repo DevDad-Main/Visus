@@ -5,6 +5,8 @@ use std::sync::Arc;
 use visus_core::Event;
 
 mod art;
+mod game;
+pub use game::is_game_path;
 pub use art::decode as decode_art;
 mod clipboard;
 mod pad;

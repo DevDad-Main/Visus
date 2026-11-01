@@ -100,6 +100,7 @@ pub struct Settings {
     /// Command that opens a folder, with `{path}` where the folder goes (e.g. `thunar {path}`); None = the system default.
     pub file_manager: Option<String>,
     pub hide_in_fullscreen: bool,
+    pub game_hud: bool,
     /// Show the idle eye when nothing has happened for a while.
     pub mascot: bool,
     pub idle_secs: u32,
@@ -151,6 +152,7 @@ impl Default for Settings {
             calendar_url: None,
             file_manager: None,
             hide_in_fullscreen: true,
+            game_hud: true,
             mascot: true,
             idle_secs: 45,
             scale: 1.0,

@@ -6,6 +6,7 @@ mod calendar;
 mod downloads;
 mod events;
 mod lyrics;
+mod game;
 mod stats;
 mod updater;
 mod weather;
@@ -621,6 +622,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             notch.tick(Duration::from_millis(16));
         }
         if page == "download" {
+            notch.handle(Event::Power { on_ac: true, percent: 76 });
             notch.handle(Event::Download(Some(12_500_000)));
         } else {
             notch.alert(match name {
@@ -634,6 +636,33 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             });
         }
         for _ in 0..60 {
+            notch.tick(Duration::from_millis(16));
+        }
+        let mut pm = Pixmap::new(WIN_W as u32 * 2, 240).expect("pixmap");
+        ui::draw(&mut pm, &text::Text::new(), &notch, 2.0);
+        pm.save_png(out).expect("write png");
+        return;
+    }
+    if page == "closed" {
+        notch.hover(false);
+        notch.handle(Event::Power { on_ac: true, percent: 76 });
+        for i in 0..400 {
+            notch.set_audio_level(Some(0.25 + 0.2 * (i as f32 * 0.35).sin().abs() + 0.15 * (i as f32 * 0.9).cos().abs()));
+            notch.tick(Duration::from_millis(16));
+        }
+        let mut pm = Pixmap::new(WIN_W as u32 * 2, 240).expect("pixmap");
+        ui::draw(&mut pm, &text::Text::new(), &notch, 2.0);
+        pm.save_png(out).expect("write png");
+        return;
+    }
+    if page == "game" {
+        notch.hover(false);
+        for _ in 0..300 {
+            notch.tick(Duration::from_millis(16));
+        }
+        notch.handle(Event::Game(true));
+        notch.handle(Event::GameStats(visus_core::GameStats { cpu: 0.54, cpu_temp: Some(71.0), gpu: Some(0.88), gpu_temp: Some(76.0), ram: 0.38, ram_used_gb: 12.1 }));
+        for _ in 0..300 {
             notch.tick(Duration::from_millis(16));
         }
         let mut pm = Pixmap::new(WIN_W as u32 * 2, 240).expect("pixmap");

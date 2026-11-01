@@ -28,6 +28,7 @@ pub fn start(emit: Emit) {
     power::start(emit.clone());
     ipc::listen(emit.clone());
     clip::watch(emit.clone());
+    crate::game::watch(emit.clone());
     std::thread::spawn(move || emit(visus_core::Event::Apps(std::sync::Arc::new(apps::list()))));
 }
 

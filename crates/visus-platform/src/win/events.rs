@@ -38,6 +38,7 @@ use crate::Emit;
 static EMIT: OnceLock<Emit> = OnceLock::new();
 static HWND_RAW: AtomicIsize = AtomicIsize::new(0);
 static FULLSCREEN: AtomicBool = AtomicBool::new(false);
+static GAME: AtomicBool = AtomicBool::new(false);
 static LAYOUT: AtomicU32 = AtomicU32::new(0);
 
 const WM_KEY_CAPS: u32 = WM_APP + 1;
@@ -276,6 +277,30 @@ fn report_fullscreen() {
     );
     if FULLSCREEN.swap(full, Ordering::Relaxed) != full {
         emit(Event::Fullscreen(full));
+    }
+    let exclusive = matches!(state, Ok(s) if s == QUNS_RUNNING_D3D_FULL_SCREEN);
+    let game = full && foreground_exe().is_some_and(|p| crate::is_game_path(&p, exclusive));
+    if GAME.swap(game, Ordering::Relaxed) != game {
+        emit(Event::Game(game));
+    }
+}
+
+/// Full path of the foreground window's executable.
+fn foreground_exe() -> Option<String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid));
+        if pid == 0 {
+            return None;
+        }
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = [0u16; 520];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let _ = CloseHandle(handle);
+        ok.then(|| String::from_utf16_lossy(&buf[..len as usize]))
     }
 }
 
