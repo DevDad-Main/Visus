@@ -101,7 +101,7 @@ fn netease(agent: &ureq::Agent, title: &str, artist: &str, duration: Duration) -
     (!lines.is_empty()).then(|| Arc::new(lines))
 }
 
-fn encode(s: &str) -> String {
+pub(crate) fn encode(s: &str) -> String {
     s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
@@ -127,7 +127,7 @@ fn synced(v: &Value) -> Lines {
 }
 
 /// Strips "(Official Video)", "[HD]", "ft. X" and " - Topic" noise typical of YouTube titles.
-fn clean(s: &str) -> String {
+pub(crate) fn clean(s: &str) -> String {
     let mut out = String::new();
     let mut depth = 0;
     for c in s.chars() {

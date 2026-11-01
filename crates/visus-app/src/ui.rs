@@ -50,6 +50,7 @@ pub enum Button {
     ClipCopy(usize),
     ClipDelete(usize),
     Event(usize),
+    NetUnit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -425,6 +426,7 @@ fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
             (Button::Next, rect(cx + 84.0 - 24.0, 190.0, 48.0, 40.0)),
         ],
         Page::Control => control_buttons(notch, x0),
+        Page::Stats => vec![(Button::NetUnit, rect(x0 + 470.0, 80.0, 230.0, 140.0))],
         Page::Notes => list_buttons(x0, notch.notes().len(), Button::NoteCopy, Button::NoteDelete),
         Page::Clipboard => list_buttons(x0, notch.clips().len(), Button::ClipCopy, Button::ClipDelete),
         Page::Calendar => event_buttons(notch, x0),
@@ -642,7 +644,11 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
         }
     }
     if let (Some(alert), true) = (notch.alert_kind(), peek_a > 0.0) {
-        draw_alert(&mut cx, &shape, alert, notch.alert_event().map(|e| e.title.as_str()), peek_a);
+        let text = match alert {
+            Alert::DownloadDone => notch.alert_text(),
+            _ => notch.alert_event().map(|e| e.title.as_str()),
+        };
+        draw_alert(&mut cx, &shape, alert, text, (notch.settings().eye_style, notch.settings().eye_moods, notch.alert_age().unwrap_or(1.0)), peek_a);
     }
     if open_a > 0.0 {
         draw_open(&mut cx, notch, open_a);
@@ -872,7 +878,9 @@ fn draw_zs(cx: &mut Ctx, x: f32, y: f32, ex: f32, pill_h: f32, t: f32, fade: f32
 fn draw_robot_eye(cx: &mut Ctx, x: f32, y: f32, ex: f32, ey: f32, open: f32, t: f32, fade: f32, asleep: bool, pill_h: f32, mood: (EyeMood, f32), pulse: f32) {
     let w = ex * 1.9;
     let (m, e) = mood;
-    let tint = if m == EyeMood::Heart { [255, 80, 140] } else { [60, 220, 255] };
+    let glitch = m == EyeMood::Glitch;
+    let x = if glitch { x + (t * 41.0).sin() * 2.0 } else { x };
+    let tint = if m == EyeMood::Heart || (glitch && (t * 13.0) as i32 % 2 == 0) { [255, 80, 160] } else { [60, 220, 255] };
     if asleep || open < 0.12 {
         cx.rrect(rect(x - w / 2.0, y - 1.0, w, 2.0), 1.0, color(tint, fade * if asleep { 0.35 } else { 0.9 }));
         if asleep {
@@ -889,6 +897,12 @@ fn draw_robot_eye(cx: &mut Ctx, x: f32, y: f32, ex: f32, ey: f32, open: f32, t: 
     let speed = if m == EyeMood::Surprised { 2.6 + 2.0 * e } else { 0.8 };
     let sweep = ((t * speed).sin() * 0.5 + 0.5) * (inner.w - 3.0);
     cx.rrect(rect(inner.x + sweep, inner.y, 3.0, inner.h), 1.5, color([255, 255, 255], fade * 0.95));
+    if glitch {
+        for k in 0..2 {
+            let gy = inner.y + inner.h * (0.25 + 0.4 * k as f32) + (t * 23.0 + k as f32).sin() * 1.5;
+            cx.rrect(rect(inner.x - 2.0, gy, inner.w + 4.0, 1.6), 0.5, color([8, 18, 24], fade * 0.85));
+        }
+    }
     for dx in [-1.0f32, 1.0] {
         cx.circle(x + dx * (w / 2.0 + 6.0), y, 1.4, color(tint, fade * 0.7));
     }
@@ -999,6 +1013,16 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     }
     let clock = chrono::Local::now().format(clock_fmt(notch)).to_string();
     cx.t(&clock, r.x + r.w / 2.0, mid + 7.0, 20.0, color(WHITE, a), Align::Center);
+    if let Some(rate) = notch.download() {
+        let txt = rate_fmt(rate, notch.settings().net_bits);
+        let tw = cx.text_width(&txt, 12.0);
+        let rx = r.x + r.w - 22.0;
+        cx.t(&txt, rx, mid + 4.5, 12.0, color(WHITE, a), Align::Right);
+        let ax = rx - tw - 11.0;
+        let bob = (chrono::Local::now().timestamp_millis() as f32 / 300.0).sin() * 1.6;
+        cx.rrect(rect(ax - 1.0, mid - 7.0 + bob, 2.0, 7.0), 1.0, color(GREEN, a));
+        cx.triangle([(ax - 4.5, mid - 1.0 + bob), (ax + 4.5, mid - 1.0 + bob), (ax, mid + 5.0 + bob)], color(GREEN, a));
+    }
     if notch.wants_audio() {
         let bars = notch.visualizer_bars();
         let tint = notch.accent();
@@ -1013,7 +1037,104 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     }
 }
 
-fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, event_title: Option<&str>, a: f32) {
+#[derive(Clone, Copy, PartialEq)]
+enum Expr {
+    Happy,
+    Sad,
+    Dizzy,
+    Music,
+    Party,
+    Alert,
+}
+
+fn expr_for(a: Alert) -> Option<Expr> {
+    match a {
+        Alert::Charging { .. } | Alert::Online | Alert::DownloadDone => Some(Expr::Happy),
+        Alert::Unplugged { .. } => Some(Expr::Sad),
+        Alert::Headphones => Some(Expr::Music),
+        Alert::Offline => Some(Expr::Dizzy),
+        Alert::TimerDone => Some(Expr::Party),
+        Alert::TodoDue | Alert::Meeting { .. } => Some(Expr::Alert),
+        _ => None,
+    }
+}
+
+/// The mascot's face for an alert: two expressive eyes in the current skin's colour, bouncing as the alert lands.
+fn draw_face(cx: &mut Ctx, x: f32, y: f32, style: EyeStyle, expr: Expr, age: f32, a: f32) {
+    let (tint, visor) = match style {
+        EyeStyle::Classic => ([235, 240, 255], false),
+        EyeStyle::Sauron => ([255, 130, 30], false),
+        EyeStyle::Cat => ([190, 225, 70], false),
+        EyeStyle::Robot => ([60, 220, 255], true),
+    };
+    let y = y - (1.0 - (age / 0.9).min(1.0)) * 4.0 * (age * 16.0).sin().abs();
+    let ink = if visor { [8, 18, 24] } else { tint };
+    if visor {
+        cx.rrect(rect(x - 18.0, y - 13.0, 36.0, 26.0), 9.0, color(tint, 0.92 * a));
+    } else {
+        cx.circle(x, y, 18.0, color(WHITE, 0.07 * a));
+    }
+    let mut pb = PathBuilder::new();
+    let mut fill_dots: Vec<(f32, f32, f32, [u8; 3])> = Vec::new();
+    for dx in [-7.0f32, 7.0] {
+        let (ex, ey) = (x + dx, y - 2.0);
+        match expr {
+            Expr::Happy | Expr::Music => {
+                pb.move_to(ex - 4.5, ey + 2.5);
+                pb.quad_to(ex, ey - 6.0, ex + 4.5, ey + 2.5);
+            }
+            Expr::Sad => {
+                pb.move_to(ex - 4.5, ey - 1.0);
+                pb.quad_to(ex, ey + 7.0, ex + 4.5, ey - 1.0);
+            }
+            Expr::Dizzy => {
+                pb.move_to(ex - 3.5, ey - 3.5);
+                pb.line_to(ex + 3.5, ey + 3.5);
+                pb.move_to(ex + 3.5, ey - 3.5);
+                pb.line_to(ex - 3.5, ey + 3.5);
+            }
+            Expr::Party => {
+                pb.move_to(ex - 4.5, ey);
+                pb.line_to(ex + 4.5, ey);
+                pb.move_to(ex, ey - 4.5);
+                pb.line_to(ex, ey + 4.5);
+            }
+            Expr::Alert => {
+                if let Some(c) = PathBuilder::from_circle(ex, ey, 4.2) {
+                    cx.stroke(&c, color(ink, a), 2.0);
+                }
+                fill_dots.push((ex, ey, 1.6, ink));
+            }
+        }
+    }
+    // Mouth for the cheerful ones.
+    if matches!(expr, Expr::Happy | Expr::Music | Expr::Party) {
+        pb.move_to(x - 4.5, y + 6.0);
+        pb.quad_to(x, y + 11.0, x + 4.5, y + 6.0);
+    }
+    if let Some(p) = pb.finish() {
+        cx.stroke(&p, color(ink, a), 2.2);
+    }
+    for (dx, dy, r, c) in fill_dots {
+        cx.circle(dx, dy, r, color(c, a));
+    }
+    match expr {
+        Expr::Sad => cx.circle(x + 14.0, y + 5.0, 1.8, color([120, 190, 255], a)),
+        Expr::Music => {
+            cx.circle(x + 15.0, y + 8.0, 2.2, color(tint, a));
+            cx.rrect(rect(x + 16.2, y - 3.0, 1.4, 11.0), 0.7, color(tint, a));
+        }
+        Expr::Party => {
+            for (i, col) in [[255, 90, 120], [255, 210, 60], [90, 220, 130], [110, 160, 255]].iter().enumerate() {
+                let ang = i as f32 * 1.6 + age * 3.0;
+                cx.circle(x + ang.cos() * 21.0, y + ang.sin() * 15.0, 1.5, color(*col, a));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, event_title: Option<&str>, look: (EyeStyle, bool, f32), a: f32) {
     let r = shape.rect;
     let meeting = match alert {
         Alert::Meeting { mins } => format!("Meeting in {mins} min"),
@@ -1035,9 +1156,13 @@ fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, event_title: Option<&st
         Alert::Offline => ("Offline", "Connection lost".into(), ORANGE, 0.0, None),
         Alert::Language(l) => ("Keyboard", String::from_utf8_lossy(&l).to_uppercase(), BLUE, 1.0, None),
         Alert::TodoDue => ("Time's up!", "A task is due".into(), ORANGE, 1.0, None),
+        Alert::DownloadDone => ("Download complete", event_title.unwrap_or("").to_string(), GREEN, 1.0, None),
         Alert::Meeting { .. } => (meeting.as_str(), event_title.unwrap_or("Click to join").to_string(), BLUE, 1.0, None),
     };
-    cx.ring(ix, mid, 16.0, 3.5, ring, accent, a);
+    match (look.1, expr_for(alert)) {
+        (true, Some(expr)) => draw_face(cx, ix, mid, look.0, expr, look.2, a),
+        _ => cx.ring(ix, mid, 16.0, 3.5, ring, accent, a),
+    }
     cx.t(title, r.x + 88.0, mid - 2.0, 23.0, color(WHITE, a), Align::Left);
     cx.t(&sub, r.x + 88.0, mid + 22.0, 17.0, color(GRAY, a), Align::Left);
     if let Some(v) = value {
@@ -1380,6 +1505,7 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                     return Outcome::OpenUrl(url);
                 }
             }
+            Button::NetUnit => notch.update_settings(|s| s.net_bits = !s.net_bits),
             Button::Volume => {
                 notch.begin_drag(1);
                 drag(notch, x);
@@ -1637,12 +1763,26 @@ fn draw_panel(cx: &mut Ctx, notch: &Notch, l: &PaletteLayout, p: f32) {
     cx.t("\u{2191}\u{2193} navigate    \u{21b5} open    esc close", l.panel.x + l.panel.w / 2.0, foot_y, 12.0, color(GRAY, 0.65 * ca), Align::Center);
 }
 
-fn rate(bytes_per_sec: u64) -> String {
-    let b = bytes_per_sec as f64;
-    if b >= 1024.0 * 1024.0 {
-        format!("{:.1} MB/s", b / (1024.0 * 1024.0))
+/// Speeds in bytes (KB/s, MB/s, GB/s) or in bits as ISPs quote them (Kbps, Mbps, Gbps).
+fn rate_fmt(bytes_per_sec: u64, bits: bool) -> String {
+    if bits {
+        let b = bytes_per_sec as f64 * 8.0;
+        if b >= 1e9 {
+            format!("{:.2} Gbps", b / 1e9)
+        } else if b >= 1e6 {
+            format!("{:.1} Mbps", b / 1e6)
+        } else {
+            format!("{:.0} Kbps", b / 1e3)
+        }
     } else {
-        format!("{:.0} KB/s", b / 1024.0)
+        let b = bytes_per_sec as f64;
+        if b >= 1024.0 * 1024.0 * 1024.0 {
+            format!("{:.2} GB/s", b / (1024.0 * 1024.0 * 1024.0))
+        } else if b >= 1024.0 * 1024.0 {
+            format!("{:.1} MB/s", b / (1024.0 * 1024.0))
+        } else {
+            format!("{:.0} KB/s", b / 1024.0)
+        }
     }
 }
 
@@ -1662,8 +1802,10 @@ fn draw_stats(cx: &mut Ctx, notch: &Notch, a: f32) {
     cx.t(&detail, x0 + 300.0, 218.0, 15.0, color(GRAY, 0.8 * a), Align::Center);
 
     cx.t("Network", x0 + 480.0, 98.0, 18.0, color(GRAY, a), Align::Left);
-    cx.t(&format!("\u{2193} {}", rate(st.rx_bytes_per_sec)), x0 + 480.0, 138.0, 26.0, color(WHITE, a), Align::Left);
-    cx.t(&format!("\u{2191} {}", rate(st.tx_bytes_per_sec)), x0 + 480.0, 174.0, 26.0, color(WHITE, 0.75 * a), Align::Left);
+    let bits = notch.settings().net_bits;
+    cx.t(&format!("\u{2193} {}", rate_fmt(st.rx_bytes_per_sec, bits)), x0 + 480.0, 138.0, 26.0, color(WHITE, a), Align::Left);
+    cx.t(&format!("\u{2191} {}", rate_fmt(st.tx_bytes_per_sec, bits)), x0 + 480.0, 174.0, 26.0, color(WHITE, 0.75 * a), Align::Left);
+    cx.t(if bits { "Live traffic  \u{b7}  tap for MB/s" } else { "Live traffic  \u{b7}  tap for Mbps" }, x0 + 480.0, 204.0, 12.0, color(GRAY, 0.8 * a), Align::Left);
 }
 
 thread_local! {

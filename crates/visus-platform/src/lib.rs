@@ -5,6 +5,7 @@ use std::sync::Arc;
 use visus_core::Event;
 
 mod art;
+pub use art::decode as decode_art;
 mod clipboard;
 mod controls;
 pub use clipboard::set_clipboard;

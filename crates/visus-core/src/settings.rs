@@ -61,6 +61,8 @@ pub struct Settings {
     pub visualizer: bool,
     /// Battery ring on the closed pill when the machine has a battery.
     pub show_battery: bool,
+    /// Show network speed in bits (Kbps/Mbps) instead of bytes (KB/s, MB/s).
+    pub net_bits: bool,
     /// Remember recent clipboard text (memory only, never written to disk).
     pub clipboard_history: bool,
     /// Let the idle eye change expressions now and then.
@@ -112,6 +114,7 @@ impl Default for Settings {
             clock_24h: true,
             visualizer: true,
             show_battery: true,
+            net_bits: false,
             clipboard_history: true,
             eye_moods: true,
             calendar_url: None,

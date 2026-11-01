@@ -19,11 +19,18 @@ pub fn pump(notch: &mut visus_core::Notch, emit: Option<&Emit>) {
 
     static START: std::sync::Once = std::sync::Once::new();
     START.call_once(visus_platform::refresh_controls);
+    static DL: std::sync::Once = std::sync::Once::new();
+    if let Some(e) = emit {
+        DL.call_once(|| crate::downloads::start(e.clone()));
+    }
     request_icons(notch, emit);
     notch.set_hour(chrono::Timelike::hour(&chrono::Local::now()) as u8);
     if let (true, Some(e)) = (notch.take_window_request(), emit) {
         let e = e.clone();
         std::thread::spawn(move || e(visus_core::Event::Windows(std::sync::Arc::new(visus_platform::list_windows()))));
+    }
+    if let (Some((t, a)), Some(e)) = (notch.take_art_request(), emit) {
+        crate::artfetch::fetch(t, a, e.clone());
     }
     crate::calendar::tick(notch, emit);
     let audio = notch.wants_audio();

@@ -27,6 +27,8 @@ pub enum EyeMood {
     Surprised,
     Squint,
     Heart,
+    /// Robot only: the visor flickers and jitters.
+    Glitch,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +51,7 @@ pub enum Alert {
     Offline,
     Language([u8; 2]),
     Meeting { mins: u16 },
+    DownloadDone,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -86,6 +89,7 @@ const MOOD_PERIOD: f32 = 16.0;
 const MOOD_START: f32 = 11.0;
 const MOOD_LEN: f32 = 3.2;
 pub const VIZ_BARS: usize = 9;
+const DOWNLOAD_EXTRA: f32 = 84.0;
 const EYE_PILL_W: f32 = 104.0;
 const CONTROLS_REFRESH: Duration = Duration::from_millis(400);
 const VISUALIZER_REFRESH: Duration = Duration::from_millis(33);
@@ -158,6 +162,11 @@ pub struct Notch {
     last_meeting_check: Instant,
     window_request: bool,
     hour: u8,
+    art_fallback: Option<(String, std::sync::Arc<crate::Art>)>,
+    art_request: Option<(String, String)>,
+    art_asked: String,
+    download: Option<u64>,
+    alert_text: Option<String>,
 }
 
 impl Notch {
@@ -219,6 +228,11 @@ impl Notch {
             last_meeting_check: Instant::now(),
             window_request: false,
             hour: 12,
+            art_fallback: None,
+            art_request: None,
+            art_asked: String::new(),
+            download: None,
+            alert_text: None,
         };
         n.retarget();
         n
@@ -243,6 +257,7 @@ impl Notch {
                 let changed = (&m.title, &m.artist) != (&self.media.title, &self.media.artist);
                 self.media = m;
                 self.media_at = Instant::now();
+                self.fill_missing_art();
                 self.retarget();
                 if changed {
                     self.lyrics = if self.track_key().is_some() { Lyrics::Loading } else { Lyrics::None };
@@ -287,6 +302,20 @@ impl Notch {
             Event::Windows(w) => self.palette.set_windows((*w).clone()),
             Event::Calendar(e) => self.events = (*e).clone(),
             Event::Clipboard(t) => self.clip_add(t),
+            Event::Download(d) => {
+                self.download = d;
+                self.retarget();
+            }
+            Event::DownloadDone(name) => {
+                self.alert_text = Some(name);
+                self.alert(Alert::DownloadDone);
+            }
+            Event::ArtFallback { key, art } => {
+                if let Some(art) = art {
+                    self.art_fallback = Some((key, art));
+                    self.fill_missing_art();
+                }
+            }
             Event::TogglePalette => self.toggle_palette(),
         }
     }
@@ -308,6 +337,29 @@ impl Notch {
     /// Seconds since the current alert landed while its ripple still plays.
     pub fn alert_age(&self) -> Option<f32> {
         self.alert_at.map(|t| t.elapsed().as_secs_f32()).filter(|a| *a < 0.9)
+    }
+
+    /// Uses online cover art for tracks whose player sent none, and asks the host to look one up.
+    fn fill_missing_art(&mut self) {
+        if self.media.art.is_some() || !self.media.has_session || self.media.title.is_empty() {
+            return;
+        }
+        let key = format!("{}\u{1}{}", self.media.title, self.media.artist);
+        if let Some((k, art)) = &self.art_fallback {
+            if *k == key {
+                self.media.art = Some(art.clone());
+                return;
+            }
+        }
+        if self.art_asked != key {
+            self.art_asked = key;
+            self.art_request = Some((self.media.title.clone(), self.media.artist.clone()));
+        }
+    }
+
+    /// (title, artist) of a track that needs cover art looked up; returned once.
+    pub fn take_art_request(&mut self) -> Option<(String, String)> {
+        self.art_request.take()
     }
 
     // ---- notes, clipboard history, calendar
@@ -372,6 +424,14 @@ impl Notch {
     }
 
     /// The event a meeting alert is about.
+    pub fn download(&self) -> Option<u64> {
+        self.download
+    }
+
+    pub fn alert_text(&self) -> Option<&str> {
+        self.alert_text.as_deref()
+    }
+
     pub fn alert_event(&self) -> Option<&CalEvent> {
         self.alert_event.as_ref()
     }
@@ -426,6 +486,8 @@ impl Notch {
         let viz = self.visualizer_active() && self.mode == Mode::Closed;
         let base = if viz {
             Some(VISUALIZER_REFRESH)
+        } else if self.download.is_some() && self.mode == Mode::Closed {
+            Some(Duration::from_millis(100))
         } else if synced {
             Some(LYRIC_REFRESH)
         } else if media || closed_progress || self.timer.is_running() {
@@ -450,7 +512,7 @@ impl Notch {
 
     /// True while the closed pill shows the visualizer, i.e. the host should sample audio.
     pub fn wants_audio(&self) -> bool {
-        self.visualizer_active() && self.mode == Mode::Closed
+        self.visualizer_active() && self.mode == Mode::Closed && self.download.is_none()
     }
 
     /// Feeds the latest output peak (0..1); `None` when the OS cannot provide one.
@@ -1106,6 +1168,7 @@ impl Notch {
             3 => EyeMood::Squint,
             4 if sauron => EyeMood::Surprised,
             4 => EyeMood::Heart,
+            5 if self.settings.eye_style == crate::EyeStyle::Robot => EyeMood::Glitch,
             _ => EyeMood::None,
         };
         (mood, phase)
@@ -1352,7 +1415,7 @@ impl Notch {
                 let (w, h) = if self.eye_state() != EyeState::Hidden {
                     (EYE_PILL_W, self.settings.closed_height - 4.0)
                 } else {
-                    (self.settings.closed_width + if self.visualizer_active() { VISUALIZER_EXTRA } else { 0.0 }, self.settings.closed_height)
+                    (self.settings.closed_width + if self.download.is_some() { DOWNLOAD_EXTRA } else if self.visualizer_active() { VISUALIZER_EXTRA } else { 0.0 }, self.settings.closed_height)
                 };
                 ((w, h), h * 0.42)
             }

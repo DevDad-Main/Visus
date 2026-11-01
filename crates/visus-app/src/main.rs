@@ -1,7 +1,9 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod actions;
+mod artfetch;
 mod calendar;
+mod downloads;
 mod events;
 mod lyrics;
 mod stats;
@@ -518,6 +520,41 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         for _ in 0..query.and_then(|q| q.parse().ok()).unwrap_or(10) {
             notch.tick(Duration::from_millis(16));
         }
+    }
+    if page == "alert" || page == "download" {
+        let q = query.unwrap_or("charging:robot");
+        let (name, style) = q.split_once(':').unwrap_or((q, "classic"));
+        notch.update_settings(|s| {
+            s.eye_style = match style {
+                "robot" => visus_core::EyeStyle::Robot,
+                "cat" => visus_core::EyeStyle::Cat,
+                "sauron" => visus_core::EyeStyle::Sauron,
+                _ => visus_core::EyeStyle::Classic,
+            }
+        });
+        notch.hover(false);
+        for _ in 0..300 {
+            notch.tick(Duration::from_millis(16));
+        }
+        if page == "download" {
+            notch.handle(Event::Download(Some(12_500_000)));
+        } else {
+            notch.alert(match name {
+                "unplugged" => visus_core::Alert::Unplugged { percent: 40 },
+                "headphones" => visus_core::Alert::Headphones,
+                "offline" => visus_core::Alert::Offline,
+                "timer" => visus_core::Alert::TimerDone,
+                "todo" => visus_core::Alert::TodoDue,
+                _ => visus_core::Alert::Charging { percent: 80 },
+            });
+        }
+        for _ in 0..60 {
+            notch.tick(Duration::from_millis(16));
+        }
+        let mut pm = Pixmap::new(WIN_W as u32 * 2, 240).expect("pixmap");
+        ui::draw(&mut pm, &text::Text::new(), &notch, 2.0);
+        pm.save_png(out).expect("write png");
+        return;
     }
     if matches!(page, "eye" | "sauron" | "cat" | "robot") {
         let style = match page {

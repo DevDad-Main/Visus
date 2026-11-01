@@ -58,6 +58,11 @@ pub enum Event {
     /// Open top-level windows (handle, title) for the launcher's switcher.
     Windows(Arc<Vec<(isize, String)>>),
     Calendar(Arc<Vec<crate::CalEvent>>),
+    /// Current download speed in bytes/s, or `None` when nothing is downloading.
+    Download(Option<u64>),
+    DownloadDone(String),
+    /// Cover art found online for a track whose player supplied none; `key` is `title\u{1}artist`.
+    ArtFallback { key: String, art: Option<Arc<Art>> },
     /// Result of a lyrics lookup for a track; `None` means nothing was found.
     Lyrics { title: String, artist: String, lines: Option<Arc<Vec<LyricLine>>> },
 }
