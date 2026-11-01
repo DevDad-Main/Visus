@@ -676,6 +676,7 @@ impl Notch {
         self.touch();
         self.palette.clear();
         self.palette_open = true;
+        self.palette_anim.tune(700.0, 46.0);
         self.palette_anim.target = 1.0;
         // The pill returns to its small shape so the panel reads as a drop-down beneath it.
         self.leave_left = None;
@@ -687,6 +688,8 @@ impl Notch {
 
     pub fn close_palette(&mut self) {
         self.palette_open = false;
+        // Slow start, then accelerating: reads as being sucked into the pill.
+        self.palette_anim.tune(42.0, 13.0);
         self.palette_anim.target = 0.0;
     }
 

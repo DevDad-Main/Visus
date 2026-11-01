@@ -1,6 +1,6 @@
 use tiny_skia::{
     Color, FillRule, GradientStop, LinearGradient, Paint, Path, PathBuilder, Pixmap, Point, RadialGradient,
-    SpreadMode,
+    SpreadMode, FilterQuality, Pattern,
     Stroke, Transform, LineCap,
 };
 use visus_core::{Alert, AppKind, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, current_index, weather_label};
@@ -973,9 +973,9 @@ pub fn palette_layout(notch: &Notch) -> Option<PaletteLayout> {
     let centre = s.x + s.w / 2.0;
     let n = notch.palette().results.len().max(1) as f32;
     let full_h = PANEL_TOP_PAD + n * ROW_H + PANEL_FOOTER;
-    let p = p.clamp(0.0, 1.04);
-    // Closing sucks the panel up into the pill: it narrows faster than it shortens.
-    let w = if notch.palette_is_open() { PANEL_W * (0.72 + 0.28 * p.min(1.0)) } else { PANEL_W * (0.06 + 0.94 * p.min(1.0).powi(2)) };
+    // While closing the panel keeps its full geometry; the genie warp is applied at draw time.
+    let p = if notch.palette_is_open() { p.clamp(0.0, 1.04) } else { 1.0 };
+    let w = PANEL_W * (0.72 + 0.28 * p.min(1.0));
     let panel = Rect { x: centre - w / 2.0, y: s.h + 10.0, w, h: full_h * p };
     let search = Rect { x: panel.x + 16.0, y: panel.y + 14.0, w: w - 32.0, h: 40.0 };
     let rows = (0..notch.palette().results.len())
@@ -996,11 +996,55 @@ fn magnifier(cx: &mut Ctx, x: f32, y: f32, c: [u8; 4]) {
     }
 }
 
+fn smooth(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Closing launcher: the fully drawn panel is sliced by row and each slice is narrowed and pulled up
+/// into the pill, rows nearest the pill first, like a minimising macOS window.
 fn draw_palette(cx: &mut Ctx, notch: &Notch) {
     let Some(l) = palette_layout(notch) else { return };
-    let p = notch.palette_progress().clamp(0.0, 1.0);
+    if notch.palette_is_open() {
+        draw_panel(cx, notch, &l, notch.palette_progress().clamp(0.0, 1.0));
+        return;
+    }
+    let g = (1.0 - notch.palette_progress()).clamp(0.0, 1.0);
+    let Some(mut tmp) = Pixmap::new(cx.pm.width(), cx.pm.height()) else { return };
+    {
+        let mut sub = Ctx { pm: &mut tmp, text: cx.text, scale: cx.scale, ox: cx.ox, oy: cx.oy };
+        draw_panel(&mut sub, notch, &l, 1.0);
+    }
+    let (k, ox, oy) = (cx.scale, cx.ox, cx.oy);
+    let centre = (l.panel.x + l.panel.w / 2.0) * k + ox;
+    let src_top = (l.panel.y - 16.0) * k + oy;
+    let src_h = (l.panel.h + 32.0) * k;
+    let y_shrink = 1.0 - smooth((g - 0.08) / 0.92);
+    let dst_top = src_top - 10.0 * k * smooth(g);
+    let alpha = 1.0 - smooth((g - 0.85) / 0.15);
+    let half = (PANEL_W / 2.0 + 16.0) * k;
+    const N: usize = 90;
+    for i in 0..N {
+        let (u0, u1) = (i as f32 / N as f32, (i + 1) as f32 / N as f32);
+        let um = (u0 + u1) / 2.0;
+        let sx = 1.0 - 0.94 * smooth(g * 1.5 - 0.5 * um);
+        let (sy0, dy0, dy1) = (src_top + u0 * src_h, dst_top + u0 * src_h * y_shrink, dst_top + u1 * src_h * y_shrink);
+        let dh = dy1 - dy0;
+        if dh < 0.02 {
+            continue;
+        }
+        let kk = dh / (src_h / N as f32);
+        let xf = Transform::from_row(sx, 0.0, 0.0, kk, centre - centre * sx, dy0 - sy0 * kk);
+        let mut paint = Paint::default();
+        paint.shader = Pattern::new(tmp.as_ref(), SpreadMode::Pad, FilterQuality::Bilinear, alpha, xf);
+        if let Some(r) = tiny_skia::Rect::from_xywh(centre - half * sx, dy0, 2.0 * half * sx, dh + 0.7) {
+            cx.pm.fill_rect(r, &paint, Transform::identity(), None);
+        }
+    }
+}
+
+fn draw_panel(cx: &mut Ctx, notch: &Notch, l: &PaletteLayout, p: f32) {
     let ca = ((p - 0.5) / 0.5).clamp(0.0, 1.0);
-    let p = if notch.palette_is_open() { p } else { (p / 0.35).min(1.0) };
     let pal = notch.palette();
 
     // Soft shadow, then the body and a hairline edge so it reads as glass-black beneath the pill.
@@ -1448,7 +1492,7 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
     cx.rrect(rc, 13.0, color(GREEN, 0.9 * a));
     let fitted = cx.fit(&label, 13.0, 120.0);
     cx.t(&fitted, rc.x + 65.0, rc.y + 18.0, 13.0, color([0, 0, 0], a), Align::Center);
-    let st = cx.fit(&format!("v{} {}", env!("CARGO_PKG_VERSION"), status), 12.0, 180.0);
+    let st = cx.fit(&format!("v{} {}", env!("CARGO_PKG_VERSION"), status), 12.0, SETTINGS_W - 176.0 - 40.0);
     cx.t(&st, x0 + 176.0, 232.0, 12.0, color(GRAY, a), Align::Left);
 
     // Close button.

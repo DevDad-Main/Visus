@@ -24,7 +24,7 @@ fn agent() -> ureq::Agent {
 }
 
 fn fetch_latest() -> Result<(String, Release), String> {
-    let mut resp = agent().get(RELEASES).call().map_err(|e| format!("Could not reach GitHub ({e})"))?;
+    let mut resp = agent().get(RELEASES).call().map_err(|e| format!("Update check failed: {e}"))?;
     let body = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
     let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     let rel = json.get(0).ok_or("No releases found")?;

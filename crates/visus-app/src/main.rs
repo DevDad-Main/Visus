@@ -435,7 +435,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             got_apps |= matches!(ev, Event::Apps(_));
             events::apply(&mut notch, Some(&fetcher), ev);
         }
-        if page == "palette" && got_apps {
+        if (page == "palette" || page == "genie") && got_apps {
             break;
         }
         if matches!(notch.lyrics(), visus_core::Lyrics::Ready(_) | visus_core::Lyrics::NotFound) {
@@ -457,9 +457,9 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             notch.tick(Duration::from_millis(16));
         }
     }
-    if page == "palette" {
+    if page == "palette" || page == "genie" {
         notch.open_palette();
-        notch.palette_type(query.unwrap_or(""));
+        notch.palette_type(if page == "genie" { "" } else { query.unwrap_or("") });
         // Icons load off-thread; give them a moment so the snapshot shows them.
         for _ in 0..8 {
             actions::request_icons(&mut notch, Some(&emit));
@@ -468,6 +468,12 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             }
         }
         for _ in 0..200 {
+            notch.tick(Duration::from_millis(16));
+        }
+    }
+    if page == "genie" {
+        notch.close_palette();
+        for _ in 0..query.and_then(|q| q.parse().ok()).unwrap_or(10) {
             notch.tick(Duration::from_millis(16));
         }
     }

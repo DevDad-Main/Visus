@@ -18,6 +18,11 @@ impl Spring {
         Self { stiffness: 700.0, damping: 46.0, ..Self::new(value) }
     }
 
+    pub fn tune(&mut self, stiffness: f32, damping: f32) {
+        self.stiffness = stiffness;
+        self.damping = damping;
+    }
+
     pub fn is_settled(&self) -> bool {
         (self.target - self.value).abs() < 0.05 && self.velocity.abs() < 0.05
     }

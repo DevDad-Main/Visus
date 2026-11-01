@@ -99,6 +99,8 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 1. Fix whatever real-world Windows testing finds (settings popup, drop, launcher focus, updater, alerts still lightly tested).
    v1.0.1: Ctrl+Alt+Space hotkey, weather page has no location row (set city in settings), minimal notch hides content, equalizer glyph removed.
    v1.0.2: music visualizer (closed pill widens and animates only while music plays), more compact pill (size no longer read from settings.json), snappier launcher with a genie-style close, smarter lyrics matching (lyrics come from LRCLIB; tracks missing there, e.g. many YouTube uploads, have none).
+   v1.0.3: launcher closes with a genie/black-hole warp (panel rendered offscreen, sliced per row, narrowed and pulled into the pill; `--snapshot genie <frames>` renders a frame); update errors show the full message.
+   Ideas worth building next: clipboard history, quick-note capture, world clocks, volume/brightness HUD with sliders, per-app notification peeks, system tray quick toggles (Wi-Fi/Bluetooth/DND), pomodoro stats, calendar events (ICS/Google), file shelf drag-out.
    Still to do: real audio-driven visualizer (WASAPI loopback / PipeWire), lyrics fallback source, user-configurable hotkey, Linux global hotkey without compositor binding, Wayland drag-and-drop.
 2. Bluetooth/brightness HUDs, notifications center, calendar events, shelf drag-out.
 3. Plugin host behind a data-driven page registry; more eye styles; macOS port; installer/Store packaging.
