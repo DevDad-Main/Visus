@@ -1,3 +1,5 @@
+mod events;
+mod lyrics;
 mod stats;
 mod store;
 mod text;
@@ -67,6 +69,7 @@ struct App {
     notch: Notch,
     text: text::Text,
     sampler: Option<stats::Sampler>,
+    fetcher: Option<lyrics::Fetcher>,
     cursor: (f32, f32),
     shown: bool,
     last_tick: Instant,
@@ -210,9 +213,11 @@ impl ApplicationHandler<UserEvent> for App {
         self.last_tick = Instant::now();
 
         let proxy = self.proxy.clone();
-        platform::start(Arc::new(move |ev| {
+        let emit: platform::Emit = Arc::new(move |ev| {
             let _ = proxy.send_event(UserEvent::Os(ev));
-        }));
+        });
+        self.fetcher = Some(lyrics::Fetcher::new(emit.clone()));
+        platform::start(emit);
 
         #[cfg(windows)]
         {
@@ -223,7 +228,7 @@ impl ApplicationHandler<UserEvent> for App {
     fn user_event(&mut self, el: &ActiveEventLoop, ev: UserEvent) {
         match ev {
             UserEvent::Os(e) => {
-                self.notch.handle(e);
+                events::apply(&mut self.notch, self.fetcher.as_ref(), e);
                 self.sync_visibility();
             }
             UserEvent::Setting(c) => {
@@ -323,12 +328,25 @@ fn snapshot(page: &str, out: &str) {
     }
     // Let the OS event sources report once so the snapshot shows real media/battery state.
     let (tx, rx) = std::sync::mpsc::channel();
-    platform::start(Arc::new(move |ev| {
-        let _ = tx.send(ev);
-    }));
-    std::thread::sleep(Duration::from_millis(1500));
-    while let Ok(ev) = rx.try_recv() {
-        notch.handle(ev);
+    let tx = std::sync::Mutex::new(tx);
+    let emit: platform::Emit = Arc::new(move |ev| {
+        if let Ok(tx) = tx.lock() {
+            let _ = tx.send(ev);
+        }
+    });
+    let fetcher = lyrics::Fetcher::new(emit.clone());
+    platform::start(emit);
+    let deadline = std::time::Instant::now() + Duration::from_secs(6);
+    while std::time::Instant::now() < deadline {
+        if let Ok(ev) = rx.recv_timeout(Duration::from_millis(200)) {
+            events::apply(&mut notch, Some(&fetcher), ev);
+        }
+        if matches!(notch.lyrics(), visus_core::Lyrics::Ready(_) | visus_core::Lyrics::NotFound) {
+            break;
+        }
+    }
+    if page == "lyrics" {
+        notch.toggle_lyrics();
     }
     let idx = ["music", "timer", "stats", "shelf", "todo"].iter().position(|p| *p == page).unwrap_or(0);
     notch.next_page(idx as i32);
@@ -370,6 +388,7 @@ fn main() {
         notch,
         text: text::Text::new(),
         sampler: stats::Sampler::new(),
+        fetcher: None,
         cursor: (-1.0, -1.0),
         shown: true,
         last_tick: Instant::now(),

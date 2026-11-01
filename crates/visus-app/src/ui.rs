@@ -3,7 +3,7 @@ use tiny_skia::{
     SpreadMode,
     Stroke, Transform, LineCap,
 };
-use visus_core::{Alert, EyeState, Notch, Page, Rect, Shape};
+use visus_core::{Alert, EyeState, Lyrics, Notch, Page, Rect, Shape, current_index};
 
 use crate::text::{Align, Text};
 
@@ -18,6 +18,7 @@ pub enum Button {
     Prev,
     PlayPause,
     Next,
+    Lyrics,
     TimerToggle,
     TimerReset,
 }
@@ -34,7 +35,17 @@ pub fn buttons(notch: &Notch) -> Vec<(Button, Rect)> {
     }
     let (x0, cx) = (s.rect.x, s.rect.x + s.rect.w / 2.0);
     match notch.page {
+        Page::Music if notch.lyrics_open() => {
+            let b = |dx: f32| rect(x0 + dx - 24.0, 188.0, 48.0, 40.0);
+            vec![
+                (Button::Lyrics, b(60.0)),
+                (Button::Prev, b(140.0)),
+                (Button::PlayPause, b(200.0)),
+                (Button::Next, b(260.0)),
+            ]
+        }
         Page::Music => vec![
+            (Button::Lyrics, rect(x0 + 70.0 - 24.0, 190.0, 48.0, 40.0)),
             (Button::Prev, rect(cx - 84.0 - 24.0, 190.0, 48.0, 40.0)),
             (Button::PlayPause, rect(cx - 24.0, 190.0, 48.0, 40.0)),
             (Button::Next, rect(cx + 84.0 - 24.0, 190.0, 48.0, 40.0)),
@@ -163,6 +174,10 @@ impl Ctx<'_> {
     fn t(&mut self, s: &str, x: f32, y: f32, px: f32, c: [u8; 4], align: Align) {
         let k = self.scale;
         self.text.draw(self.pm, s, x * k + self.ox, y * k, px * k, c, align);
+    }
+
+    fn text_width(&self, s: &str, px: f32) -> f32 {
+        self.text.width(s, px * self.scale) / self.scale
     }
 
     fn fit(&self, s: &str, px: f32, max: f32) -> String {
@@ -400,6 +415,10 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
 }
 
 fn draw_music(cx: &mut Ctx, notch: &Notch, a: f32) {
+    if notch.lyrics_open() {
+        draw_music_lyrics(cx, notch, a);
+        return;
+    }
     let r = notch.shape().rect;
     let (x0, mid) = (r.x, r.x + r.w / 2.0);
     let m = notch.media();
@@ -472,6 +491,104 @@ fn draw_music(cx: &mut Ctx, notch: &Notch, a: f32) {
     } else {
         cx.triangle([(mid - 7.0, cy - 11.0), (mid - 7.0, cy + 11.0), (mid + 10.0, cy)], white);
     }
+    draw_lyrics_icon(cx, x0 + 70.0, cy, false, a);
+}
+
+/// Speech bubble with two dots; filled when the lyrics pane is open.
+fn draw_lyrics_icon(cx: &mut Ctx, x: f32, y: f32, active: bool, a: f32) {
+    let c = color(WHITE, a);
+    let body = rect(x - 11.0, y - 9.0, 22.0, 16.0);
+    if active {
+        cx.rrect(body, 5.0, c);
+    } else if let Some(p) = rrect(body.x, body.y, body.w, body.h, 5.0) {
+        cx.stroke(&p, c, 1.8);
+    }
+    cx.triangle([(x - 6.0, y + 6.0), (x - 1.0, y + 6.0), (x - 6.0, y + 12.0)], c);
+    let dot = if active { color([0, 0, 0], a) } else { c };
+    cx.circle(x - 4.0, y - 1.0, 1.7, dot);
+    cx.circle(x + 4.0, y - 1.0, 1.7, dot);
+}
+
+fn draw_music_lyrics(cx: &mut Ctx, notch: &Notch, a: f32) {
+    let r = notch.shape().rect;
+    let x0 = r.x;
+    let m = notch.media();
+    let white = color(WHITE, a);
+
+    // Left column: compact now-playing.
+    let art = rect(x0 + 36.0, 62.0, 72.0, 72.0);
+    let h = if m.has_session { (hash(&m.title) % 360) as f32 / 360.0 } else { 0.62 };
+    let (c1, c2) = (hue_rgb(h), hue_rgb((h + 0.12) % 1.0));
+    cx.rrect(art, 14.0, color(c1, a));
+    cx.rrect(rect(art.x, art.y + art.h / 2.0, art.w, art.h / 2.0), 14.0, color(c2, 0.55 * a));
+    let (title, artist) = if m.has_session && !m.title.is_empty() {
+        (m.title.clone(), m.artist.clone())
+    } else {
+        ("Nothing playing".to_string(), String::new())
+    };
+    let t = cx.fit(&title, 21.0, 210.0);
+    cx.t(&t, x0 + 124.0, 92.0, 21.0, white, Align::Left);
+    let ar = cx.fit(&artist, 16.0, 210.0);
+    cx.t(&ar, x0 + 124.0, 116.0, 16.0, color(GRAY, a), Align::Left);
+
+    let pos = notch.media_position();
+    let frac = if m.duration.is_zero() { 0.0 } else { (pos.as_secs_f32() / m.duration.as_secs_f32()).clamp(0.0, 1.0) };
+    let (bx, bw, by) = (x0 + 36.0, 300.0, 162.0);
+    cx.rrect(rect(bx, by - 2.0, bw, 4.0), 2.0, color(WHITE, 0.25 * a));
+    if frac > 0.0 {
+        cx.rrect(rect(bx, by - 2.0, (bw * frac).max(4.0), 4.0), 2.0, white);
+    }
+    if m.has_session {
+        cx.t(&mmss(pos), bx, by + 20.0, 14.0, color(GRAY, a), Align::Left);
+        cx.t(&format!("-{}", mmss(m.duration.saturating_sub(pos))), bx + bw, by + 20.0, 14.0, color(GRAY, a), Align::Right);
+    }
+
+    let cy = 208.0;
+    for (dx, dir) in [(140.0, -1.0), (260.0, 1.0)] {
+        let x = x0 + dx;
+        for off in [-7.0, 5.0] {
+            let b = x + off;
+            cx.triangle([(b - 6.0 * dir, cy - 8.0), (b - 6.0 * dir, cy + 8.0), (b + 6.0 * dir, cy)], white);
+        }
+    }
+    let px = x0 + 200.0;
+    if m.playing {
+        cx.rrect(rect(px - 8.0, cy - 10.0, 5.0, 20.0), 1.5, white);
+        cx.rrect(rect(px + 3.0, cy - 10.0, 5.0, 20.0), 1.5, white);
+    } else {
+        cx.triangle([(px - 7.0, cy - 11.0), (px - 7.0, cy + 11.0), (px + 10.0, cy)], white);
+    }
+    draw_lyrics_icon(cx, x0 + 60.0, cy, true, a);
+
+    // Divider and lyric pane.
+    cx.rrect(rect(x0 + 368.0, 58.0, 1.0, 150.0), 0.5, color(WHITE, 0.15 * a));
+    let (lx, lw) = (x0 + 392.0, r.w - 392.0 - 28.0);
+    let note = |cx: &mut Ctx, s: &str| cx.t(s, lx + lw / 2.0, 138.0, 19.0, color(GRAY, a), Align::Center);
+    match notch.lyrics() {
+        Lyrics::Ready(lines) => {
+            let idx = current_index(lines, pos);
+            // Before the first line, show the opening lines as upcoming.
+            let focus = idx.map_or(-1, |i| i as i32);
+            // One line behind, the current line, then three upcoming; baselines sit below the header.
+            for off in -1..=3i32 {
+                let i = focus + off;
+                let Some(line) = usize::try_from(i).ok().and_then(|i| lines.get(i)) else { continue };
+                let alpha = [0.4, 1.0, 0.55, 0.35, 0.2][(off + 1) as usize];
+                let mut size = if off == 0 { 23.0 } else { 18.0 };
+                let text = if line.text.is_empty() { "\u{266a}" } else { line.text.as_str() };
+                // Shrink a little before resorting to an ellipsis.
+                while size > 15.0 && cx.text_width(text, size) > lw {
+                    size -= 1.0;
+                }
+                let fitted = cx.fit(text, size, lw);
+                let y = [96.0, 130.0, 164.0, 194.0, 222.0][(off + 1) as usize];
+                cx.t(&fitted, lx, y, size, color(WHITE, alpha * a), Align::Left);
+            }
+        }
+        Lyrics::Loading => note(cx, "Searching for lyrics\u{2026}"),
+        Lyrics::NotFound => note(cx, "No synced lyrics found"),
+        Lyrics::None => note(cx, "Play something to see lyrics"),
+    }
 }
 
 fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
@@ -507,6 +624,7 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> bool {
                 Button::Prev => visus_platform::media_command(MediaCommand::Previous),
                 Button::PlayPause => visus_platform::media_command(MediaCommand::PlayPause),
                 Button::Next => visus_platform::media_command(MediaCommand::Next),
+                Button::Lyrics => notch.toggle_lyrics(),
                 Button::TimerToggle => notch.toggle_timer(),
                 Button::TimerReset => notch.reset_timer(),
             }

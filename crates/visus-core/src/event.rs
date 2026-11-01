@@ -1,4 +1,7 @@
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::LyricLine;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MediaInfo {
@@ -23,6 +26,8 @@ pub enum Event {
     Media(MediaInfo),
     Hud(Hud),
     Fullscreen(bool),
+    /// Result of a lyrics lookup for a track; `None` means nothing was found.
+    Lyrics { title: String, artist: String, lines: Option<Arc<Vec<LyricLine>>> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

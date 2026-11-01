@@ -1,4 +1,4 @@
-use crate::{Event, FOCUS, Hud, MediaInfo, Settings, Spring, Stats, Timer};
+use crate::{Event, FOCUS, Hud, Lyrics, MediaInfo, Settings, Spring, Stats, Timer};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +65,7 @@ const OPEN: (f32, f32) = (744.0, 248.0);
 const PEEK_TIME: Duration = Duration::from_millis(2800);
 const HOVER_CLOSE_DELAY: Duration = Duration::from_millis(250);
 const PROGRESS_REFRESH: Duration = Duration::from_millis(500);
+const LYRIC_REFRESH: Duration = Duration::from_millis(250);
 const EYE_FOLLOW: Duration = Duration::from_millis(50);
 const EYE_FADE_IN: f32 = 0.35;
 const WANDER_EVERY: f32 = 2.4;
@@ -85,6 +86,8 @@ pub struct Notch {
     timer: Timer,
     settings: Settings,
     stats: Stats,
+    lyrics: Lyrics,
+    lyrics_open: bool,
     dirty: bool,
     last_activity: Instant,
     look_x: Spring,
@@ -110,6 +113,8 @@ impl Notch {
             timer: Timer::new(FOCUS),
             settings: Settings::default(),
             stats: Stats::default(),
+            lyrics: Lyrics::None,
+            lyrics_open: false,
             dirty: false,
             last_activity: Instant::now(),
             look_x: Spring::new(0.0),
@@ -135,8 +140,20 @@ impl Notch {
                 }
             }
             Event::Media(m) => {
+                let changed = (&m.title, &m.artist) != (&self.media.title, &self.media.artist);
                 self.media = m;
                 self.media_at = Instant::now();
+                if changed {
+                    self.lyrics = if self.track_key().is_some() { Lyrics::Loading } else { Lyrics::None };
+                }
+            }
+            Event::Lyrics { title, artist, lines } => {
+                if title == self.media.title && artist == self.media.artist {
+                    self.lyrics = match lines {
+                        Some(l) if !l.is_empty() => Lyrics::Ready(l),
+                        _ => Lyrics::NotFound,
+                    };
+                }
             }
             Event::Hud(Hud::CapsLock(on)) => self.alert(Alert::CapsLock(on)),
             Event::Hud(Hud::Volume { level, muted }) => self.alert(Alert::Volume { level, muted }),
@@ -183,7 +200,12 @@ impl Notch {
     /// Redraw cadence needed while otherwise static, e.g. the progress bar.
     pub fn refresh_interval(&self) -> Option<Duration> {
         let media = self.is_open() && self.media.has_session && self.media.playing;
-        let base = (media || self.timer.is_running() || self.wants_stats()).then_some(PROGRESS_REFRESH);
+        let synced = media && self.lyrics_open && matches!(self.lyrics, Lyrics::Ready(_));
+        let base = if synced {
+            Some(LYRIC_REFRESH)
+        } else {
+            (media || self.timer.is_running() || self.wants_stats()).then_some(PROGRESS_REFRESH)
+        };
         match (base, self.eye_wake()) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -225,6 +247,25 @@ impl Notch {
         let mut s = self.settings.clone();
         f(&mut s);
         self.set_settings(s);
+    }
+
+    /// Identifies the current track for lyric lookups; None when nothing identifiable plays.
+    pub fn track_key(&self) -> Option<(String, String, Duration)> {
+        let m = &self.media;
+        (m.has_session && !m.title.is_empty()).then(|| (m.title.clone(), m.artist.clone(), m.duration))
+    }
+
+    pub fn lyrics(&self) -> &Lyrics {
+        &self.lyrics
+    }
+
+    pub fn lyrics_open(&self) -> bool {
+        self.lyrics_open
+    }
+
+    pub fn toggle_lyrics(&mut self) {
+        self.touch();
+        self.lyrics_open = !self.lyrics_open;
     }
 
     pub fn stats(&self) -> &Stats {

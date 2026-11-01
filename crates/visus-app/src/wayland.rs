@@ -10,7 +10,7 @@ use smithay_client_toolkit::{
     delegate_registry,
     output::{OutputHandler, OutputState},
     reexports::{
-        calloop::EventLoop,
+        calloop::{self, EventLoop},
         calloop_wayland_source::WaylandSource,
         client::{
             Connection, QueueHandle,
@@ -34,9 +34,9 @@ use smithay_client_toolkit::{
     shm::{Shm, ShmHandler, slot::SlotPool},
 };
 use tiny_skia::Pixmap;
-use visus_core::Notch;
+use visus_core::{Event, Notch};
 
-use crate::{stats, store, text::Text, ui};
+use crate::{events, lyrics, stats, store, text::Text, ui};
 
 const WIN_W: u32 = 960;
 const WIN_H: u32 = 330;
@@ -57,6 +57,7 @@ struct State {
     notch: Notch,
     text: Text,
     sampler: Option<stats::Sampler>,
+    fetcher: Option<lyrics::Fetcher>,
     scale: i32,
     cursor: (f32, f32),
     scroll_accum: f64,
@@ -105,6 +106,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         notch,
         text: Text::new(),
         sampler: stats::Sampler::new(),
+        fetcher: None,
         scale: 1,
         cursor: (-1.0, -1.0),
         scroll_accum: 0.0,
@@ -119,6 +121,23 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut event_loop: EventLoop<State> = EventLoop::try_new()?;
     WaylandSource::new(conn, event_queue).insert(event_loop.handle())?;
+
+    // OS events (media, battery) and lyric results arrive on background threads.
+    let (tx, rx) = calloop::channel::channel::<Event>();
+    event_loop.handle().insert_source(rx, |ev, _, state| {
+        if let calloop::channel::Event::Msg(e) = ev {
+            events::apply(&mut state.notch, state.fetcher.as_ref(), e);
+            state.needs_draw = true;
+        }
+    })?;
+    let tx = std::sync::Mutex::new(tx);
+    let emit: visus_platform::Emit = std::sync::Arc::new(move |ev| {
+        if let Ok(tx) = tx.lock() {
+            let _ = tx.send(ev);
+        }
+    });
+    state.fetcher = Some(lyrics::Fetcher::new(emit.clone()));
+    visus_platform::start(emit);
 
     while !state.exit {
         let timeout = state.step();
