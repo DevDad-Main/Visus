@@ -21,11 +21,18 @@ jobs:
           Copy-Item target/release/visus-app.exe Visus.exe
           Compress-Archive -Path Visus.exe -DestinationPath Visus-windows-x64.zip
           (Get-FileHash Visus.exe -Algorithm SHA256).Hash.ToLower() + "  Visus.exe" | Out-File -Encoding ascii Visus.exe.sha256
+      - name: Installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$v" installer/visus.iss
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             Visus-windows-x64.zip
             Visus.exe.sha256
+            Visus-Setup.exe
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
 

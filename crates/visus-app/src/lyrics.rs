@@ -101,6 +101,26 @@ fn netease(agent: &ureq::Agent, title: &str, artist: &str, duration: Duration) -
     (!lines.is_empty()).then(|| Arc::new(lines))
 }
 
+fn encode(s: &str) -> String {
+    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
+/// Plain (unsynced) lyrics from lyrics.ovh, spread evenly over the track so the pane still scrolls.
+fn lyrics_ovh(agent: &ureq::Agent, title: &str, artist: &str, duration: Duration) -> Lines {
+    if duration.is_zero() {
+        return None;
+    }
+    let url = format!("https://api.lyrics.ovh/v1/{}/{}", encode(artist), encode(title));
+    let v: Value = serde_json::from_str(&agent.get(url).call().ok()?.body_mut().read_to_string().ok()?).ok()?;
+    let rows: Vec<String> = v["lyrics"].as_str()?.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+    if rows.len() < 4 {
+        return None;
+    }
+    let step = duration.as_secs_f32() * 0.9 / rows.len() as f32;
+    let lines = rows.into_iter().enumerate().map(|(i, text)| LyricLine { at: Duration::from_secs_f32(duration.as_secs_f32() * 0.05 + i as f32 * step), text }).collect();
+    Some(Arc::new(lines))
+}
+
 fn synced(v: &Value) -> Lines {
     let lines = parse_lrc(v["syncedLyrics"].as_str()?);
     (!lines.is_empty()).then(|| Arc::new(lines))
@@ -152,5 +172,26 @@ fn lookup(agent: &ureq::Agent, title: &str, artist: &str, duration: Duration) ->
     if let Some(lines) = get_json(agent, "search", &[("q", q)]).and_then(|v| v.as_array()?.iter().find_map(synced)) {
         return Some(lines);
     }
-    attempts.iter().take(3).find_map(|(t, a)| netease(agent, t, a, duration))
+    attempts
+        .iter()
+        .take(3)
+        .find_map(|(t, a)| netease(agent, t, a, duration))
+        .or_else(|| attempts.iter().take(2).find_map(|(t, a)| lyrics_ovh(agent, t, a, duration)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_strips_youtube_noise() {
+        assert_eq!(clean("Blinding Lights (Official Video) [HD]"), "Blinding Lights");
+        assert_eq!(clean("Song ft. Someone"), "Song");
+        assert_eq!(clean("Artist - Topic"), "Artist");
+    }
+
+    #[test]
+    fn encode_escapes_unsafe_bytes() {
+        assert_eq!(encode("a b/c"), "a%20b%2Fc");
+    }
 }

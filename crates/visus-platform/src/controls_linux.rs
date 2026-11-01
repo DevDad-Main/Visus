@@ -19,6 +19,11 @@ pub fn read() -> Controls {
             c.has_volume = true;
         }
     }
+    // "name,class,current,percent%,max"
+    c.brightness = run("brightnessctl", &["-m"]).and_then(|s| {
+        let pct = s.trim().split(',').nth(3)?.trim_end_matches('%').parse::<f32>().ok()?;
+        Some(pct / 100.0)
+    });
     c.wifi = run("nmcli", &["radio", "wifi"]).map(|s| s.trim() == "enabled");
     c.bluetooth = run("bluetoothctl", &["show"]).map(|s| s.contains("Powered: yes"));
     c
@@ -26,6 +31,10 @@ pub fn read() -> Controls {
 
 pub fn set_volume(v: f32) {
     let _ = run("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{v:.2}")]);
+}
+
+pub fn set_brightness(v: f32) {
+    let _ = run("brightnessctl", &["set", &format!("{}%", (v.clamp(0.0, 1.0) * 100.0).round() as u32)]);
 }
 
 pub fn set_mute(m: bool) {

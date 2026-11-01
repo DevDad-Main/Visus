@@ -500,18 +500,10 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         notch.set_stats(s.sample());
     }
     let mut pm = Pixmap::new(WIN_W as u32 * 2, WIN_H as u32 * 2).expect("pixmap");
-    if page == "widgets" {
-        notch.hover(false);
-        for _ in 0..300 {
-            notch.tick(Duration::from_millis(16));
-        }
-        let t = query.and_then(|q| q.parse::<f32>().ok()).unwrap_or(1.0);
-        ui::draw_widgets_mock(&mut pm, &text::Text::new(), &notch, 2.0, t);
-        pm.save_png(out).expect("write png");
-        return;
-    }
     ui::draw(&mut pm, &text::Text::new(), &notch, 2.0);
-    if std::env::var_os("VISUS_BENCH").is_some() {
+    #[cfg(feature = "dev")]
+    {
+        if std::env::var_os("VISUS_BENCH").is_some() {
         let text = text::Text::new();
         let t = std::time::Instant::now();
         for _ in 0..60 {
@@ -519,6 +511,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             ui::draw(&mut p, &text, &notch, 2.0);
         }
         eprintln!("draw avg {:.2} ms", t.elapsed().as_secs_f32() * 1000.0 / 60.0);
+    }
     }
     pm.save_png(out).expect("write png");
 }

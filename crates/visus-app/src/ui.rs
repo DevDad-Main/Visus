@@ -43,6 +43,7 @@ pub enum Button {
     FolderRemove(usize),
     FolderAdd,
     Volume,
+    Brightness,
     Tile(u8),
 }
 
@@ -52,6 +53,10 @@ pub enum Toggle {
     Eye,
     Fullscreen,
     Autostart,
+    Quiet,
+    Clock24,
+    Visualizer,
+    Battery,
 }
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -171,31 +176,53 @@ fn tile_rect(x0: f32, i: usize) -> Rect {
     rect(x0 + 36.0 + (i % 2) as f32 * 126.0, 66.0 + (i / 2) as f32 * 84.0, 116.0, 74.0)
 }
 
-/// Pointer area of the volume slider (taller than the thin track so it is easy to grab).
-fn slider_rect(x0: f32) -> Rect {
-    rect(x0 + 330.0, 98.0, 340.0, 40.0)
+/// Slider track geometry: x, width, and the centre y of the volume and brightness tracks.
+const TRACK_X: f32 = 340.0;
+const TRACK_W: f32 = 320.0;
+const VOLUME_Y: f32 = 116.0;
+const BRIGHT_Y: f32 = 184.0;
+
+/// Pointer areas (taller than the thin tracks so they are easy to grab).
+fn slider_rect(x0: f32, y: f32) -> Rect {
+    rect(x0 + TRACK_X - 10.0, y - 20.0, TRACK_W + 20.0, 40.0)
 }
 
-/// Visible track: x, width and centre y.
-fn slider_track(x0: f32) -> (f32, f32, f32) {
-    (x0 + 340.0, 320.0, 118.0)
-}
-
-fn control_buttons(x0: f32) -> Vec<(Button, Rect)> {
+fn control_buttons(notch: &Notch, x0: f32) -> Vec<(Button, Rect)> {
     let mut v: Vec<(Button, Rect)> = (0..4).map(|i| (Button::Tile(i as u8), tile_rect(x0, i))).collect();
-    v.push((Button::Volume, slider_rect(x0)));
+    v.push((Button::Volume, slider_rect(x0, VOLUME_Y)));
+    if notch.controls().brightness.is_some() {
+        v.push((Button::Brightness, slider_rect(x0, BRIGHT_Y)));
+    }
     v
 }
 
-/// Continues a volume-slider drag; call on pointer motion with pill-logical coordinates.
+/// Continues a slider drag; call on pointer motion with pill-logical coordinates.
 pub fn drag(notch: &mut Notch, x: f32) {
-    if !notch.slider_dragging() {
+    let kind = notch.slider_dragging();
+    if kind == 0 {
         return;
     }
-    let (tx, tw, _) = slider_track(notch.shape().rect.x);
-    let v = ((x - tx) / tw).clamp(0.0, 1.0);
-    notch.set_volume_local(v);
-    visus_platform::set_volume(v);
+    let v = ((x - (notch.shape().rect.x + TRACK_X)) / TRACK_W).clamp(0.0, 1.0);
+    if kind == 1 {
+        notch.set_volume_local(v);
+        visus_platform::set_volume(v);
+    } else {
+        notch.set_brightness_local(v);
+        visus_platform::set_brightness(v);
+    }
+}
+
+fn draw_slider(cx: &mut Ctx, x0: f32, y: f32, label: &str, v: f32, a: f32) {
+    let tx = x0 + TRACK_X;
+    cx.t(label, tx, y - 30.0, 14.0, color(GRAY, a), Align::Left);
+    cx.t(&format!("{:.0}%", v * 100.0), tx + TRACK_W, y - 30.0, 14.0, color(WHITE, a), Align::Right);
+    cx.rrect(rect(tx, y - 3.0, TRACK_W, 6.0), 3.0, color(WHITE, 0.16 * a));
+    if v > 0.0 {
+        cx.rrect(rect(tx, y - 3.0, (TRACK_W * v).max(6.0), 6.0), 3.0, color(WHITE, 0.95 * a));
+    }
+    let kx = tx + TRACK_W * v;
+    cx.circle(kx, y + 1.0, 11.0, color([0, 0, 0], 0.35 * a));
+    cx.circle(kx, y, 9.0, color(WHITE, a));
 }
 
 fn quad_arc(pb: &mut PathBuilder, cx: f32, cy: f32, r: f32) {
@@ -294,27 +321,13 @@ fn draw_control(cx: &mut Ctx, notch: &Notch, a: f32) {
         cx.t(sub, rc.x + rc.w - 14.0, rc.y + 31.0, 12.0, color(if on { [255, 255, 255] } else { GRAY }, 0.85 * a), Align::Right);
     }
 
-    let (tx, tw, ty) = slider_track(x0);
-    let v = if c.muted { 0.0 } else { c.volume };
-    cx.t("Volume", tx, 84.0, 14.0, color(GRAY, a), Align::Left);
-    cx.t(&format!("{:.0}%", v * 100.0), tx + tw, 84.0, 14.0, color(WHITE, a), Align::Right);
-    cx.rrect(rect(tx, ty - 3.0, tw, 6.0), 3.0, color(WHITE, 0.16 * a));
-    if v > 0.0 {
-        cx.rrect(rect(tx, ty - 3.0, (tw * v).max(6.0), 6.0), 3.0, color(WHITE, 0.95 * a));
-    }
-    let kx = tx + tw * v;
-    cx.circle(kx, ty + 1.0, 11.0, color([0, 0, 0], 0.35 * a));
-    cx.circle(kx, ty, 9.0, color(WHITE, a));
-
-    let m = notch.media();
-    if m.has_session && !m.title.is_empty() {
-        cx.t("NOW PLAYING", tx, 168.0, 11.0, color(GRAY, 0.9 * a), Align::Left);
-        let title = cx.fit(&m.title, 17.0, tw);
-        cx.t(&title, tx, 190.0, 17.0, color(WHITE, a), Align::Left);
-        let artist = cx.fit(&m.artist, 13.0, tw);
-        cx.t(&artist, tx, 209.0, 13.0, color(GRAY, a), Align::Left);
-    } else if !c.has_volume {
-        cx.t("Volume control unavailable on this system", tx, 190.0, 13.0, color(GRAY, a), Align::Left);
+    draw_slider(cx, x0, VOLUME_Y, "Volume", if c.muted { 0.0 } else { c.volume }, a);
+    match c.brightness {
+        Some(b) => draw_slider(cx, x0, BRIGHT_Y, "Brightness", b, a),
+        None => {
+            cx.t("Brightness", x0 + TRACK_X, BRIGHT_Y - 30.0, 14.0, color(GRAY, 0.6 * a), Align::Left);
+            cx.t("Not available on this display", x0 + TRACK_X, BRIGHT_Y, 13.0, color(GRAY, 0.6 * a), Align::Left);
+        }
     }
 }
 
@@ -348,7 +361,7 @@ fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
             (Button::PlayPause, rect(cx - 24.0, 190.0, 48.0, 40.0)),
             (Button::Next, rect(cx + 84.0 - 24.0, 190.0, 48.0, 40.0)),
         ],
-        Page::Control => control_buttons(x0),
+        Page::Control => control_buttons(notch, x0),
         Page::Timer => timer_buttons(x0),
         Page::Todo => todo_buttons(notch, x0),
         Page::Shelf => shelf_buttons(notch, x0),
@@ -708,6 +721,10 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
     }
 }
 
+fn clock_fmt(notch: &Notch) -> &'static str {
+    if notch.settings().clock_24h { "%H:%M" } else { "%-I:%M %p" }
+}
+
 fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     let r = notch.shape().rect;
     let mid = r.y + r.h / 2.0;
@@ -717,7 +734,7 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     if timer_active {
         let left = timer.remaining().as_secs_f32() / timer.total().as_secs_f32();
         cx.ring(r.x + 28.0, mid, 8.0, 2.5, left, GREEN, a);
-    } else if let Some((charging, pct)) = notch.battery() {
+    } else if let Some((charging, pct)) = notch.battery().filter(|_| notch.settings().show_battery) {
         let tint = if charging || pct > 20 { GREEN } else { ORANGE };
         cx.ring(r.x + 28.0, mid, 8.0, 2.5, pct as f32 / 100.0, tint, a);
         if charging {
@@ -725,7 +742,7 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
             cx.triangle([(r.x + 26.5, mid + 4.5), (r.x + 31.0, mid - 0.5), (r.x + 27.5, mid - 0.5)], color(WHITE, a));
         }
     }
-    let clock = chrono::Local::now().format("%H:%M").to_string();
+    let clock = chrono::Local::now().format(clock_fmt(notch)).to_string();
     cx.t(&clock, r.x + r.w / 2.0, mid + 7.0, 20.0, color(WHITE, a), Align::Center);
     if notch.wants_audio() {
         let bars = notch.visualizer_bars();
@@ -774,7 +791,7 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
     let mid = r.x + r.w / 2.0;
 
     let now = chrono::Local::now();
-    let header = format!("{}  {}", now.format("%a %-d %b %Y"), now.format("%H:%M"));
+    let header = format!("{}  {}", now.format("%a %-d %b %Y"), now.format(clock_fmt(notch)));
     cx.t(&header, mid, 44.0, 22.0, color(WHITE, a), Align::Center);
     magnifier(cx, r.x + r.w - 62.0, 25.0, color(WHITE, 0.85 * a));
     gear(cx, r.x + r.w - 102.0, 25.0, color(WHITE, 0.85 * a));
@@ -1031,6 +1048,10 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                 Toggle::Minimal => notch.update_settings(|s| s.minimal = !s.minimal),
                 Toggle::Eye => notch.update_settings(|s| s.mascot = !s.mascot),
                 Toggle::Fullscreen => notch.update_settings(|s| s.hide_in_fullscreen = !s.hide_in_fullscreen),
+                Toggle::Quiet => notch.update_settings(|s| s.quiet = !s.quiet),
+                Toggle::Clock24 => notch.update_settings(|s| s.clock_24h = !s.clock_24h),
+                Toggle::Visualizer => notch.update_settings(|s| s.visualizer = !s.visualizer),
+                Toggle::Battery => notch.update_settings(|s| s.show_battery = !s.show_battery),
                 Toggle::Autostart => {
                     let _ = visus_platform::set_autostart(!visus_platform::autostart_enabled());
                 }
@@ -1054,7 +1075,11 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
             }
             Button::FolderAdd => notch.begin_folder_input(),
             Button::Volume => {
-                notch.begin_drag();
+                notch.begin_drag(1);
+                drag(notch, x);
+            }
+            Button::Brightness => {
+                notch.begin_drag(2);
                 drag(notch, x);
             }
             Button::Tile(i) => {
@@ -1553,15 +1578,29 @@ fn settings_buttons_raw(x0: f32) -> Vec<(Button, Rect)> {
     for i in 0..2 {
         v.push((Button::Style(i), rect(x0 + 380.0 + i as f32 * 96.0, 178.0, 90.0, 28.0)));
     }
+    for (i, t) in CHIPS.iter().enumerate() {
+        v.push((Button::Toggle(t.0), chip_rect(x0, i)));
+    }
     v.push((Button::Location, rect(x0 + 36.0, 182.0, 300.0, 26.0)));
     v.push((Button::Update, rect(x0 + 36.0, 214.0, 130.0, 26.0)));
     v.push((Button::SettingsClose, rect(x0 + SETTINGS_W - 56.0, 40.0, 36.0, 28.0)));
     v.push((Button::EyeTime(-1), rect(x0 + 190.0, 250.0, 30.0, 26.0)));
     v.push((Button::EyeTime(1), rect(x0 + 276.0, 250.0, 30.0, 26.0)));
     for i in 0..visus_platform::list_drives().len().min(7) {
-        v.push((Button::DriveToggle(i as u8), rect(x0 + 380.0 + i as f32 * 52.0, 270.0, 46.0, 26.0)));
+        v.push((Button::DriveToggle(i as u8), rect(x0 + 380.0 + i as f32 * 52.0, 282.0, 46.0, 26.0)));
     }
     v
+}
+
+const CHIPS: [(Toggle, &str); 4] = [
+    (Toggle::Quiet, "Quiet mode"),
+    (Toggle::Clock24, "24-hour clock"),
+    (Toggle::Visualizer, "Visualizer"),
+    (Toggle::Battery, "Battery ring"),
+];
+
+fn chip_rect(x0: f32, i: usize) -> Rect {
+    rect(x0 + 380.0 + (i % 2) as f32 * 148.0, 212.0 + (i / 2) as f32 * 26.0, 140.0, 22.0)
 }
 
 const SETTINGS_W: f32 = 744.0;
@@ -1746,14 +1785,25 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
     cx.t(&value, x0 + 248.0, 269.0, 16.0, color(WHITE, a), Align::Center);
 
     // Drives and folders the launcher searches besides the Start Menu.
-    cx.t("Search drives for apps", x0 + 380.0, 262.0, 14.0, color(GRAY, a), Align::Left);
+    for (i, (t, label)) in CHIPS.iter().enumerate() {
+        let on = match t {
+            Toggle::Quiet => s.quiet,
+            Toggle::Clock24 => s.clock_24h,
+            Toggle::Visualizer => s.visualizer,
+            _ => s.show_battery,
+        };
+        let rc = chip_rect(x0, i);
+        cx.rrect(rc, 12.0, if on { color(GREEN, 0.9 * a) } else { color(WHITE, 0.12 * a) });
+        cx.t(label, rc.x + 70.0, rc.y + 17.0, 13.0, if on { color([0, 0, 0], a) } else { color(WHITE, a) }, Align::Center);
+    }
+    cx.t("Search drives for apps", x0 + 380.0, 274.0, 14.0, color(GRAY, a), Align::Left);
     for (i, d) in visus_platform::list_drives().iter().take(7).enumerate() {
         let on = s.app_folders.iter().any(|f| f == d);
-        let rc = rect(x0 + 380.0 + i as f32 * 52.0, 270.0, 46.0, 26.0);
+        let rc = rect(x0 + 380.0 + i as f32 * 52.0, 282.0, 46.0, 26.0);
         cx.rrect(rc, 13.0, if on { color(GREEN, 0.9 * a) } else { color(WHITE, 0.12 * a) });
         cx.t(d.trim_end_matches('\\'), rc.x + 23.0, rc.y + 18.0, 14.0, if on { color([0, 0, 0], a) } else { color(WHITE, a) }, Align::Center);
     }
-    cx.t("Scans up to 3 folders deep", x0 + 380.0, 316.0, 12.0, color(GRAY, 0.8 * a), Align::Left);
+    cx.t("Scans up to 3 folders deep", x0 + 380.0, 328.0, 12.0, color(GRAY, 0.8 * a), Align::Left);
     cx.t("Extra app folders", x0 + 36.0, 292.0, 14.0, color(GRAY, a), Align::Left);
     for (i, f) in s.app_folders.iter().take(2).enumerate() {
         let y = 298.0 + i as f32 * 26.0;
@@ -1914,108 +1964,6 @@ fn draw_location_row(cx: &mut Ctx, notch: &Notch, rc: Rect, a: f32) {
             let label = cx.fit(&label, 15.0, rc.w - 90.0);
             cx.t(&label, rc.x + 34.0, rc.y + h * 0.7, 15.0, color(tint, a), Align::Left);
             cx.t("Change", rc.x + rc.w - 14.0, rc.y + h * 0.7, 12.0, color(GRAY, 0.8 * a), Align::Right);
-        }
-    }
-}
-
-/// Design mock of the widget tray: cards spring out from under the pill. `t` runs 0..1 over the animation.
-pub fn draw_widgets_mock(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32, t: f32) {
-    // Stand-in wallpaper so the glass cards read against something.
-    let (w, h) = (pm.width() as f32, pm.height() as f32);
-    if let Some(shader) = LinearGradient::new(
-        Point::from_xy(0.0, 0.0),
-        Point::from_xy(w, h),
-        vec![GradientStop::new(0.0, Color::from_rgba8(58, 40, 120, 255)), GradientStop::new(1.0, Color::from_rgba8(20, 90, 140, 255))],
-        SpreadMode::Pad,
-        Transform::identity(),
-    ) {
-        let mut p = Paint::default();
-        p.shader = shader;
-        if let Some(r) = tiny_skia::Rect::from_xywh(0.0, 0.0, w, h) {
-            pm.fill_rect(r, &p, Transform::identity(), None);
-        }
-    }
-    draw(pm, text, notch, scale);
-
-    let s = notch.shape().rect;
-    let pill_cx = s.x + s.w / 2.0;
-    let (cw, gap, top) = (150.0, 14.0, s.h + 16.0);
-    let total = 4.0 * cw + 3.0 * gap;
-    for i in 0..4 {
-        let local = ((t - i as f32 * 0.1) / 0.55).clamp(0.0, 1.0);
-        if local <= 0.0 {
-            continue;
-        }
-        // Ease-out-back: overshoots a little, then settles.
-        let k = 1.70158f32;
-        let e = 1.0 + (k + 1.0) * (local - 1.0).powi(3) + k * (local - 1.0).powi(2);
-        let (fx, fy) = (pill_cx - total / 2.0 + i as f32 * (cw + gap) + cw / 2.0, top + cw / 2.0);
-        let (cur_x, cur_y) = (pill_cx + (fx - pill_cx) * e, s.h + (fy - s.h) * e);
-        let sc = (0.15 + 0.85 * e).max(0.01);
-        let a = local.min(1.0);
-        let mut cx = Ctx {
-            pm,
-            text,
-            scale: scale * sc,
-            ox: (cur_x - fx * sc) * scale,
-            oy: (cur_y - fy * sc) * scale,
-        };
-        let r = rect(fx - cw / 2.0, fy - cw / 2.0, cw, cw);
-        for (grow, al) in [(14.0, 0.07), (6.0, 0.12)] {
-            cx.rrect(rect(r.x - grow, r.y - grow * 0.3, r.w + 2.0 * grow, r.h + 2.0 * grow), 30.0 + grow, color([0, 0, 0], al * a));
-        }
-        cx.rrect(r, 30.0, color([14, 14, 18], a));
-        if let Some(edge) = rrect(r.x + 0.5, r.y + 0.5, r.w - 1.0, r.h - 1.0, 30.0) {
-            cx.stroke(&edge, color(WHITE, 0.10 * a), 1.0);
-        }
-        widget_body(&mut cx, notch, i, r, a);
-    }
-}
-
-fn widget_body(cx: &mut Ctx, notch: &Notch, i: usize, r: Rect, a: f32) {
-    let (x, y) = (r.x, r.y);
-    match i {
-        0 => {
-            let m = notch.media();
-            let tint = notch.accent();
-            cx.rrect(r, 30.0, color(tint, 0.22 * a));
-            let tile = rect(x + 16.0, y + 16.0, 56.0, 56.0);
-            match &m.art {
-                Some(art) => draw_image(cx, tile, 12.0, art, a),
-                None => cx.rrect(tile, 12.0, color(tint, 0.8 * a)),
-            }
-            let title = cx.fit(if m.title.is_empty() { "Nothing playing" } else { &m.title }, 15.0, r.w - 32.0);
-            cx.t(&title, x + 16.0, y + 100.0, 15.0, color(WHITE, a), Align::Left);
-            let artist = cx.fit(if m.artist.is_empty() { "Play something" } else { &m.artist }, 12.0, r.w - 32.0);
-            cx.t(&artist, x + 16.0, y + 118.0, 12.0, color(GRAY, a), Align::Left);
-            cx.rrect(rect(x + 16.0, y + 130.0, r.w - 32.0, 4.0), 2.0, color(WHITE, 0.18 * a));
-            cx.rrect(rect(x + 16.0, y + 130.0, (r.w - 32.0) * 0.4, 4.0), 2.0, color(WHITE, 0.95 * a));
-        }
-        1 => {
-            let (temp, label) = match notch.weather() {
-                Some(w) => (format!("{:.0}\u{b0}", w.temp_c), weather_label(w.code).to_string()),
-                None => ("21\u{b0}".to_string(), "Partly cloudy".to_string()),
-            };
-            cx.circle(x + 30.0, y + 34.0, 11.0, color([255, 200, 60], a));
-            cx.circle(x + 40.0, y + 40.0, 11.0, color([235, 240, 250], 0.95 * a));
-            cx.t(&temp, x + 16.0, y + 106.0, 50.0, color(WHITE, a), Align::Left);
-            cx.t(&label, x + 16.0, y + 130.0, 13.0, color(GRAY, a), Align::Left);
-        }
-        2 => {
-            let (cxp, cyp) = (x + r.w / 2.0, y + 66.0);
-            let p = notch.timer().progress();
-            cx.ring(cxp, cyp, 38.0, 8.0, if p > 0.0 { 1.0 - p } else { 1.0 }, GREEN, a);
-            let mins = notch.timer().remaining().as_secs() / 60;
-            cx.t(&format!("{mins}"), cxp, cyp + 9.0, 28.0, color(WHITE, a), Align::Center);
-            cx.t("Focus", cxp, y + 136.0, 13.0, color(GRAY, a), Align::Center);
-        }
-        _ => {
-            let st = notch.stats();
-            let (cxp, cyp) = (x + r.w / 2.0, y + 66.0);
-            cx.ring(cxp, cyp, 40.0, 7.0, st.cpu.clamp(0.02, 1.0), GREEN, a);
-            cx.ring(cxp, cyp, 27.0, 7.0, st.ram.clamp(0.02, 1.0), BLUE, a);
-            cx.t(&format!("{:.0}%", st.cpu * 100.0), cxp, cyp + 5.0, 14.0, color(WHITE, a), Align::Center);
-            cx.t("CPU   RAM", cxp, y + 136.0, 12.0, color(GRAY, a), Align::Center);
         }
     }
 }

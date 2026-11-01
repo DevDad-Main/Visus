@@ -126,7 +126,8 @@ pub struct Notch {
     tracking: bool,
     last_motion: Instant,
     controls: Controls,
-    slider_drag: bool,
+    /// 0 = none, 1 = volume, 2 = brightness.
+    slider_drag: u8,
     viz_level: f32,
     viz_live: bool,
     viz_bars: [f32; VIZ_BARS],
@@ -177,7 +178,7 @@ impl Notch {
             tracking: false,
             last_motion: Instant::now(),
             controls: Controls::default(),
-            slider_drag: false,
+            slider_drag: 0,
             viz_level: 0.0,
             viz_live: false,
             viz_bars: [0.08; VIZ_BARS],
@@ -316,7 +317,7 @@ impl Notch {
 
     /// The closed pill shows an equalizer (and widens) only while music plays.
     pub fn visualizer_active(&self) -> bool {
-        !self.hidden && !self.settings.minimal && self.media.has_session && self.media.playing
+        !self.hidden && !self.settings.minimal && self.settings.visualizer && self.media.has_session && self.media.playing
     }
 
     /// True while the closed pill shows the visualizer, i.e. the host should sample audio.
@@ -393,8 +394,9 @@ impl Notch {
     }
 
     pub fn set_controls(&mut self, c: Controls) {
-        let volume = if self.slider_drag { self.controls.volume } else { c.volume };
-        self.controls = Controls { volume, ..c };
+        let volume = if self.slider_drag == 1 { self.controls.volume } else { c.volume };
+        let brightness = if self.slider_drag == 2 { self.controls.brightness } else { c.brightness };
+        self.controls = Controls { volume, brightness, ..c };
     }
 
     pub fn set_volume_local(&mut self, v: f32) {
@@ -415,16 +417,22 @@ impl Notch {
         }
     }
 
-    pub fn begin_drag(&mut self) {
-        self.slider_drag = true;
+    pub fn begin_drag(&mut self, kind: u8) {
+        self.slider_drag = kind;
     }
 
     pub fn end_drag(&mut self) {
-        self.slider_drag = false;
+        self.slider_drag = 0;
     }
 
-    pub fn slider_dragging(&self) -> bool {
+    /// Which slider is being dragged: 1 volume, 2 brightness.
+    pub fn slider_dragging(&self) -> u8 {
         self.slider_drag
+    }
+
+    pub fn set_brightness_local(&mut self, v: f32) {
+        self.touch();
+        self.controls.brightness = Some(v.clamp(0.0, 1.0));
     }
 
     pub fn timer(&self) -> &Timer {
@@ -1240,5 +1248,37 @@ mod tests {
         }
         assert!(min < 0.1);
         assert_eq!(blink_at(0.5).0, 1.0);
+    }
+
+    #[test]
+    fn quiet_mode_hides_alerts_but_not_timers() {
+        let mut n = Notch::new(800.0);
+        n.update_settings(|s| s.quiet = true);
+        n.alert(Alert::Headphones);
+        assert!(n.alert_kind().is_none());
+        n.alert(Alert::TimerDone);
+        assert_eq!(n.alert_kind(), Some(Alert::TimerDone));
+    }
+
+    #[test]
+    fn dragged_slider_keeps_local_value() {
+        let mut n = Notch::new(800.0);
+        n.begin_drag(1);
+        n.set_volume_local(0.8);
+        n.set_controls(Controls { volume: 0.2, has_volume: true, ..Controls::default() });
+        assert!((n.controls().volume - 0.8).abs() < 1e-6);
+        n.end_drag();
+        n.set_controls(Controls { volume: 0.2, has_volume: true, ..Controls::default() });
+        assert!((n.controls().volume - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn visualizer_needs_playing_music() {
+        let mut n = Notch::new(800.0);
+        assert!(!n.visualizer_active());
+        n.handle(Event::Media(MediaInfo { has_session: true, playing: true, ..MediaInfo::default() }));
+        assert!(n.visualizer_active());
+        n.update_settings(|s| s.visualizer = false);
+        assert!(!n.visualizer_active());
     }
 }

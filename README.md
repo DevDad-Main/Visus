@@ -19,7 +19,7 @@ out of the way. Native Rust, no web engine, near-zero CPU when idle.
 
 Download from [Releases](https://github.com/DevDad-Main/Visus/releases):
 
-- Windows: unzip `Visus-windows-x64.zip` and run `Visus.exe` (unsigned: SmartScreen > More info > Run anyway).
+- Windows: run `Visus-Setup.exe` (per-user install, no admin needed; optional start at login and desktop shortcut; uninstall from Settings > Apps). Or unzip `Visus-windows-x64.zip` and run `Visus.exe`. Unsigned: SmartScreen > More info > Run anyway.
 - Linux (Wayland, wlr-layer-shell compositors such as Hyprland/Sway): extract `Visus-linux-x64.tar.gz`, run `visus/visus`.
   Hyprland launcher key: `bind = SUPER, space, exec, /path/to/visus --toggle-palette`.
 

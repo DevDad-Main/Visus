@@ -53,6 +53,12 @@ pub struct Settings {
     pub minimal: bool,
     /// Silences pop-up alerts (timers and reminders still show).
     pub quiet: bool,
+    /// 24-hour clock in the pill; false shows 12-hour time.
+    pub clock_24h: bool,
+    /// Equalizer bars on the closed pill while music plays.
+    pub visualizer: bool,
+    /// Battery ring on the closed pill when the machine has a battery.
+    pub show_battery: bool,
     pub hide_in_fullscreen: bool,
     /// Show the idle eye when nothing has happened for a while.
     pub mascot: bool,
@@ -95,6 +101,9 @@ impl Default for Settings {
         Self {
             minimal: false,
             quiet: false,
+            clock_24h: true,
+            visualizer: true,
+            show_battery: true,
             hide_in_fullscreen: true,
             mascot: true,
             idle_secs: 45,

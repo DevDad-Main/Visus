@@ -17,7 +17,7 @@ mod sys;
 #[path = "controls_other.rs"]
 mod sys;
 
-static STATE: Mutex<Controls> = Mutex::new(Controls { volume: 0.0, muted: false, has_volume: false, wifi: None, bluetooth: None });
+static STATE: Mutex<Controls> = Mutex::new(Controls { volume: 0.0, muted: false, has_volume: false, wifi: None, bluetooth: None, brightness: None });
 static SAMPLING: AtomicBool = AtomicBool::new(false);
 static LIVE: AtomicBool = AtomicBool::new(false);
 static LEVEL: AtomicU32 = AtomicU32::new(0);
@@ -26,6 +26,7 @@ static SAMPLER: Once = Once::new();
 enum Cmd {
     Refresh,
     Volume(f32),
+    Brightness(f32),
     Mute(bool),
     Radio(Radio, bool),
 }
@@ -43,10 +44,11 @@ fn send(cmd: Cmd) {
                     while let Ok(c) = rx.try_recv() {
                         batch.push(c);
                     }
-                    let (mut volume, mut refresh) = (None, false);
+                    let (mut volume, mut brightness, mut refresh) = (None, None, false);
                     for c in batch {
                         match c {
                             Cmd::Volume(v) => volume = Some(v),
+                            Cmd::Brightness(v) => brightness = Some(v),
                             Cmd::Mute(m) => {
                                 sys::set_mute(m);
                                 refresh = true;
@@ -60,6 +62,9 @@ fn send(cmd: Cmd) {
                     }
                     if let Some(v) = volume {
                         sys::set_volume(v);
+                    }
+                    if let Some(v) = brightness {
+                        sys::set_brightness(v);
                     }
                     if refresh {
                         *STATE.lock().unwrap() = sys::read();
@@ -83,6 +88,10 @@ pub fn refresh_controls() {
 
 pub fn set_volume(v: f32) {
     send(Cmd::Volume(v));
+}
+
+pub fn set_brightness(v: f32) {
+    send(Cmd::Brightness(v));
 }
 
 pub fn set_muted(m: bool) {

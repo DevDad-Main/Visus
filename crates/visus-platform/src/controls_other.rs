@@ -6,6 +6,7 @@ pub fn read() -> Controls {
 }
 pub fn set_volume(_v: f32) {}
 pub fn set_mute(_m: bool) {}
+pub fn set_brightness(_v: f32) {}
 pub fn set_radio(_r: Radio, _on: bool) {}
 
 pub struct Meter;
