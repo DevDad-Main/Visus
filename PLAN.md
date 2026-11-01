@@ -54,65 +54,60 @@ Cargo workspace in `crates/`:
 
 | Crate | Status | Purpose |
 |---|---|---|
-| `visus-core` | done (skeleton) | Platform-independent state: `Notch` (modes Closed/Peek/Open, hover, page switching, alert peeks), `Spring` animation. No OS or rendering code. Unit tested. |
-| `visus-app` | done (skeleton) | winit window (borderless, transparent, always-on-top, top-center), tiny-skia drawing, softbuffer present, input handling. |
-| `visus-platform` | not started | SMTC media sessions, power/network/Bluetooth events, keyboard hook for HUD keys, click-through outside the pill (`WS_EX_TRANSPARENT`/hit-test), fullscreen detection, tray icon, drag & drop. |
-| `visus-pages` | not started | One module per feature page. |
+| `visus-core` | working | Platform-independent state: `Notch` (Closed/Peek/Open modes, hover, pages, alerts, timer, stats, lyrics state, idle eye logic), `Settings`, LRC parsing, `Spring` animation, `Event` type. No OS or rendering code. Unit tested. |
+| `visus-app` | working | Two hosts sharing one renderer (`ui.rs`, tiny-skia + bundled Inter font): `main.rs` (winit; Windows/X11/macOS) and `wayland.rs` (wlr-layer-shell via smithay-client-toolkit; Linux default). Also: settings persistence (`store.rs`), LRCLIB lookups (`lyrics.rs`), CPU/RAM/net sampling (`stats.rs`), Windows tray (`tray.rs`). |
+| `visus-platform` | Windows + Linux working | Windows: SMTC media, charger, volume/Caps Lock key HUDs, fullscreen detection, click-through region, autostart, cursor position. Linux: MPRIS media, UPower battery, XDG autostart. macOS: stubs. |
+| `visus-pages` | not started | Would hold one module per page once the page API is data-driven. |
 | `visus-plugins` | not started | WASM plugin host. |
 
-Rule: `visus-core` must stay free of platform and rendering dependencies so macOS/Linux ports reuse it.
+Rule: `visus-core` must stay free of platform and rendering dependencies.
 
 ## Current state (what works)
 
-- `cargo test -p visus-core` passes (spring settles, hover open/close, alert expiry, page wrap).
-- `cargo run -p visus-app` opens an 800x280 transparent window at top-center showing a black pill that
-  animates (springs) between closed / peek / open. Hover opens it, leaving closes after 250 ms.
-- Dev keys: `C` = charging alert peek, `H` = headphones peek, Left/Right or wheel = change page,
-  `Esc` = quit.
-- Drawing is shapes only: pill, alert circle, page dots. **No text yet.**
+- Closed pill (default 228x38, flared into the screen edge), hover to open, springs between states.
+- Pages (wheel/arrow keys): Music (title/artist/progress/transport, lyrics toggle), Timer (Pomodoro),
+  Stats (CPU, memory, network). Shelf and To-do are "Coming soon".
+- Synced lyrics from LRCLIB shown in a split pane (current line highlighted).
+- Alert peeks: charger plugged/unplugged, Caps Lock, volume (Windows), timer done.
+- Idle eye: almond eye with iris, blinks (irregular, sometimes double), glances around, follows the
+  cursor (Windows via `GetCursorPos`, Hyprland via IPC), dozes off with "zz".
+- Settings in `settings.json` (`%APPDATA%\visus` / `~/.config/visus`): `scale`, `closed_width`,
+  `closed_height`, `minimal`, `mascot`, `idle_secs`, `hide_in_fullscreen`, `eye_iris`, `eye_sclera`
+  (hex colours). Windows tray menu toggles the common ones and has size/eye-colour presets.
+- Dev tooling: `visus-app --snapshot <music|lyrics|timer|stats|shelf|todo> out.png` renders the open pill
+  headlessly using live OS state (handy for visual checks without hover automation).
+- CI builds and tests on Windows and Linux; tags `v*` publish a Windows zip (see `release.yml`).
 
 ## Known gaps / caveats
 
-- No text rendering. Next step: `fontdue` or `ab_glyph` (already in the tree via softbuffer deps) with a
-  bundled permissively licensed font (e.g. Inter, OFL). Needed for clock, titles, lyrics.
-- Window is a fixed 800x280 transparent rectangle, so the empty area around the pill is not
-  click-through yet. Needs per-platform input region/hit-testing.
-- Positioning is top-center of primary monitor; on Wayland compositors, `set_outer_position` is
-  ignored. Use a layer-shell surface for the Linux port (`wlr-layer-shell`).
-- Alpha path: softbuffer expects premultiplied 0xAARRGGBB; verify transparency on Windows.
-- Notch dimensions are hard-coded constants in `visus-core/src/notch.rs`; make them DPI/monitor aware.
-- Top-corner flares from the reference design are not drawn.
+- Windows code is verified to compile in CI but has had little hands-on testing: check click-through,
+  transparency, tray, media controls, charger and volume HUDs on a real machine.
+- No album art (gradient placeholder). Wi-Fi and Bluetooth peeks missing. No brightness/language HUDs.
+- Lyrics: no click-to-seek, no disk cache. Position is extrapolated between player updates.
+- No settings window yet (tray menu on Windows, hand-edit `settings.json` elsewhere). No tray on Linux.
+- Linux layer-shell uses integer scaling only; the eye only tracks the cursor under Hyprland.
+- Shelf (drag in/out) and To-do (needs keyboard input in a non-activating window) are not built.
+- Hyprland cursor warping via `hyprctl` does not reliably trigger hover, so test open states with
+  `--snapshot`.
 
 ## Roadmap
 
-1. Text rendering + closed-state clock; open-state Music page layout (art, title, progress, controls).
-2. Data-driven page system: `Page` trait/registry replacing the `Page` enum, per-page layout and
-   events; settings store (JSON/SQLite, local).
-3. Windows platform crate: SMTC media, battery/charger, Bluetooth, tray, click-through, fullscreen hide.
-4. Pages: lyrics (LRCLIB, cached), Pomodoro, water, to-do + reminders, shelf (drag & drop).
-5. HUD overlays (volume, brightness, Caps Lock, language) via keyboard hook.
-6. Visus extras: calendar, weather, system stats, notifications center, launcher, capture shortcuts.
-7. Plugin host (WASM) once the page API is stable.
-8. Idle mascot, minimal mode, settings window, installer/MS Store packaging.
-9. macOS and Linux (layer-shell) ports.
-
-### Settings and idle eye (requested)
-
-- **Settings**: tray menu entry opens a settings window (autostart, minimal notch, hide in fullscreen,
-  notch size, mascot on/off, eye style, enabled pages/plugins). Every change applies instantly and is
-  persisted to the local settings store. Core holds a `Settings` struct; UI is a separate window.
-- **Idle eye**: after N seconds with no interaction the clock fades and a single eye appears in the closed
-  pill. It follows the global cursor (needs cursor position from the platform layer, polled only while the
-  eye is visible), dozes off after a longer idle period, and wakes with a blink when the user returns.
-  Redraws only while the pupil moves, to keep idle CPU near zero.
-- **Eye styles** (later, selectable in settings): default white eye; "Sauron" eye with a slit pupil, fiery
-  glow, and a sweeping searchlight cone that scans the screen. Styles are a `EyeStyle` trait/enum in
-  `visus-ui` so plugins can add more.
+1. Windows hands-on fixes from real-machine testing.
+2. To-do page with reminders (text entry), File shelf (drag & drop), album art from SMTC/MPRIS.
+3. Settings window (sizes, colours, pages, eye style) replacing hand-editing.
+4. Wi-Fi and Bluetooth peeks, brightness and keyboard-language HUDs.
+5. Eye styles: "Sauron" eye with fiery glow and searchlight sweep; selectable in settings.
+6. Visus extras: calendar, weather, notifications center, launcher, capture shortcuts.
+7. Data-driven page registry, then a WASM plugin host.
+8. macOS port; installer / Store packaging.
 
 ## Dev notes
 
-- Build/run: `cargo run -p visus-app`; tests: `cargo test`.
+- Build/run: `cargo run -p visus-app`; tests: `cargo test`. Force the plain-window host on Linux with
+  `VISUS_BACKEND=winit`.
 - Release profile is size/speed tuned (LTO, strip, panic=abort).
-- Cross-check for Windows: `cargo check --target x86_64-pc-windows-gnu` (needs `rustup target add`).
-- Only the user's own screenshots of Nusa are available as visual reference; ask for more of the
-  other pages (timer, water, shelf, to-do) before designing them.
+- No Windows target is installed on the Linux dev machine; use the CI Windows job
+  (`gh run list`, `gh run view <id> --log-failed`) to verify Windows changes.
+- Windows API signatures are easiest to confirm by grepping the `windows-0.62` crate source under
+  `~/.cargo/registry/src` (e.g. async ops use `.join()`, GUIDs may live in a different feature module).
+- Visual references are the user's Nusa screenshots; other pages were designed by intuition to match.
