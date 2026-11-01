@@ -36,7 +36,7 @@ impl Fetcher {
 
 fn worker(rx: Receiver<Request>, emit: Emit) {
     let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(8)))
+        .timeout_global(Some(Duration::from_secs(5)))
         .user_agent(USER_AGENT)
         .build()
         .into();
@@ -154,29 +154,37 @@ fn lookup(agent: &ureq::Agent, title: &str, artist: &str, duration: Duration) ->
     }
     attempts.push((ct.clone(), ca.clone()));
     attempts.dedup();
-    for (t, a) in &attempts {
-        let mut params = vec![("track_name", t.clone()), ("artist_name", a.clone())];
-        if !duration.is_zero() {
-            params.push(("duration", duration.as_secs().to_string()));
-        }
-        // Exact match first, then a looser search when durations disagree.
-        if let Some(lines) = get_json(agent, "get", &params).and_then(|v| synced(&v)) {
-            return Some(lines);
-        }
-        params.retain(|(k, _)| *k != "duration");
-        if let Some(lines) = get_json(agent, "search", &params).and_then(|v| v.as_array()?.iter().find_map(synced)) {
-            return Some(lines);
-        }
-    }
-    let q = format!("{ca} {ct}");
-    if let Some(lines) = get_json(agent, "search", &[("q", q)]).and_then(|v| v.as_array()?.iter().find_map(synced)) {
-        return Some(lines);
-    }
-    attempts
-        .iter()
-        .take(3)
-        .find_map(|(t, a)| netease(agent, t, a, duration))
-        .or_else(|| attempts.iter().take(2).find_map(|(t, a)| lyrics_ovh(agent, t, a, duration)))
+
+    // The three sources run side by side so a miss on one never delays the others; LRCLIB wins when it has a match.
+    let lrclib = {
+        let (agent, attempts, q) = (agent.clone(), attempts.clone(), format!("{ca} {ct}"));
+        std::thread::spawn(move || -> Lines {
+            for (t, a) in &attempts {
+                let mut params = vec![("track_name", t.clone()), ("artist_name", a.clone())];
+                if !duration.is_zero() {
+                    params.push(("duration", duration.as_secs().to_string()));
+                }
+                // Exact match first, then a looser search when durations disagree.
+                if let Some(lines) = get_json(&agent, "get", &params).and_then(|v| synced(&v)) {
+                    return Some(lines);
+                }
+                params.retain(|(k, _)| *k != "duration");
+                if let Some(lines) = get_json(&agent, "search", &params).and_then(|v| v.as_array()?.iter().find_map(synced)) {
+                    return Some(lines);
+                }
+            }
+            get_json(&agent, "search", &[("q", q)]).and_then(|v| v.as_array()?.iter().find_map(synced))
+        })
+    };
+    let ne = {
+        let (agent, attempts) = (agent.clone(), attempts.clone());
+        std::thread::spawn(move || -> Lines { attempts.iter().take(3).find_map(|(t, a)| netease(&agent, t, a, duration)) })
+    };
+    let ovh = {
+        let (agent, attempts) = (agent.clone(), attempts.clone());
+        std::thread::spawn(move || -> Lines { attempts.iter().take(2).find_map(|(t, a)| lyrics_ovh(&agent, t, a, duration)) })
+    };
+    lrclib.join().ok().flatten().or_else(|| ne.join().ok().flatten()).or_else(|| ovh.join().ok().flatten())
 }
 
 #[cfg(test)]

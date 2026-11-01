@@ -18,6 +18,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\Visus.exe
+SetupIconFile=..\crates\visus-app\assets\visus.ico
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Tasks]

@@ -100,7 +100,7 @@ const OPEN: (f32, f32) = (744.0, 248.0);
 const PEEK_TIME: Duration = Duration::from_millis(2800);
 const HOVER_CLOSE_DELAY: Duration = Duration::from_millis(250);
 const WAVE_REFRESH: Duration = Duration::from_millis(66);
-const PROGRESS_REFRESH: Duration = Duration::from_millis(500);
+const PROGRESS_REFRESH: Duration = Duration::from_millis(200);
 const STATS_REFRESH: Duration = Duration::from_secs(1);
 const LYRIC_REFRESH: Duration = Duration::from_millis(250);
 const EYE_FOLLOW: Duration = Duration::from_millis(50);
@@ -168,6 +168,7 @@ pub struct Notch {
     art_fallback: Option<(String, std::sync::Arc<crate::Art>)>,
     art_request: Option<(String, String)>,
     art_asked: String,
+    art_pending: Option<(String, Instant)>,
     download: Option<u64>,
     alert_text: Option<String>,
     windows: Vec<(isize, String)>,
@@ -240,6 +241,7 @@ impl Notch {
             art_fallback: None,
             art_request: None,
             art_asked: String::new(),
+            art_pending: None,
             download: None,
             alert_text: None,
             windows: Vec::new(),
@@ -378,8 +380,9 @@ impl Notch {
             }
         }
         if self.art_asked != key {
-            self.art_asked = key;
-            self.art_request = Some((self.media.title.clone(), self.media.artist.clone()));
+            // Give the player a moment to deliver its own cover before looking one up online.
+            self.art_asked = key.clone();
+            self.art_pending = Some((key, Instant::now()));
         }
     }
 
@@ -536,6 +539,14 @@ impl Notch {
         self.hidden
     }
 
+    /// Flips play/pause on screen right away; the player's own report corrects it a moment later.
+    pub fn toggle_play_local(&mut self) {
+        let pos = self.media_position();
+        self.media.playing = !self.media.playing;
+        self.media.position = pos;
+        self.media_at = Instant::now();
+    }
+
     pub fn media(&self) -> &MediaInfo {
         &self.media
     }
@@ -572,7 +583,7 @@ impl Notch {
         } else {
             None
         };
-        let base = match (base, self.toast_text().map(|_| Duration::from_millis(100))) {
+        let base = match (base, self.toast_text().map(|_| Duration::from_millis(100)).or(self.art_pending.as_ref().map(|_| Duration::from_millis(300)))) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
@@ -1457,6 +1468,15 @@ impl Notch {
 
     pub fn tick(&mut self, dt: Duration) {
         self.wander();
+        if let Some((k, at)) = &self.art_pending {
+            if at.elapsed() > Duration::from_millis(1200) {
+                let current = format!("{}\u{1}{}", self.media.title, self.media.artist);
+                if self.media.art.is_none() && *k == current {
+                    self.art_request = Some((self.media.title.clone(), self.media.artist.clone()));
+                }
+                self.art_pending = None;
+            }
+        }
         self.check_meetings();
         if self.mode == Mode::Closed {
             self.retarget();

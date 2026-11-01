@@ -32,23 +32,9 @@ enum Action {
     Quit,
 }
 
-/// White pill on transparent, readable on light and dark taskbars.
+/// The app icon rendered at 32x32 (see tools/make_icon.py).
 fn icon() -> Option<Icon> {
-    const N: u32 = 32;
-    let mut px = vec![0u8; (N * N * 4) as usize];
-    for y in 6..18 {
-        for x in 2..30 {
-            // Round the two bottom corners only, like the notch.
-            let dx = (x as i32 - 15).abs() - 9;
-            let dy = y as i32 - 11;
-            if y >= 11 && dx > 0 && dx * dx + dy * dy > 49 {
-                continue;
-            }
-            let i = ((y * N + x) * 4) as usize;
-            px[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
-        }
-    }
-    Icon::from_rgba(px, N, N).ok()
+    Icon::from_rgba(include_bytes!("../assets/tray32.rgba").to_vec(), 32, 32).ok()
 }
 
 pub fn create(proxy: EventLoopProxy<UserEvent>, s: &Settings) -> Option<Tray> {

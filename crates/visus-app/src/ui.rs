@@ -1624,7 +1624,10 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
         }
         match b {
             Button::Prev => visus_platform::media_command(MediaCommand::Previous),
-            Button::PlayPause => visus_platform::media_command(MediaCommand::PlayPause),
+            Button::PlayPause => {
+                notch.toggle_play_local();
+                visus_platform::media_command(MediaCommand::PlayPause);
+            }
             Button::Next => visus_platform::media_command(MediaCommand::Next),
             Button::Lyrics => notch.toggle_lyrics(),
             Button::Palette => notch.open_palette(),

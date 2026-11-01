@@ -23,9 +23,9 @@ fn ticks(t: windows::Foundation::TimeSpan) -> Duration {
     Duration::from_nanos(t.Duration.max(0) as u64 * 100)
 }
 
-fn snapshot(manager: &Manager) -> MediaInfo {
+fn snapshot(manager: &Manager, emit: &Emit) -> MediaInfo {
     let Ok(session) = manager.GetCurrentSession() else { return MediaInfo::default() };
-    read_session(&session).unwrap_or_default()
+    read_session(&session, emit).unwrap_or_default()
 }
 
 /// Last decoded cover keyed by track, so state updates do not re-read the thumbnail stream.
@@ -44,7 +44,32 @@ fn thumbnail(props: &windows::Media::Control::GlobalSystemMediaTransportControls
     crate::art::decode(&buf)
 }
 
-fn read_session(s: &Session) -> windows::core::Result<MediaInfo> {
+static LOADING: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+/// Loads the cover on its own thread so a track change shows up immediately, then re-emits with the art.
+fn request_art(session: &Session, key: (String, String), emit: Emit) {
+    {
+        let mut loading = LOADING.lock().unwrap();
+        if loading.as_ref() == Some(&key) {
+            return;
+        }
+        *loading = Some(key.clone());
+    }
+    let session = session.clone();
+    std::thread::spawn(move || {
+        let art = session.TryGetMediaPropertiesAsync().and_then(|o| o.join()).ok().and_then(|p| thumbnail(&p));
+        *ART_CACHE.lock().unwrap() = Some((key.clone(), art));
+        if let Ok(info) = read_session(&session, &emit) {
+            emit(Event::Media(info));
+        }
+        let mut loading = LOADING.lock().unwrap();
+        if loading.as_ref() == Some(&key) {
+            *loading = None;
+        }
+    });
+}
+
+fn read_session(s: &Session, emit: &Emit) -> windows::core::Result<MediaInfo> {
     let props = s.TryGetMediaPropertiesAsync()?.join()?;
     let playing = s.GetPlaybackInfo()?.PlaybackStatus()? == Status::Playing;
     let tl = s.GetTimelineProperties()?;
@@ -56,9 +81,8 @@ fn read_session(s: &Session) -> windows::core::Result<MediaInfo> {
     let art = match cached {
         Some(a) => a,
         None => {
-            let a = thumbnail(&props);
-            *ART_CACHE.lock().unwrap() = Some((key, a.clone()));
-            a
+            request_art(s, key, emit.clone());
+            None
         }
     };
     Ok(MediaInfo {
@@ -95,7 +119,7 @@ pub fn start(emit: Emit) {
                         let mk = |session: &Session| {
                             let emit = emit.clone();
                             let session = session.clone();
-                            move || emit(Event::Media(read_session(&session).unwrap_or_default()))
+                            move || emit(Event::Media(read_session(&session, &emit).unwrap_or_default()))
                         };
                         let (a, b, c) = (mk(&session), mk(&session), mk(&session));
                         let t0 = session.MediaPropertiesChanged(&TypedEventHandler::new(
@@ -120,7 +144,7 @@ pub fn start(emit: Emit) {
                             *slot = Some(Subscription { session, tokens: [t0, t1, t2] });
                         }
                     }
-                    emit(Event::Media(snapshot(&manager)));
+                    emit(Event::Media(snapshot(&manager, &emit)));
                 }
             };
 
@@ -140,9 +164,20 @@ pub fn start(emit: Emit) {
         .expect("spawn media thread");
 }
 
+static MANAGER: Mutex<Option<Manager>> = Mutex::new(None);
+
+/// The session manager is created once; asking for it on every click added a noticeable delay.
+fn manager() -> Option<Manager> {
+    let mut slot = MANAGER.lock().unwrap();
+    if slot.is_none() {
+        *slot = Manager::RequestAsync().and_then(|o| o.join()).ok();
+    }
+    slot.clone()
+}
+
 pub fn media_command(cmd: MediaCommand) {
     std::thread::spawn(move || {
-        let Ok(manager) = Manager::RequestAsync().and_then(|o| o.join()) else { return };
+        let Some(manager) = manager() else { return };
         let Ok(session) = manager.GetCurrentSession() else { return };
         let _ = match cmd {
             MediaCommand::PlayPause => session.TryTogglePlayPauseAsync().and_then(|o| o.join()),
