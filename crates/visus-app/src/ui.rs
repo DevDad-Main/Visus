@@ -56,6 +56,8 @@ pub enum Button {
     ClipEnable,
     ShelfReveal(usize),
     Downloads,
+    PagePrev,
+    PageNext,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +92,9 @@ pub fn buttons(notch: &Notch) -> Vec<(Button, Rect)> {
     if notch.download().is_some() {
         btns.push((Button::Downloads, rect(x0 + 36.0, 12.0, 160.0, 28.0)));
     }
+    let (ay, off) = (s.rect.h - 26.0, Page::ALL.len() as f32 * 7.0 + 14.0);
+    btns.push((Button::PagePrev, rect(cx - off - 28.0, ay, 32.0, 24.0)));
+    btns.push((Button::PageNext, rect(cx + off - 4.0, ay, 32.0, 24.0)));
     btns
 }
 
@@ -1499,6 +1504,9 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
         cx.t(&now.format("%A %-d %B").to_string(), mid, 20.0, 12.0, color(GRAY, a), Align::Center);
         draw_clock(cx, notch, mid, 40.0, 22.0, a);
     }
+    if notch.download().is_none() {
+        cx.t(&notch.page.title().to_uppercase(), r.x + 36.0, 44.0, 12.0, color(GRAY, a), Align::Left);
+    }
     if let Some(rate) = notch.download() {
         let chip = rect(r.x + 36.0, 12.0, 160.0, 28.0);
         cx.rrect(chip, 14.0, color(WHITE, 0.10 * a));
@@ -1537,6 +1545,16 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
             cx.rrect(rect(x - 6.0, y - 3.0, 12.0, 6.0), 3.0, color(WHITE, a));
         } else {
             cx.circle(x, y, 3.0, color(WHITE, 0.4 * a));
+        }
+    }
+    let off = n * 7.0 + 14.0;
+    for (dir, x) in [(-1.0f32, mid - off - 12.0), (1.0, mid + off + 12.0)] {
+        let mut pb = PathBuilder::new();
+        pb.move_to(x - 2.5 * dir, y - 4.5);
+        pb.line_to(x + 2.5 * dir, y);
+        pb.line_to(x - 2.5 * dir, y + 4.5);
+        if let Some(p) = pb.finish() {
+            cx.stroke(&p, color(WHITE, 0.7 * a), 1.8);
         }
     }
 }
@@ -1868,6 +1886,8 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                     return Outcome::OpenUrl(url);
                 }
             }
+            Button::PagePrev => notch.next_page(-1),
+            Button::PageNext => notch.next_page(1),
             Button::NetUnit => notch.update_settings(|s| s.net_bits = !s.net_bits),
             Button::Volume => {
                 notch.begin_drag(1);

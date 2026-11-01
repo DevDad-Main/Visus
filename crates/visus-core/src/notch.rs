@@ -17,6 +17,22 @@ pub enum Page {
 }
 
 impl Page {
+    pub fn title(self) -> &'static str {
+        match self {
+            Page::Music => "Now playing",
+            Page::Control => "Controls",
+            Page::Timer => "Focus timer",
+            Page::Stats => "System",
+            Page::Shelf => "File shelf",
+            Page::Todo => "To-do",
+            Page::Notes => "Notes",
+            Page::Clipboard => "Clipboard",
+            Page::Windows => "Windows",
+            Page::Calendar => "Calendar",
+            Page::Weather => "Weather",
+        }
+    }
+
     pub const ALL: [Page; 11] = [Page::Music, Page::Control, Page::Windows, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Notes, Page::Clipboard, Page::Calendar, Page::Weather];
 }
 
