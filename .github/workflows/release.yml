@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p visus-app
+      - name: Package
+        shell: pwsh
+        run: |
+          Copy-Item target/release/visus-app.exe Visus.exe
+          Compress-Archive -Path Visus.exe -DestinationPath Visus-windows-x64.zip
+          (Get-FileHash Visus.exe -Algorithm SHA256).Hash.ToLower() + "  Visus.exe" | Out-File -Encoding ascii Visus.exe.sha256
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Visus-windows-x64.zip
+            Visus.exe.sha256
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
