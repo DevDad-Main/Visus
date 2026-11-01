@@ -12,8 +12,9 @@ use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::SystemServices::GUID_ACDC_POWER_SOURCE;
 use windows::Win32::System::Power::{
-    GUID_ACDC_POWER_SOURCE, GetSystemPowerStatus, RegisterPowerSettingNotification,
+    GetSystemPowerStatus, RegisterPowerSettingNotification,
     SYSTEM_POWER_STATUS,
 };
 use windows::Win32::UI::Accessibility::SetWinEventHook;

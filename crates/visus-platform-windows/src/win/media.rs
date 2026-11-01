@@ -28,7 +28,7 @@ fn snapshot(manager: &Manager) -> MediaInfo {
 }
 
 fn read_session(s: &Session) -> windows::core::Result<MediaInfo> {
-    let props = s.TryGetMediaPropertiesAsync()?.get()?;
+    let props = s.TryGetMediaPropertiesAsync()?.join()?;
     let playing = s.GetPlaybackInfo()?.PlaybackStatus()? == Status::Playing;
     let tl = s.GetTimelineProperties()?;
     let start = ticks(tl.StartTime()?);
@@ -48,7 +48,7 @@ pub fn start(emit: Emit) {
         .name("visus-media".into())
         .spawn(move || {
             let Ok(op) = Manager::RequestAsync() else { return };
-            let Ok(manager) = op.get() else { return };
+            let Ok(manager) = op.join() else { return };
             let sub: std::sync::Arc<Mutex<Option<Subscription>>> = Default::default();
 
             let attach = {
@@ -113,12 +113,12 @@ pub fn start(emit: Emit) {
 
 pub fn media_command(cmd: MediaCommand) {
     std::thread::spawn(move || {
-        let Ok(manager) = Manager::RequestAsync().and_then(|o| o.get()) else { return };
+        let Ok(manager) = Manager::RequestAsync().and_then(|o| o.join()) else { return };
         let Ok(session) = manager.GetCurrentSession() else { return };
         let _ = match cmd {
-            MediaCommand::PlayPause => session.TryTogglePlayPauseAsync().and_then(|o| o.get()),
-            MediaCommand::Next => session.TrySkipNextAsync().and_then(|o| o.get()),
-            MediaCommand::Previous => session.TrySkipPreviousAsync().and_then(|o| o.get()),
+            MediaCommand::PlayPause => session.TryTogglePlayPauseAsync().and_then(|o| o.join()),
+            MediaCommand::Next => session.TrySkipNextAsync().and_then(|o| o.join()),
+            MediaCommand::Previous => session.TrySkipPreviousAsync().and_then(|o| o.join()),
         };
     });
 }
