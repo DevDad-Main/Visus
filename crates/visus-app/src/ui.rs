@@ -128,13 +128,13 @@ fn draw_todo(cx: &mut Ctx, notch: &Notch, a: f32) {
         let y = TODO_TOP + slot as f32 * TODO_ROW_H;
         let (bx, by) = (x0 + 52.0, y + 15.0);
         if t.done {
-            cx.circle(bx, by, 9.0, color(GREEN, a));
+            cx.circle(bx, by, 9.0, color(cx.accent, a));
             let mut pb = PathBuilder::new();
             pb.move_to(bx - 4.0, by);
             pb.line_to(bx - 1.0, by + 3.5);
             pb.line_to(bx + 4.5, by - 3.5);
             if let Some(p) = pb.finish() {
-                cx.stroke(&p, color([0, 0, 0], a), 2.0);
+                cx.stroke(&p, color(cx.ink, a), 2.0);
             }
         } else if let Some(p) = PathBuilder::from_circle(bx, by, 8.5) {
             cx.stroke(&p, color(WHITE, 0.55 * a), 1.8);
@@ -561,6 +561,9 @@ fn color(rgb: [u8; 3], a: f32) -> [u8; 4] {
 }
 
 struct Ctx<'a> {
+    /// Theme accent and the text colour that reads on top of it.
+    accent: [u8; 3],
+    ink: [u8; 3],
     pm: &'a mut Pixmap,
     text: &'a Text,
     scale: f32,
@@ -671,7 +674,10 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     let shape = notch.shape();
     let user = notch.settings().scale;
     let centre = shape.rect.x + shape.rect.w / 2.0;
-    let mut cx = Ctx { pm, text, scale: scale * user, ox: centre * (1.0 - user) * scale, oy: 0.0 };
+    let accent = notch.theme();
+    let lum = 0.2126 * accent[0] as f32 + 0.7152 * accent[1] as f32 + 0.0722 * accent[2] as f32;
+    let ink = if lum > 150.0 { [0, 0, 0] } else { [255, 255, 255] };
+    let mut cx = Ctx { accent, ink, pm, text, scale: scale * user, ox: centre * (1.0 - user) * scale, oy: 0.0 };
 
     let r = shape.rect;
     if let Some(path) = pill_path(&shape) {
@@ -1138,7 +1144,7 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     // Left slot: the focus timer while one is active, otherwise the battery level.
     if timer_active {
         let left = timer.remaining().as_secs_f32() / timer.total().as_secs_f32();
-        cx.ring(r.x + 28.0, mid, 8.0, 2.5, left, GREEN, a);
+        cx.ring(r.x + 28.0, mid, 8.0, 2.5, left, cx.accent, a);
     } else if let Some((charging, pct)) = notch.battery().filter(|_| notch.settings().show_battery) {
         let tint = if charging || pct > 20 { GREEN } else { ORANGE };
         cx.ring(r.x + 28.0, mid, 8.0, 2.5, pct as f32 / 100.0, tint, a);
@@ -1151,7 +1157,7 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     let rad = (r.h * 0.4).min(r.w / 4.0);
     let m = notch.media();
     let progress = if timer_active {
-        Some((1.0 - timer.remaining().as_secs_f32() / timer.total().as_secs_f32(), GREEN))
+        Some((1.0 - timer.remaining().as_secs_f32() / timer.total().as_secs_f32(), cx.accent))
     } else if m.has_session && m.playing && !m.duration.is_zero() {
         Some((notch.media_position().as_secs_f32() / m.duration.as_secs_f32(), notch.accent()))
     } else {
@@ -1171,8 +1177,8 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
         cx.t(&txt, rx, mid + 4.5, 12.0, color(WHITE, a), Align::Right);
         let ax = rx - tw - 11.0;
         let bob = (chrono::Local::now().timestamp_millis() as f32 / 300.0).sin() * 1.6;
-        cx.rrect(rect(ax - 1.0, mid - 7.0 + bob, 2.0, 7.0), 1.0, color(GREEN, a));
-        cx.triangle([(ax - 4.5, mid - 1.0 + bob), (ax + 4.5, mid - 1.0 + bob), (ax, mid + 5.0 + bob)], color(GREEN, a));
+        cx.rrect(rect(ax - 1.0, mid - 7.0 + bob, 2.0, 7.0), 1.0, color(cx.accent, a));
+        cx.triangle([(ax - 4.5, mid - 1.0 + bob), (ax + 4.5, mid - 1.0 + bob), (ax, mid + 5.0 + bob)], color(cx.accent, a));
     }
     if notch.wants_audio() {
         let bars = notch.visualizer_bars();
@@ -1318,7 +1324,7 @@ fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, event_title: Option<&st
             let pct = (level * 100.0).round() as i32;
             ("Volume", if muted { "Muted".into() } else { format!("{pct}%") }, BLUE, if muted { 0.0 } else { level }, None)
         }
-        Alert::TimerDone => ("Focus complete", "Time for a break".into(), GREEN, 1.0, None),
+        Alert::TimerDone => ("Focus complete", "Time for a break".into(), cx.accent, 1.0, None),
         Alert::Online => ("Back online", "Connected to the internet".into(), GREEN, 1.0, None),
         Alert::Offline => ("Offline", "Connection lost".into(), ORANGE, 0.0, None),
         Alert::Language(l) => ("Keyboard", String::from_utf8_lossy(&l).to_uppercase(), BLUE, 1.0, None),
@@ -1349,8 +1355,8 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
     if let Some(rate) = notch.download() {
         let chip = rect(r.x + 36.0, 12.0, 160.0, 28.0);
         cx.rrect(chip, 14.0, color(WHITE, 0.10 * a));
-        cx.rrect(rect(chip.x + 14.0, chip.y + 7.0, 2.0, 8.0), 1.0, color(GREEN, a));
-        cx.triangle([(chip.x + 10.5, chip.y + 14.0), (chip.x + 19.5, chip.y + 14.0), (chip.x + 15.0, chip.y + 20.0)], color(GREEN, a));
+        cx.rrect(rect(chip.x + 14.0, chip.y + 7.0, 2.0, 8.0), 1.0, color(cx.accent, a));
+        cx.triangle([(chip.x + 10.5, chip.y + 14.0), (chip.x + 19.5, chip.y + 14.0), (chip.x + 15.0, chip.y + 20.0)], color(cx.accent, a));
         cx.t(&rate_fmt(rate, notch.settings().net_bits), chip.x + 30.0, chip.y + 19.0, 13.0, color(WHITE, a), Align::Left);
     }
     magnifier(cx, r.x + r.w - 62.0, 25.0, color(WHITE, 0.85 * a));
@@ -1543,7 +1549,7 @@ fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
     let x0 = notch.shape().rect.x;
     let t = notch.timer();
     // The arc shrinks as time runs out.
-    cx.ring(x0 + 170.0, 118.0, 52.0, 9.0, t.remaining().as_secs_f32() / t.total().as_secs_f32(), GREEN, a);
+    cx.ring(x0 + 170.0, 118.0, 52.0, 9.0, t.remaining().as_secs_f32() / t.total().as_secs_f32(), cx.accent, a);
     cx.t(&mmss(t.remaining()), x0 + 170.0, 128.0, 30.0, color(WHITE, a), Align::Center);
 
     let mins = t.total().as_secs() / 60;
@@ -1551,8 +1557,8 @@ fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
         match b {
             Button::TimerPreset(m) => {
                 let active = u64::from(m) == mins;
-                cx.rrect(rc, 15.0, if active { color(GREEN, 0.9 * a) } else { color(WHITE, 0.12 * a) });
-                let ink = if active { color([0, 0, 0], a) } else { color(WHITE, a) };
+                cx.rrect(rc, 15.0, if active { color(cx.accent, 0.9 * a) } else { color(WHITE, 0.12 * a) });
+                let ink = if active { color(cx.ink, a) } else { color(WHITE, a) };
                 cx.t(&format!("{m}m"), rc.x + rc.w / 2.0, rc.y + 20.0, 15.0, ink, Align::Center);
             }
             Button::TimerMinus | Button::TimerPlus => {
@@ -1566,8 +1572,8 @@ fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
             Button::TimerToggle | Button::TimerReset => {
                 let go = b == Button::TimerToggle;
                 let label = if go { if t.is_running() { "Pause" } else { "Start" } } else { "Reset" };
-                cx.rrect(rc, 22.0, if go { color(GREEN, 0.9 * a) } else { color(WHITE, 0.14 * a) });
-                let ink = if go { color([0, 0, 0], a) } else { color(WHITE, a) };
+                cx.rrect(rc, 22.0, if go { color(cx.accent, 0.9 * a) } else { color(WHITE, 0.14 * a) });
+                let ink = if go { color(cx.ink, a) } else { color(WHITE, a) };
                 cx.t(label, rc.x + rc.w / 2.0, rc.y + 29.0, 20.0, ink, Align::Center);
             }
             _ => {}
@@ -1859,7 +1865,7 @@ fn draw_palette(cx: &mut Ctx, notch: &Notch) {
     let g = (1.0 - notch.palette_progress()).clamp(0.0, 1.0);
     let Some(mut tmp) = Pixmap::new(cx.pm.width(), cx.pm.height()) else { return };
     {
-        let mut sub = Ctx { pm: &mut tmp, text: cx.text, scale: cx.scale, ox: cx.ox, oy: cx.oy };
+        let mut sub = Ctx { accent: cx.accent, ink: cx.ink, pm: &mut tmp, text: cx.text, scale: cx.scale, ox: cx.ox, oy: cx.oy };
         draw_panel(&mut sub, notch, &l, 1.0);
     }
     let (k, ox, oy) = (cx.scale, cx.ox, cx.oy);
@@ -1945,7 +1951,7 @@ fn draw_panel(cx: &mut Ctx, notch: &Notch, l: &PaletteLayout, p: f32) {
             let kind = item.app.as_ref().map_or(AppKind::Generic, |a| a.kind);
             let (tint, glyph) = match item.kind {
                 Kind::Visus => ([96, 120, 255], "V".to_string()),
-                Kind::Calc => (GREEN, "=".to_string()),
+                Kind::Calc => (cx.accent, "=".to_string()),
                 Kind::Web => (BLUE, "\u{2197}".to_string()),
                 Kind::Window => ([90, 130, 255], "W".to_string()),
                 Kind::Note => ([255, 204, 0], "N".to_string()),
@@ -1999,7 +2005,7 @@ fn draw_stats(cx: &mut Ctx, notch: &Notch, a: f32) {
     let x0 = notch.shape().rect.x;
     let st = notch.stats();
     let gauges = [
-        ("CPU", st.cpu, format!("{:.0}%", st.cpu * 100.0), GREEN, x0 + 130.0),
+        ("CPU", st.cpu, format!("{:.0}%", st.cpu * 100.0), cx.accent, x0 + 130.0),
         ("Memory", st.ram, format!("{:.0}%", st.ram * 100.0), BLUE, x0 + 300.0),
     ];
     for (label, v, text, rgb, x) in gauges {
@@ -2184,7 +2190,7 @@ fn draw_shelf(cx: &mut Ctx, notch: &Notch, a: f32) {
         let zone = rect(x0 + 36.0, 62.0, w, 150.0);
         let hot = notch.drop_hover();
         cx.rrect(zone, 22.0, color(WHITE, if hot { 0.10 } else { 0.04 } * a));
-        dashed_rrect(cx, zone, 22.0, if hot { color(GREEN, 0.9 * a) } else { color(WHITE, 0.28 * a) });
+        dashed_rrect(cx, zone, 22.0, if hot { color(cx.accent, 0.9 * a) } else { color(WHITE, 0.28 * a) });
         // Arrow dropping into a tray.
         let ay = if hot { 106.0 } else { 100.0 };
         cx.rrect(rect(mid - 1.5, ay - 18.0, 3.0, 22.0), 1.5, color(WHITE, 0.9 * a));
@@ -2219,9 +2225,9 @@ fn draw_shelf(cx: &mut Ctx, notch: &Notch, a: f32) {
         let rc = rect(x0 + 36.0, 62.0 + n as f32 * 42.0, w, 38.0);
         let hot = notch.drop_hover();
         if hot {
-            cx.rrect(rc, 14.0, color(GREEN, 0.12 * a));
+            cx.rrect(rc, 14.0, color(cx.accent, 0.12 * a));
         }
-        dashed_rrect(cx, rc, 14.0, if hot { color(GREEN, 0.9 * a) } else { color(WHITE, 0.2 * a) });
+        dashed_rrect(cx, rc, 14.0, if hot { color(cx.accent, 0.9 * a) } else { color(WHITE, 0.2 * a) });
         cx.t(if hot { "Release to add" } else { "Drop more files here" }, rc.x + rc.w / 2.0, rc.y + 24.0, 13.0, color(GRAY, a), Align::Center);
     }
 }
@@ -2264,9 +2270,9 @@ fn draw_calendar(cx: &mut Ctx, notch: &Notch, a: f32) {
         let (col, row) = (idx % 7.0, (idx / 7.0).floor());
         let (px, py) = (gx + col * col_w + col_w / 2.0, 92.0 + row * row_h);
         if day == today.day() {
-            cx.circle(px, py + 6.0, 10.5, color(GREEN, a));
+            cx.circle(px, py + 6.0, 10.5, color(cx.accent, a));
         }
-        let ink = if day == today.day() { color([0, 0, 0], a) } else { color(WHITE, a) };
+        let ink = if day == today.day() { color(cx.ink, a) } else { color(WHITE, a) };
         cx.t(&day.to_string(), px, py + 11.0, 14.0, ink, Align::Center);
     }
 }
@@ -2443,7 +2449,7 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
         let y = 58.0 + i as f32 * 30.0;
         cx.t(label, x0 + 36.0, y + 20.0, 17.0, color(WHITE, a), Align::Left);
         let sw = rect(x0 + 290.0, y + 2.0, 44.0, 24.0);
-        cx.rrect(sw, 12.0, if *on { color(GREEN, a) } else { color(WHITE, 0.18 * a) });
+        cx.rrect(sw, 12.0, if *on { color(cx.accent, a) } else { color(WHITE, 0.18 * a) });
         cx.circle(if *on { sw.x + 32.0 } else { sw.x + 12.0 }, sw.y + 12.0, 9.0, color(WHITE, a));
     }
 
@@ -2479,9 +2485,9 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
     };
     draw_location_row(cx, notch, rect(x0 + 36.0, 182.0, 300.0, 26.0), a);
     let rc = rect(x0 + 36.0, 214.0, 130.0, 26.0);
-    cx.rrect(rc, 13.0, color(GREEN, 0.9 * a));
+    cx.rrect(rc, 13.0, color(cx.accent, 0.9 * a));
     let fitted = cx.fit(&label, 13.0, 120.0);
-    cx.t(&fitted, rc.x + 65.0, rc.y + 18.0, 13.0, color([0, 0, 0], a), Align::Center);
+    cx.t(&fitted, rc.x + 65.0, rc.y + 18.0, 13.0, color(cx.ink, a), Align::Center);
     let st = cx.fit(&format!("v{} {}", env!("CARGO_PKG_VERSION"), status), 12.0, SETTINGS_W - 176.0 - 40.0);
     cx.t(&st, x0 + 176.0, 232.0, 12.0, color(GRAY, a), Align::Left);
 
@@ -2522,15 +2528,15 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
             _ => s.show_battery,
         };
         let rc = chip_rect(x0, i);
-        cx.rrect(rc, 12.0, if on { color(GREEN, 0.9 * a) } else { color(WHITE, 0.12 * a) });
-        cx.t(label, rc.x + rc.w / 2.0, rc.y + 16.0, 12.0, if on { color([0, 0, 0], a) } else { color(WHITE, a) }, Align::Center);
+        cx.rrect(rc, 12.0, if on { color(cx.accent, 0.9 * a) } else { color(WHITE, 0.12 * a) });
+        cx.t(label, rc.x + rc.w / 2.0, rc.y + 16.0, 12.0, if on { color(cx.ink, a) } else { color(WHITE, a) }, Align::Center);
     }
     cx.t("Search drives for apps", x0 + 380.0, 288.0, 14.0, color(GRAY, a), Align::Left);
     for (i, d) in visus_platform::list_drives().iter().take(7).enumerate() {
         let on = s.app_folders.iter().any(|f| f == d);
         let rc = rect(x0 + 380.0 + i as f32 * 52.0, 294.0, 46.0, 26.0);
-        cx.rrect(rc, 13.0, if on { color(GREEN, 0.9 * a) } else { color(WHITE, 0.12 * a) });
-        cx.t(d.trim_end_matches('\\'), rc.x + 23.0, rc.y + 18.0, 14.0, if on { color([0, 0, 0], a) } else { color(WHITE, a) }, Align::Center);
+        cx.rrect(rc, 13.0, if on { color(cx.accent, 0.9 * a) } else { color(WHITE, 0.12 * a) });
+        cx.t(d.trim_end_matches('\\'), rc.x + 23.0, rc.y + 18.0, 14.0, if on { color(cx.ink, a) } else { color(WHITE, a) }, Align::Center);
     }
     cx.t("Scans up to 3 folders deep", x0 + 380.0, 338.0, 12.0, color(GRAY, 0.8 * a), Align::Left);
     cx.t("Extra app folders", x0 + 36.0, 292.0, 14.0, color(GRAY, a), Align::Left);

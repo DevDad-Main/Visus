@@ -516,6 +516,13 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         notch.begin_todo_input();
         notch.key_text("Buy milk @18:00");
     }
+    if let Some(c) = std::env::var("VISUS_ART").ok().and_then(|s| s.split(',').map(|v| v.trim().parse::<u8>().ok()).collect::<Option<Vec<_>>>()).filter(|v| v.len() == 3) {
+        let rgba: Vec<u8> = (0..64 * 64).flat_map(|i| { let f = 0.6 + 0.4 * ((i / 64) as f32 / 63.0); [(c[0] as f32 * f) as u8, (c[1] as f32 * f) as u8, (c[2] as f32 * f) as u8, 255] }).collect();
+        notch.handle(Event::Media(visus_core::MediaInfo { has_session: true, title: "Midnight City".into(), artist: "M83".into(), playing: true, position: Duration::from_secs(80), duration: Duration::from_secs(244), art: Some(Arc::new(visus_core::Art { size: 64, rgba, id: 77 })) }));
+        for _ in 0..200 {
+            notch.tick(Duration::from_millis(16));
+        }
+    }
     if page == "windows" {
         notch.handle(Event::Windows(Arc::new(vec![(1, "Brave - New Tab".into()), (2, "visus - Visual Studio Code".into()), (3, "Spotify Premium".into()), (4, "Downloads - File Explorer".into())])));
     }

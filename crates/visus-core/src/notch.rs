@@ -169,6 +169,8 @@ pub struct Notch {
     art_request: Option<(String, String)>,
     art_asked: String,
     art_pending: Option<(String, Instant)>,
+    theme: [f32; 3],
+    theme_cache: std::cell::Cell<Option<(u64, [u8; 3])>>,
     download: Option<u64>,
     alert_text: Option<String>,
     windows: Vec<(isize, String)>,
@@ -242,6 +244,8 @@ impl Notch {
             art_request: None,
             art_asked: String::new(),
             art_pending: None,
+            theme: Settings::default().eye_iris.0.map(f32::from),
+            theme_cache: std::cell::Cell::new(None),
             download: None,
             alert_text: None,
             windows: Vec::new(),
@@ -663,6 +667,55 @@ impl Notch {
         avg.map(|c| ((c / m) * 255.0 * 0.8 + 255.0 * 0.2) as u8)
     }
 
+    /// Saturated colour of the cover art, cached per image.
+    fn art_theme(&self) -> Option<[u8; 3]> {
+        let art = self.media.art.as_ref()?;
+        if let Some((id, c)) = self.theme_cache.get() {
+            if id == art.id {
+                return Some(c);
+            }
+        }
+        let (mut sum, mut n) = ([0f32; 3], 0f32);
+        for px in art.rgba.chunks_exact(4).step_by(5) {
+            if px[3] > 200 {
+                // Weight vivid pixels so a grey border does not wash the colour out.
+                let (mx, mn) = (px[..3].iter().max().copied().unwrap_or(0) as f32, px[..3].iter().min().copied().unwrap_or(0) as f32);
+                let w = 0.2 + (mx - mn) / 255.0 * 2.0;
+                for c in 0..3 {
+                    sum[c] += px[c] as f32 * w;
+                }
+                n += w;
+            }
+        }
+        if n <= 0.0 {
+            return None;
+        }
+        let avg = sum.map(|s| s / n);
+        let m = avg.iter().cloned().fold(1.0, f32::max);
+        let v = avg.map(|c| c / m);
+        let grey = (v[0] + v[1] + v[2]) / 3.0;
+        let out = v.map(|c| ((grey + (c - grey) * 1.3).clamp(0.0, 1.0) * 235.0).max(30.0) as u8);
+        self.theme_cache.set(Some((art.id, out)));
+        Some(out)
+    }
+
+    fn theme_target(&self) -> [f32; 3] {
+        match (self.media.has_session && self.media.playing, self.art_theme()) {
+            (true, Some(c)) => c.map(f32::from),
+            _ => self.settings.eye_iris.0.map(f32::from),
+        }
+    }
+
+    /// Accent colour for buttons and highlights: the cover's colour while music plays, otherwise the eye blue.
+    pub fn theme(&self) -> [u8; 3] {
+        self.theme.map(|c| c.round().clamp(0.0, 255.0) as u8)
+    }
+
+    fn theme_settled(&self) -> bool {
+        let t = self.theme_target();
+        (0..3).all(|i| (t[i] - self.theme[i]).abs() < 1.5)
+    }
+
     pub fn wants_controls(&self) -> bool {
         self.is_open() && self.page == Page::Control
     }
@@ -762,6 +815,9 @@ impl Notch {
 
     pub fn set_settings(&mut self, s: Settings) {
         self.settings = s.clamped();
+        if !(self.media.has_session && self.media.playing) {
+            self.theme = self.settings.eye_iris.0.map(f32::from);
+        }
         let total = Duration::from_secs(self.settings.timer_minutes as u64 * 60);
         if !self.timer.is_running() && self.timer.total() != total {
             self.timer.set_total(total);
@@ -1460,6 +1516,7 @@ impl Notch {
     pub fn is_animating(&self) -> bool {
         !(self.w.is_settled() && self.h.is_settled() && self.r.is_settled())
             || !(self.look_x.is_settled() && self.look_y.is_settled())
+            || !self.theme_settled()
             || !self.palette_anim.is_settled()
             || !self.settings_anim.is_settled()
             || self.peek_left > Duration::ZERO
@@ -1468,6 +1525,12 @@ impl Notch {
 
     pub fn tick(&mut self, dt: Duration) {
         self.wander();
+        {
+            let (t, k) = (self.theme_target(), 1.0 - (-5.0 * dt.as_secs_f32()).exp());
+            for i in 0..3 {
+                self.theme[i] += (t[i] - self.theme[i]) * k;
+            }
+        }
         if let Some((k, at)) = &self.art_pending {
             if at.elapsed() > Duration::from_millis(1200) {
                 let current = format!("{}\u{1}{}", self.media.title, self.media.artist);
