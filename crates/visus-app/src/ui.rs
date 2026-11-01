@@ -51,6 +51,11 @@ pub enum Button {
     ClipDelete(usize),
     Event(usize),
     NetUnit,
+    WindowFocus(usize),
+    NewNote,
+    ClipEnable,
+    ShelfReveal(usize),
+    Downloads,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +86,9 @@ pub fn buttons(notch: &Notch) -> Vec<(Button, Rect)> {
     let mut btns = page_buttons(notch, x0, cx);
     btns.push((Button::Palette, rect(x0 + s.rect.w - 76.0, 10.0, 44.0, 36.0)));
     btns.push((Button::SettingsOpen, rect(x0 + s.rect.w - 124.0, 10.0, 44.0, 36.0)));
+    if notch.download().is_some() {
+        btns.push((Button::Downloads, rect(x0 + 36.0, 12.0, 160.0, 28.0)));
+    }
     btns
 }
 
@@ -192,33 +200,85 @@ fn list_buttons(x0: f32, n: usize, copy: fn(usize) -> Button, del: fn(usize) -> 
     v
 }
 
+fn tile_letter(cx: &mut Ctx, rc: Rect, text: &str, a: f32) {
+    let tint = hue_rgb((hash(text) % 360) as f32 / 360.0);
+    cx.rrect(rc, 9.0, color(tint, 0.95 * a));
+    let first = text.chars().find(|c| c.is_alphanumeric()).map_or("?".to_string(), |c| c.to_uppercase().to_string());
+    cx.t(&first, rc.x + rc.w / 2.0, rc.y + rc.h * 0.68, rc.h * 0.5, color(WHITE, a), Align::Center);
+}
+
+fn pill_button(cx: &mut Ctx, rc: Rect, label: &str, a: f32) {
+    cx.rrect(rc, rc.h / 2.0, color(WHITE, 0.16 * a));
+    cx.t(label, rc.x + rc.w / 2.0, rc.y + rc.h * 0.66, 14.0, color(WHITE, a), Align::Center);
+}
+
+fn x_mark(cx: &mut Ctx, dx: f32, dy: f32, a: f32) {
+    let mut pb = PathBuilder::new();
+    pb.move_to(dx - 4.0, dy - 4.0);
+    pb.line_to(dx + 4.0, dy + 4.0);
+    pb.move_to(dx + 4.0, dy - 4.0);
+    pb.line_to(dx - 4.0, dy + 4.0);
+    if let Some(p) = pb.finish() {
+        cx.stroke(&p, color(GRAY, 0.8 * a), 1.6);
+    }
+}
+
+fn copy_icon(cx: &mut Ctx, x: f32, y: f32, a: f32) {
+    for (dx, dy) in [(-2.0, -2.0), (1.5, 1.5)] {
+        if let Some(p) = rrect(x + dx - 4.0, y + dy - 4.5, 8.0, 9.0, 2.0) {
+            cx.stroke(&p, color(GRAY, 0.85 * a), 1.3);
+        }
+    }
+}
+
 /// Rows of text that copy back to the clipboard when clicked; shared by Notes and Clipboard.
-fn draw_list(cx: &mut Ctx, notch: &Notch, items: &[String], empty: (&str, &str), a: f32) {
+fn draw_list(cx: &mut Ctx, notch: &Notch, items: &[String], empty: (&str, &str, Option<&str>), a: f32) {
     let r = notch.shape().rect;
-    let x0 = r.x;
+    let (x0, mid) = (r.x, r.x + r.w / 2.0);
     if items.is_empty() {
-        cx.t(empty.0, r.x + r.w / 2.0, 130.0, 24.0, color(WHITE, a), Align::Center);
-        cx.t(empty.1, r.x + r.w / 2.0, 158.0, 15.0, color(GRAY, a), Align::Center);
+        cx.circle(mid, 96.0, 24.0, color(WHITE, 0.08 * a));
+        for k in 0..3 {
+            cx.rrect(rect(mid - 9.0, 88.0 + k as f32 * 6.0, if k == 2 { 11.0 } else { 18.0 }, 2.4), 1.2, color(WHITE, 0.8 * a));
+        }
+        cx.t(empty.0, mid, 148.0, 22.0, color(WHITE, a), Align::Center);
+        cx.t(empty.1, mid, 170.0, 14.0, color(GRAY, a), Align::Center);
+        if let Some(label) = empty.2 {
+            pill_button(cx, rect(mid - 70.0, 178.0, 140.0, 32.0), label, a);
+        }
         return;
     }
     for (i, text) in items.iter().take(LIST_ROWS).enumerate() {
         let y = 62.0 + i as f32 * 38.0;
         cx.rrect(rect(x0 + 36.0, y, 634.0, 34.0), 12.0, color(WHITE, 0.07 * a));
         let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        let shown = cx.fit(&one_line, 15.0, 560.0);
+        let shown = cx.fit(&one_line, 15.0, 540.0);
         cx.t(&shown, x0 + 50.0, y + 22.0, 15.0, color(WHITE, a), Align::Left);
-        let (dx, dy) = (x0 + 650.0, y + 17.0);
-        let mut pb = PathBuilder::new();
-        pb.move_to(dx - 4.0, dy - 4.0);
-        pb.line_to(dx + 4.0, dy + 4.0);
-        pb.move_to(dx + 4.0, dy - 4.0);
-        pb.line_to(dx - 4.0, dy + 4.0);
-        if let Some(p) = pb.finish() {
-            cx.stroke(&p, color(GRAY, 0.8 * a), 1.6);
-        }
+        copy_icon(cx, x0 + 610.0, y + 17.0, a);
+        x_mark(cx, x0 + 650.0, y + 17.0, a);
     }
     if items.len() > LIST_ROWS {
         cx.t(&format!("+{} more", items.len() - LIST_ROWS), x0 + 670.0, 222.0, 12.0, color(GRAY, 0.8 * a), Align::Right);
+    }
+}
+
+fn draw_windows(cx: &mut Ctx, notch: &Notch, a: f32) {
+    let r = notch.shape().rect;
+    let (x0, mid) = (r.x, r.x + r.w / 2.0);
+    let wins = notch.windows();
+    if wins.is_empty() {
+        cx.t("Looking for open windows\u{2026}", mid, 140.0, 20.0, color(GRAY, a), Align::Center);
+        return;
+    }
+    for (i, (_, title)) in wins.iter().take(LIST_ROWS).enumerate() {
+        let y = 62.0 + i as f32 * 38.0;
+        cx.rrect(rect(x0 + 36.0, y, 634.0, 34.0), 12.0, color(WHITE, 0.07 * a));
+        tile_letter(cx, rect(x0 + 44.0, y + 4.0, 26.0, 26.0), title, a);
+        let shown = cx.fit(title, 15.0, 560.0);
+        cx.t(&shown, x0 + 82.0, y + 22.0, 15.0, color(WHITE, a), Align::Left);
+        cx.t("Switch", x0 + 654.0, y + 21.0, 12.0, color(GRAY, 0.9 * a), Align::Right);
+    }
+    if wins.len() > LIST_ROWS {
+        cx.t(&format!("+{} more \u{b7} type a name in the launcher", wins.len() - LIST_ROWS), x0 + 670.0, 222.0, 12.0, color(GRAY, 0.8 * a), Align::Right);
     }
 }
 
@@ -427,8 +487,21 @@ fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
         ],
         Page::Control => control_buttons(notch, x0),
         Page::Stats => vec![(Button::NetUnit, rect(x0 + 470.0, 80.0, 230.0, 140.0))],
-        Page::Notes => list_buttons(x0, notch.notes().len(), Button::NoteCopy, Button::NoteDelete),
-        Page::Clipboard => list_buttons(x0, notch.clips().len(), Button::ClipCopy, Button::ClipDelete),
+        Page::Notes => {
+            let mut v = list_buttons(x0, notch.notes().len(), Button::NoteCopy, Button::NoteDelete);
+            if notch.notes().is_empty() {
+                v.push((Button::NewNote, rect(cx - 70.0, 178.0, 140.0, 32.0)));
+            }
+            v
+        }
+        Page::Clipboard => {
+            let mut v = list_buttons(x0, notch.clips().len(), Button::ClipCopy, Button::ClipDelete);
+            if notch.clips().is_empty() && !notch.settings().clipboard_history {
+                v.push((Button::ClipEnable, rect(cx - 70.0, 178.0, 140.0, 32.0)));
+            }
+            v
+        }
+        Page::Windows => (0..notch.windows().len().min(LIST_ROWS)).map(|i| (Button::WindowFocus(i), rect(x0 + 36.0, 62.0 + i as f32 * 38.0, 634.0, 34.0))).collect(),
         Page::Calendar => event_buttons(notch, x0),
         Page::Timer => timer_buttons(x0),
         Page::Todo => todo_buttons(notch, x0),
@@ -623,6 +696,33 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
                 let xf = cx.xf();
                 cx.pm.fill_path(&path, &p, FillRule::Winding, xf, None);
             }
+            // Two soft blobs drift slowly along the lower edge, like a gentle swell.
+            let t = chrono::Local::now().timestamp_millis() as f32 / 1000.0;
+            for (phase, sway) in [(0.0f32, 0.30f32), (2.4, 0.26)] {
+                let bx = centre + (t * 0.45 + phase).sin() * r.w * sway;
+                let by = r.h * (0.98 + 0.06 * (t * 0.7 + phase).cos());
+                let radius = r.w * 0.42;
+                if let (Some(shader), true) = (
+                    RadialGradient::new(
+                        Point::from_xy(bx, by),
+                        Point::from_xy(bx, by),
+                        radius,
+                        vec![
+                            GradientStop::new(0.0, Color::from_rgba8(tint[0], tint[1], tint[2], ((amt * 0.55).clamp(0.0, 1.0) * 255.0) as u8)),
+                            GradientStop::new(1.0, Color::from_rgba8(tint[0], tint[1], tint[2], 0)),
+                        ],
+                        SpreadMode::Pad,
+                        Transform::identity(),
+                    ),
+                    true,
+                ) {
+                    let mut p = Paint::default();
+                    p.shader = shader;
+                    p.anti_alias = true;
+                    let xf = cx.xf();
+                    cx.pm.fill_path(&path, &p, FillRule::Winding, xf, None);
+                }
+            }
         }
         // Ripple: the rim flashes and fades when an alert lands.
         if let Some(age) = notch.alert_age() {
@@ -655,6 +755,57 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     }
     draw_palette(&mut cx, notch);
     draw_settings_panel(&mut cx, notch);
+    draw_hover(&mut cx, notch);
+}
+
+/// The button under the pointer, if any (same hit list the click handler uses).
+fn hovered(notch: &Notch) -> Option<(Button, Rect)> {
+    let (px, py) = notch.pointer()?;
+    if palette_layout(notch).is_some() {
+        return None;
+    }
+    let list = if notch.settings_is_open() { settings_buttons(notch) } else { buttons(notch) };
+    list.into_iter().find(|(_, r)| r.contains(px, py))
+}
+
+/// True when the pointer is over something clickable; hosts use it to show a hand cursor.
+pub fn over_clickable(notch: &Notch) -> bool {
+    if hovered(notch).is_some() {
+        return true;
+    }
+    match (notch.pointer(), palette_layout(notch)) {
+        (Some((px, py)), Some(l)) => l.rows.iter().any(|r| r.contains(px, py)),
+        _ => false,
+    }
+}
+
+/// Moves the launcher selection to the row under the pointer.
+pub fn hover_palette(notch: &mut Notch) {
+    let (Some((px, py)), Some(l)) = (notch.pointer(), palette_layout(notch)) else { return };
+    if let Some(i) = l.rows.iter().position(|r| r.contains(px, py)) {
+        notch.palette_select(i);
+    }
+}
+
+fn draw_hover(cx: &mut Ctx, notch: &Notch) {
+    let Some((b, r)) = hovered(notch) else { return };
+    match b {
+        Button::NoteDelete(_) | Button::ClipDelete(_) | Button::ShelfRemove(_) | Button::TodoDelete(_) | Button::FolderRemove(_) | Button::SettingsClose => {
+            cx.circle(r.x + r.w / 2.0, r.y + r.h / 2.0, 13.0, color([255, 69, 58], 0.28));
+        }
+        Button::Volume | Button::Brightness => {}
+        _ => {
+            let radius = match b {
+                Button::Tile(_) => 22.0,
+                Button::Toggle(_) => 12.0,
+                _ => (r.h / 2.0).min(14.0),
+            };
+            cx.rrect(r, radius, color(WHITE, 0.08));
+            if let Some(p) = rrect(r.x + 0.5, r.y + 0.5, r.w - 1.0, r.h - 1.0, radius) {
+                cx.stroke(&p, color(WHITE, 0.16), 1.0);
+            }
+        }
+    }
 }
 
 /// An almond-shaped eye with iris, pupil and highlight; blinks, looks around and dozes off.
@@ -1045,6 +1196,7 @@ enum Expr {
     Music,
     Party,
     Alert,
+    Game,
 }
 
 fn expr_for(a: Alert) -> Option<Expr> {
@@ -1053,6 +1205,8 @@ fn expr_for(a: Alert) -> Option<Expr> {
         Alert::Unplugged { .. } => Some(Expr::Sad),
         Alert::Headphones => Some(Expr::Music),
         Alert::Offline => Some(Expr::Dizzy),
+        Alert::Controller(true) => Some(Expr::Game),
+        Alert::Controller(false) => Some(Expr::Sad),
         Alert::TimerDone => Some(Expr::Party),
         Alert::TodoDue | Alert::Meeting { .. } => Some(Expr::Alert),
         _ => None,
@@ -1099,6 +1253,13 @@ fn draw_face(cx: &mut Ctx, x: f32, y: f32, style: EyeStyle, expr: Expr, age: f32
                 pb.move_to(ex, ey - 4.5);
                 pb.line_to(ex, ey + 4.5);
             }
+            Expr::Game => {
+                // Excited "> <" eyes.
+                let s = if dx < 0.0 { 1.0 } else { -1.0 };
+                pb.move_to(ex - 3.0 * s, ey - 4.0);
+                pb.line_to(ex + 2.5 * s, ey);
+                pb.line_to(ex - 3.0 * s, ey + 4.0);
+            }
             Expr::Alert => {
                 if let Some(c) = PathBuilder::from_circle(ex, ey, 4.2) {
                     cx.stroke(&c, color(ink, a), 2.0);
@@ -1108,7 +1269,7 @@ fn draw_face(cx: &mut Ctx, x: f32, y: f32, style: EyeStyle, expr: Expr, age: f32
         }
     }
     // Mouth for the cheerful ones.
-    if matches!(expr, Expr::Happy | Expr::Music | Expr::Party) {
+    if matches!(expr, Expr::Happy | Expr::Music | Expr::Party | Expr::Game) {
         pb.move_to(x - 4.5, y + 6.0);
         pb.quad_to(x, y + 11.0, x + 4.5, y + 6.0);
     }
@@ -1120,6 +1281,12 @@ fn draw_face(cx: &mut Ctx, x: f32, y: f32, style: EyeStyle, expr: Expr, age: f32
     }
     match expr {
         Expr::Sad => cx.circle(x + 14.0, y + 5.0, 1.8, color([120, 190, 255], a)),
+        Expr::Game => {
+            // A little gamepad in the corner.
+            cx.rrect(rect(x + 8.0, y + 6.0, 13.0, 7.0), 3.5, color(tint, a));
+            cx.circle(x + 12.0, y + 9.5, 1.1, color(ink, a));
+            cx.circle(x + 17.0, y + 9.5, 1.1, color(ink, a));
+        }
         Expr::Music => {
             cx.circle(x + 15.0, y + 8.0, 2.2, color(tint, a));
             cx.rrect(rect(x + 16.2, y - 3.0, 1.4, 11.0), 0.7, color(tint, a));
@@ -1156,6 +1323,7 @@ fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, event_title: Option<&st
         Alert::Offline => ("Offline", "Connection lost".into(), ORANGE, 0.0, None),
         Alert::Language(l) => ("Keyboard", String::from_utf8_lossy(&l).to_uppercase(), BLUE, 1.0, None),
         Alert::TodoDue => ("Time's up!", "A task is due".into(), ORANGE, 1.0, None),
+        Alert::Controller(on) => ("Controller", if on { "Connected" } else { "Disconnected" }.into(), if on { BLUE } else { GRAY }, 1.0, None),
         Alert::DownloadDone => ("Download complete", event_title.unwrap_or("").to_string(), GREEN, 1.0, None),
         Alert::Meeting { .. } => (meeting.as_str(), event_title.unwrap_or("Click to join").to_string(), BLUE, 1.0, None),
     };
@@ -1178,14 +1346,22 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
     let now = chrono::Local::now();
     let header = format!("{}  {}", now.format("%a %-d %b %Y"), now.format(clock_fmt(notch)));
     cx.t(&header, mid, 44.0, 22.0, color(WHITE, a), Align::Center);
+    if let Some(rate) = notch.download() {
+        let chip = rect(r.x + 36.0, 12.0, 160.0, 28.0);
+        cx.rrect(chip, 14.0, color(WHITE, 0.10 * a));
+        cx.rrect(rect(chip.x + 14.0, chip.y + 7.0, 2.0, 8.0), 1.0, color(GREEN, a));
+        cx.triangle([(chip.x + 10.5, chip.y + 14.0), (chip.x + 19.5, chip.y + 14.0), (chip.x + 15.0, chip.y + 20.0)], color(GREEN, a));
+        cx.t(&rate_fmt(rate, notch.settings().net_bits), chip.x + 30.0, chip.y + 19.0, 13.0, color(WHITE, a), Align::Left);
+    }
     magnifier(cx, r.x + r.w - 62.0, 25.0, color(WHITE, 0.85 * a));
     gear(cx, r.x + r.w - 102.0, 25.0, color(WHITE, 0.85 * a));
 
     match notch.page {
         Page::Music => draw_music(cx, notch, a),
         Page::Control => draw_control(cx, notch, a),
-        Page::Notes => draw_list(cx, notch, notch.notes(), ("No notes yet", "Type  note <text>  in the launcher"), a),
-        Page::Clipboard => draw_list(cx, notch, notch.clips(), if notch.settings().clipboard_history { ("Nothing copied yet", "Copied text shows up here") } else { ("Clipboard history is off", "Turn it on in settings (gear)") }, a),
+        Page::Windows => draw_windows(cx, notch, a),
+        Page::Notes => draw_list(cx, notch, notch.notes(), ("No notes yet", "Jot something down and it is saved here", Some("+  New note")), a),
+        Page::Clipboard => draw_list(cx, notch, notch.clips(), if notch.settings().clipboard_history { ("Nothing copied yet", "Copy some text (Ctrl+C) and it appears here", None) } else { ("Clipboard history is off", "Nothing is being remembered", Some("Turn on")) }, a),
         Page::Timer => draw_timer(cx, notch, a),
         Page::Stats => draw_stats(cx, notch, a),
         Page::Todo => draw_todo(cx, notch, a),
@@ -1194,6 +1370,11 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
         Page::Weather => draw_weather(cx, notch, a),
     }
 
+    if let Some(msg) = notch.toast_text() {
+        let w = cx.text_width(msg, 13.0) + 32.0;
+        cx.rrect(rect(mid - w / 2.0, r.h - 46.0, w, 26.0), 13.0, color([66, 66, 72], a));
+        cx.t(msg, mid, r.h - 28.0, 13.0, color(WHITE, a), Align::Center);
+    }
     let n = Page::ALL.len() as f32;
     let y = r.h - 12.0;
     for (i, p) in Page::ALL.iter().enumerate() {
@@ -1399,6 +1580,11 @@ fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
 /// Handles a left click at pill-logical coordinates; the host runs the returned outcome.
 pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
     use visus_core::MediaCommand;
+    if notch.alert_kind() == Some(Alert::DownloadDone) {
+        if let Some(d) = dirs::download_dir() {
+            return Outcome::OpenFolder { path: d.to_string_lossy().into_owned(), manager: notch.settings().file_manager.clone() };
+        }
+    }
     if let Some(Alert::Meeting { .. }) = notch.alert_kind() {
         if let Some(url) = notch.alert_event().and_then(|e| e.url.clone()) {
             return Outcome::OpenUrl(url);
@@ -1489,14 +1675,34 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
             }
             Button::FolderAdd => notch.begin_folder_input(),
             Button::NoteCopy(i) => {
-                if let Some(t) = notch.notes().get(i) {
-                    visus_platform::set_clipboard(t.clone());
+                if let Some(t) = notch.notes().get(i).cloned() {
+                    visus_platform::set_clipboard(t);
+                    notch.toast("Copied to clipboard");
                 }
             }
             Button::NoteDelete(i) => notch.note_remove(i),
             Button::ClipCopy(i) => {
-                if let Some(t) = notch.clips().get(i) {
-                    visus_platform::set_clipboard(t.clone());
+                if let Some(t) = notch.clips().get(i).cloned() {
+                    visus_platform::set_clipboard(t);
+                    notch.toast("Copied to clipboard");
+                }
+            }
+            Button::WindowFocus(i) => {
+                if let Some((h, _)) = notch.windows().get(i) {
+                    visus_platform::focus_window(*h);
+                }
+            }
+            Button::NewNote => notch.open_palette_with("note "),
+            Button::ClipEnable => notch.update_settings(|s| s.clipboard_history = true),
+            Button::Downloads => {
+                if let Some(d) = dirs::download_dir() {
+                    return Outcome::OpenFolder { path: d.to_string_lossy().into_owned(), manager: notch.settings().file_manager.clone() };
+                }
+            }
+            Button::ShelfReveal(i) => {
+                if let Some(p) = notch.shelf().get(i) {
+                    let dir = std::path::Path::new(p).parent().map_or(p.clone(), |d| d.to_string_lossy().into_owned());
+                    return Outcome::OpenFolder { path: dir, manager: notch.settings().file_manager.clone() };
                 }
             }
             Button::ClipDelete(i) => notch.clip_remove(i),
@@ -1920,43 +2126,100 @@ fn shelf_buttons(notch: &Notch, x0: f32) -> Vec<(Button, Rect)> {
     let w = notch.shape().rect.w - 72.0;
     let mut v = Vec::new();
     for i in 0..notch.shelf().len().min(4) {
-        let y = 60.0 + i as f32 * 40.0;
-        v.push((Button::ShelfOpen(i), rect(x0 + 36.0, y, w - 44.0, 36.0)));
-        v.push((Button::ShelfRemove(i), rect(x0 + 36.0 + w - 40.0, y, 40.0, 36.0)));
+        let y = 62.0 + i as f32 * 42.0;
+        v.push((Button::ShelfOpen(i), rect(x0 + 36.0, y, w - 94.0, 38.0)));
+        v.push((Button::ShelfReveal(i), rect(x0 + 36.0 + w - 92.0, y, 44.0, 38.0)));
+        v.push((Button::ShelfRemove(i), rect(x0 + 36.0 + w - 46.0, y, 46.0, 38.0)));
     }
     v
+}
+
+fn human_size(b: u64) -> String {
+    let f = b as f64;
+    if f >= 1024.0 * 1024.0 * 1024.0 {
+        format!("{:.1} GB", f / (1024.0 * 1024.0 * 1024.0))
+    } else if f >= 1024.0 * 1024.0 {
+        format!("{:.1} MB", f / (1024.0 * 1024.0))
+    } else {
+        format!("{:.0} KB", (f / 1024.0).max(1.0))
+    }
+}
+
+thread_local! {
+    static FILE_SIZES: std::cell::RefCell<std::collections::HashMap<String, String>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn file_size_label(path: &str) -> String {
+    FILE_SIZES.with(|c| {
+        c.borrow_mut()
+            .entry(path.to_string())
+            .or_insert_with(|| std::fs::metadata(path).map_or("missing".to_string(), |m| if m.is_dir() { "folder".to_string() } else { human_size(m.len()) }))
+            .clone()
+    })
+}
+
+fn dashed_rrect(cx: &mut Ctx, rc: Rect, radius: f32, c: [u8; 4]) {
+    let Some(path) = rrect(rc.x, rc.y, rc.w, rc.h, radius) else { return };
+    let stroke = Stroke { width: 1.5, dash: tiny_skia::StrokeDash::new(vec![6.0, 5.0], 0.0), ..Default::default() };
+    let xf = cx.xf();
+    cx.pm.stroke_path(&path, &Ctx::paint(c), &stroke, xf, None);
+}
+
+fn folder_icon(cx: &mut Ctx, x: f32, y: f32, c: [u8; 4]) {
+    if let Some(p) = rrect(x - 8.0, y - 4.0, 16.0, 11.0, 2.5) {
+        cx.stroke(&p, c, 1.4);
+    }
+    cx.rrect(rect(x - 8.0, y - 7.0, 7.0, 3.5), 1.5, c);
 }
 
 fn draw_shelf(cx: &mut Ctx, notch: &Notch, a: f32) {
     let r = notch.shape().rect;
     let (x0, w) = (r.x, r.w - 72.0);
-    if notch.shelf().is_empty() {
-        cx.t("Drop files here", r.x + r.w / 2.0, 130.0, 26.0, color(WHITE, a), Align::Center);
-        cx.t("Drag them onto the pill to keep them close", r.x + r.w / 2.0, 158.0, 16.0, color(GRAY, a), Align::Center);
+    let mid = r.x + r.w / 2.0;
+    let n = notch.shelf().len();
+    if n == 0 {
+        let zone = rect(x0 + 36.0, 62.0, w, 150.0);
+        let hot = notch.drop_hover();
+        cx.rrect(zone, 22.0, color(WHITE, if hot { 0.10 } else { 0.04 } * a));
+        dashed_rrect(cx, zone, 22.0, if hot { color(GREEN, 0.9 * a) } else { color(WHITE, 0.28 * a) });
+        // Arrow dropping into a tray.
+        let ay = if hot { 106.0 } else { 100.0 };
+        cx.rrect(rect(mid - 1.5, ay - 18.0, 3.0, 22.0), 1.5, color(WHITE, 0.9 * a));
+        cx.triangle([(mid - 8.0, ay + 1.0), (mid + 8.0, ay + 1.0), (mid, ay + 10.0)], color(WHITE, 0.9 * a));
+        if let Some(p) = rrect(mid - 18.0, 118.0, 36.0, 10.0, 4.0) {
+            cx.stroke(&p, color(WHITE, 0.7 * a), 1.8);
+        }
+        cx.t(if hot { "Release to add" } else { "Drop files here" }, mid, 158.0, 22.0, color(WHITE, a), Align::Center);
+        cx.t("Keep them close until you need them", mid, 182.0, 14.0, color(GRAY, a), Align::Center);
         return;
     }
     for (i, path) in notch.shelf().iter().take(4).enumerate() {
-        let y = 60.0 + i as f32 * 40.0;
+        let y = 62.0 + i as f32 * 42.0;
+        cx.rrect(rect(x0 + 36.0, y, w, 38.0), 14.0, color(WHITE, 0.06 * a));
         let name = file_name(path);
         let ext = std::path::Path::new(path).extension().map_or(String::new(), |e| e.to_string_lossy().to_uppercase());
         let tint = hue_rgb((hash(&ext) % 360) as f32 / 360.0);
-        cx.rrect(rect(x0 + 36.0, y + 3.0, 30.0, 30.0), 8.0, color(tint, a));
-        cx.t(&ext.chars().take(3).collect::<String>(), x0 + 51.0, y + 23.0, 11.0, color(WHITE, a), Align::Center);
-        let room = w - 130.0;
-        let title = cx.fit(&name, 17.0, room);
-        cx.t(&title, x0 + 78.0, y + 16.0, 17.0, color(WHITE, a), Align::Left);
+        let tile = rect(x0 + 44.0, y + 4.0, 30.0, 30.0);
+        cx.rrect(tile, 9.0, color(tint, a));
+        cx.rrect(rect(tile.x, tile.y, 30.0, 13.0), 9.0, color(WHITE, 0.14 * a));
+        cx.t(&ext.chars().take(4).collect::<String>(), tile.x + 15.0, tile.y + 20.0, 10.0, color(WHITE, a), Align::Center);
+        let room = w - 200.0;
+        let title = cx.fit(&name, 16.0, room);
+        cx.t(&title, x0 + 86.0, y + 17.0, 16.0, color(WHITE, a), Align::Left);
         let dir = std::path::Path::new(path).parent().map_or(String::new(), |d| d.to_string_lossy().into_owned());
-        let dir = cx.fit(&dir, 12.0, room);
-        cx.t(&dir, x0 + 78.0, y + 31.0, 12.0, color(GRAY, 0.9 * a), Align::Left);
-        let (dx, dy) = (x0 + 36.0 + w - 20.0, y + 18.0);
-        let mut pb = PathBuilder::new();
-        pb.move_to(dx - 4.0, dy - 4.0);
-        pb.line_to(dx + 4.0, dy + 4.0);
-        pb.move_to(dx + 4.0, dy - 4.0);
-        pb.line_to(dx - 4.0, dy + 4.0);
-        if let Some(p) = pb.finish() {
-            cx.stroke(&p, color(GRAY, 0.8 * a), 1.6);
+        let sub = cx.fit(&format!("{} \u{b7} {}", file_size_label(path), dir), 12.0, room);
+        cx.t(&sub, x0 + 86.0, y + 32.0, 12.0, color(GRAY, 0.9 * a), Align::Left);
+        folder_icon(cx, x0 + 36.0 + w - 70.0, y + 19.0, color(GRAY, 0.9 * a));
+        x_mark(cx, x0 + 36.0 + w - 23.0, y + 19.0, a);
+    }
+    if n < 4 {
+        let rc = rect(x0 + 36.0, 62.0 + n as f32 * 42.0, w, 38.0);
+        let hot = notch.drop_hover();
+        if hot {
+            cx.rrect(rc, 14.0, color(GREEN, 0.12 * a));
         }
+        dashed_rrect(cx, rc, 14.0, if hot { color(GREEN, 0.9 * a) } else { color(WHITE, 0.2 * a) });
+        cx.t(if hot { "Release to add" } else { "Drop more files here" }, rc.x + rc.w / 2.0, rc.y + 24.0, 13.0, color(GRAY, a), Align::Center);
     }
 }
 

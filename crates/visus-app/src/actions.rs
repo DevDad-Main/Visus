@@ -21,11 +21,15 @@ pub fn pump(notch: &mut visus_core::Notch, emit: Option<&Emit>) {
     START.call_once(visus_platform::refresh_controls);
     static DL: std::sync::Once = std::sync::Once::new();
     if let Some(e) = emit {
-        DL.call_once(|| crate::downloads::start(e.clone()));
+        DL.call_once(|| {
+            crate::downloads::start(e.clone());
+            #[cfg(any(windows, target_os = "linux"))]
+            visus_platform::start_pad(e.clone());
+        });
     }
     request_icons(notch, emit);
     notch.set_hour(chrono::Timelike::hour(&chrono::Local::now()) as u8);
-    if let (true, Some(e)) = (notch.take_window_request(), emit) {
+    if let (true, Some(e)) = (notch.take_window_request() || notch.wants_windows(), emit) {
         let e = e.clone();
         std::thread::spawn(move || e(visus_core::Event::Windows(std::sync::Arc::new(visus_platform::list_windows()))));
     }
@@ -80,7 +84,60 @@ pub fn run(outcome: Outcome, emit: Option<&Emit>, folders: &[String]) -> bool {
             }
         }
         Outcome::FocusWindow(h) => visus_platform::focus_window(h),
+        Outcome::OpenFolder { path, manager } => open_folder(&path, manager.as_deref()),
         Outcome::Quit => return true,
     }
     false
+}
+
+/// Splits a command line into words, keeping "quoted phrases" together.
+fn split_command(cmd: &str) -> Vec<String> {
+    let (mut out, mut cur, mut quoted) = (Vec::new(), String::new(), false);
+    for c in cmd.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            c if c.is_whitespace() && !quoted => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            c => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Opens a folder in the configured file manager, or the system default when none is set.
+fn open_folder(path: &str, manager: Option<&str>) {
+    let Some(tpl) = manager.filter(|m| !m.trim().is_empty()) else {
+        visus_platform::open_path(path);
+        return;
+    };
+    let mut words = split_command(tpl);
+    if words.is_empty() {
+        return;
+    }
+    let has_slot = words.iter().any(|w| w.contains("{path}"));
+    for w in &mut words {
+        *w = w.replace("{path}", path);
+    }
+    if !has_slot {
+        words.push(path.to_string());
+    }
+    let prog = words.remove(0);
+    let _ = std::process::Command::new(prog).args(words).spawn();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_command;
+
+    #[test]
+    fn splits_quoted_commands() {
+        assert_eq!(split_command("\"C:\\Program Files\\Explorer++\\Explorer++.exe\" {path}"), vec!["C:\\Program Files\\Explorer++\\Explorer++.exe", "{path}"]);
+        assert_eq!(split_command("foot -e yazi {path}"), vec!["foot", "-e", "yazi", "{path}"]);
+    }
 }

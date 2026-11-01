@@ -310,6 +310,8 @@ impl State {
         self.cursor = ui::to_logical(&self.notch, pos.0 as f32, pos.1 as f32);
         let inside = self.notch.shape().rect.contains(self.cursor.0, self.cursor.1);
         self.notch.hover(inside);
+        self.notch.set_pointer(Some(self.cursor));
+        ui::hover_palette(&mut self.notch);
         ui::drag(&mut self.notch, self.cursor.0);
         self.needs_draw = true;
     }
@@ -391,6 +393,7 @@ impl PointerHandler for State {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => self.pointer_moved(ev.position),
                 PointerEventKind::Leave { .. } => {
                     self.notch.hover(false);
+                    self.notch.set_pointer(None);
                     self.needs_draw = true;
                 }
                 PointerEventKind::Press { button, .. } if button == BTN_LEFT => {

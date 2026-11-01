@@ -89,6 +89,8 @@ struct App {
     next_frame: Instant,
     frame: Duration,
     shift: bool,
+    hand: bool,
+    pending_click: Option<(f32, f32, Instant)>,
     #[cfg(windows)]
     tray: Option<tray::Tray>,
 }
@@ -191,11 +193,26 @@ impl App {
         self.cursor = ui::to_logical(&self.notch, x / s, y / s);
         let inside = self.notch.shape().rect.contains(self.cursor.0, self.cursor.1);
         self.notch.hover(inside);
+        self.notch.set_pointer(Some(self.cursor));
+        ui::hover_palette(&mut self.notch);
         ui::drag(&mut self.notch, self.cursor.0);
+        let want = ui::over_clickable(&self.notch);
+        if want != self.hand {
+            self.hand = want;
+            if let Some(w) = &self.window {
+                w.set_cursor(winit::window::Cursor::Icon(if want { winit::window::CursorIcon::Pointer } else { winit::window::CursorIcon::Default }));
+            }
+        }
     }
 
     fn click(&mut self, el: &ActiveEventLoop) {
         let (x, y) = self.cursor;
+        // A click that lands while the pill is still growing open is replayed once its buttons exist.
+        let growing = self.notch.is_open() && ui::buttons(&self.notch).is_empty() && !self.notch.palette_is_open() && !self.notch.settings_is_open();
+        if growing {
+            self.pending_click = Some((x, y, Instant::now()));
+            return;
+        }
         let outcome = ui::click(&mut self.notch, x, y);
         self.run_outcome(el, outcome);
     }
@@ -350,14 +367,24 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_moved(position.x as f32, position.y as f32)
             }
-            WindowEvent::CursorLeft { .. } => self.notch.hover(false),
+            WindowEvent::CursorLeft { .. } => {
+                self.notch.hover(false);
+                self.notch.set_pointer(None);
+            }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 self.click(el)
             }
             WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => self.notch.end_drag(),
-            WindowEvent::HoveredFileCancelled => self.notch.drag_cancelled(),
-            WindowEvent::HoveredFile(_) => self.notch.show_page(visus_core::Page::Shelf),
+            WindowEvent::HoveredFileCancelled => {
+                self.notch.set_drop_hover(false);
+                self.notch.drag_cancelled();
+            }
+            WindowEvent::HoveredFile(_) => {
+                self.notch.set_drop_hover(true);
+                self.notch.show_page(visus_core::Page::Shelf);
+            }
             WindowEvent::DroppedFile(path) => {
+                self.notch.set_drop_hover(false);
                 self.notch.shelf_add(path.to_string_lossy().into_owned());
                 self.notch.show_page(visus_core::Page::Shelf);
             }
@@ -412,6 +439,15 @@ impl ApplicationHandler<UserEvent> for App {
         if self.notch.wants_stats() {
             if let Some(s) = &mut self.sampler {
                 self.notch.set_stats(s.sample());
+            }
+        }
+        if let Some((x, y, at)) = self.pending_click {
+            if at.elapsed() > Duration::from_millis(600) {
+                self.pending_click = None;
+            } else if !ui::buttons(&self.notch).is_empty() {
+                self.pending_click = None;
+                let out = ui::click(&mut self.notch, x, y);
+                self.run_outcome(el, out);
             }
         }
         self.notch.tick(dt.min(Duration::from_millis(50)));
@@ -480,6 +516,15 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         notch.begin_todo_input();
         notch.key_text("Buy milk @18:00");
     }
+    if page == "windows" {
+        notch.handle(Event::Windows(Arc::new(vec![(1, "Brave - New Tab".into()), (2, "visus - Visual Studio Code".into()), (3, "Spotify Premium".into()), (4, "Downloads - File Explorer".into())])));
+    }
+    if page == "shelf" {
+        notch.set_shelf(vec!["/home/devdad/Projects/visus/Cargo.toml".into(), "/usr/bin/ls".into(), "/tmp/missing-report.pdf".into()]);
+    }
+    if let Some(p) = std::env::var("VISUS_POINTER").ok().and_then(|s| s.split_once(',').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))) {
+        notch.set_pointer(Some(p));
+    }
     if page == "notes" {
         notch.set_notes(vec!["Call the dentist about Thursday".into(), "Idea: genie close for the settings popup".into(), "https://github.com/DevDad-Main/Visus".into()]);
     }
@@ -545,6 +590,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
                 "offline" => visus_core::Alert::Offline,
                 "timer" => visus_core::Alert::TimerDone,
                 "todo" => visus_core::Alert::TodoDue,
+                "controller" => visus_core::Alert::Controller(true),
                 _ => visus_core::Alert::Charging { percent: 80 },
             });
         }
@@ -577,7 +623,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         pm.save_png(out).expect("write png");
         return;
     }
-    let idx = ["music", "control", "timer", "stats", "shelf", "todo", "notes", "clipboard", "calendar", "weather"].iter().position(|p| *p == page).unwrap_or(0);
+    let idx = ["music", "control", "windows", "timer", "stats", "shelf", "todo", "notes", "clipboard", "calendar", "weather"].iter().position(|p| *p == page).unwrap_or(0);
     notch.next_page(idx as i32);
     if let Some(mut s) = stats::Sampler::new() {
         s.sample();
@@ -652,6 +698,8 @@ fn main() {
         next_frame: Instant::now(),
         frame: FRAME,
         shift: false,
+        hand: false,
+        pending_click: None,
         #[cfg(windows)]
         tray: None,
     };

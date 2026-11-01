@@ -89,6 +89,7 @@ pub enum Action {
     AddNote(String),
     SetCalendar(String),
     FocusWindow(isize),
+    SetFileManager(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +127,8 @@ pub enum Outcome {
     CheckUpdates,
     InstallUpdate,
     FocusWindow(isize),
+    /// Open `path` in the user's file manager (`manager` is a command template, None = system default).
+    OpenFolder { path: String, manager: Option<String> },
     Quit,
 }
 
@@ -144,6 +147,7 @@ fn visus_commands() -> Vec<(&'static str, &'static str, Command)> {
     vec![
         ("Open Music", "Show the music page", Command::ShowPage(Page::Music)),
         ("Open Control Center", "Volume, Wi-Fi, Bluetooth, quiet mode", Command::ShowPage(Page::Control)),
+        ("Open Windows", "Switch between open windows", Command::ShowPage(Page::Windows)),
         ("Open Timer", "Show the focus timer", Command::ShowPage(Page::Timer)),
         ("Open Notes", "Quick notes: type note <text>", Command::ShowPage(Page::Notes)),
         ("Open Clipboard", "Recent copied text", Command::ShowPage(Page::Clipboard)),
@@ -277,6 +281,9 @@ pub fn search_with(query: &str, apps: &[App], windows: &[(isize, String)]) -> Ve
     if let Some(rest) = lower.strip_prefix("cal ").map(|_| q[4..].trim()).filter(|r| !r.is_empty()) {
         out.push(Item { title: "Use as calendar".into(), subtitle: rest.chars().take(80).collect(), kind: Kind::Visus, action: Some(Action::SetCalendar(rest.to_string())), app: None });
     }
+    if let Some(rest) = lower.strip_prefix("fm ").map(|_| q[3..].trim()).filter(|r| !r.is_empty()) {
+        out.push(Item { title: "Use as file manager".into(), subtitle: format!("{rest}   ({{path}} = folder; \"default\" resets)").chars().take(90).collect(), kind: Kind::Visus, action: Some(Action::SetFileManager(rest.to_string())), app: None });
+    }
     if let Some(v) = eval_expression(q) {
         out.push(Item { title: format_number(v), subtitle: format!("{q} ="), kind: Kind::Calc, action: None, app: None });
     }
@@ -286,13 +293,24 @@ pub fn search_with(query: &str, apps: &[App], windows: &[(isize, String)]) -> Ve
     }
 
     let mut scored: Vec<(i32, Item)> = Vec::new();
+    let mut claimed: Vec<isize> = Vec::new();
     for app in apps {
-        if let Some(s) = score(&app.name.to_lowercase(), &lower) {
-            scored.push((s, Item { title: app.name.clone(), subtitle: "Application".into(), kind: Kind::App, action: Some(Action::Launch(app.target.clone())), app: Some(app.clone()) }));
+        let name = app.name.to_lowercase();
+        if let Some(s) = score(&name, &lower) {
+            // An app that already has a window is switched to instead of starting a second copy.
+            let running = (name.chars().count() >= 3).then(|| windows.iter().find(|(_, t)| t.to_lowercase().contains(&name))).flatten();
+            let (subtitle, action) = match running {
+                Some((h, _)) => {
+                    claimed.push(*h);
+                    ("Running \u{b7} switch to window".to_string(), Action::FocusWindow(*h))
+                }
+                None => ("Application".to_string(), Action::Launch(app.target.clone())),
+            };
+            scored.push((s, Item { title: app.name.clone(), subtitle, kind: Kind::App, action: Some(action), app: Some(app.clone()) }));
         }
     }
     if lower.chars().count() >= 2 {
-        for (h, title) in windows {
+        for (h, title) in windows.iter().filter(|(h, _)| !claimed.contains(h)) {
             if let Some(s) = score(&title.to_lowercase(), &lower) {
                 scored.push((s - 10, Item { title: title.clone(), subtitle: "Switch to window".into(), kind: Kind::Window, action: Some(Action::FocusWindow(*h)), app: None }));
             }

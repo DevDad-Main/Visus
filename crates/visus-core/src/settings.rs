@@ -69,6 +69,8 @@ pub struct Settings {
     pub eye_moods: bool,
     /// ICS link or file path whose events appear in the calendar and as meeting peeks.
     pub calendar_url: Option<String>,
+    /// Command that opens a folder, with `{path}` where the folder goes (e.g. `thunar {path}`); None = the system default.
+    pub file_manager: Option<String>,
     pub hide_in_fullscreen: bool,
     /// Show the idle eye when nothing has happened for a while.
     pub mascot: bool,
@@ -118,6 +120,7 @@ impl Default for Settings {
             clipboard_history: true,
             eye_moods: true,
             calendar_url: None,
+            file_manager: None,
             hide_in_fullscreen: true,
             mascot: true,
             idle_secs: 45,

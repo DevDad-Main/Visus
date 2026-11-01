@@ -23,6 +23,8 @@ Download from [Releases](https://github.com/DevDad-Main/Visus/releases):
 - Linux (Wayland, wlr-layer-shell compositors such as Hyprland/Sway): extract `Visus-linux-x64.tar.gz`, run `visus/visus`.
   Hyprland launcher key: `bind = SUPER, space, exec, /path/to/visus --toggle-palette`.
 
+Launcher tips: `note <text>` saves a note, `cal <ics link>` sets a calendar, `fm <command>` sets your file manager (e.g. `fm thunar {path}`, `fm "C:\\Tools\\Explorer++\\Explorer++.exe" {path}`, `fm foot -e yazi {path}`; `fm default` resets), and typing part of a window title switches to it.
+
 Settings, to-dos and the shelf live in `%APPDATA%\visus` (Windows) or `~/.config/visus` (Linux).
 Visus makes network requests only for lyrics (LRCLIB), weather and city search (Open-Meteo) when you use them,
 and for update checks when you click them. No accounts, no analytics.

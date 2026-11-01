@@ -60,6 +60,8 @@ pub enum Event {
     Calendar(Arc<Vec<crate::CalEvent>>),
     /// Current download speed in bytes/s, or `None` when nothing is downloading.
     Download(Option<u64>),
+    /// A game controller was connected (true) or removed (false).
+    Controller(bool),
     DownloadDone(String),
     /// Cover art found online for a track whose player supplied none; `key` is `title\u{1}artist`.
     ArtFallback { key: String, art: Option<Arc<Art>> },

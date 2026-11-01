@@ -11,12 +11,13 @@ pub enum Page {
     Todo,
     Notes,
     Clipboard,
+    Windows,
     Calendar,
     Weather,
 }
 
 impl Page {
-    pub const ALL: [Page; 10] = [Page::Music, Page::Control, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Notes, Page::Clipboard, Page::Calendar, Page::Weather];
+    pub const ALL: [Page; 11] = [Page::Music, Page::Control, Page::Windows, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Notes, Page::Clipboard, Page::Calendar, Page::Weather];
 }
 
 /// Short-lived expressions the awake eye cycles through.
@@ -52,6 +53,7 @@ pub enum Alert {
     Language([u8; 2]),
     Meeting { mins: u16 },
     DownloadDone,
+    Controller(bool),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -97,6 +99,7 @@ const PEEK: (f32, f32) = (500.0, 92.0);
 const OPEN: (f32, f32) = (744.0, 248.0);
 const PEEK_TIME: Duration = Duration::from_millis(2800);
 const HOVER_CLOSE_DELAY: Duration = Duration::from_millis(250);
+const WAVE_REFRESH: Duration = Duration::from_millis(66);
 const PROGRESS_REFRESH: Duration = Duration::from_millis(500);
 const STATS_REFRESH: Duration = Duration::from_secs(1);
 const LYRIC_REFRESH: Duration = Duration::from_millis(250);
@@ -167,6 +170,12 @@ pub struct Notch {
     art_asked: String,
     download: Option<u64>,
     alert_text: Option<String>,
+    windows: Vec<(isize, String)>,
+    windows_asked: Instant,
+    pointer: Option<(f32, f32)>,
+    toast: Option<(String, Instant)>,
+    drop_hover: bool,
+    controller: Option<bool>,
 }
 
 impl Notch {
@@ -233,6 +242,12 @@ impl Notch {
             art_asked: String::new(),
             download: None,
             alert_text: None,
+            windows: Vec::new(),
+            windows_asked: Instant::now() - Duration::from_secs(60),
+            pointer: None,
+            toast: None,
+            drop_hover: false,
+            controller: None,
         };
         n.retarget();
         n
@@ -299,7 +314,18 @@ impl Notch {
             Event::Hud(Hud::Volume { level, muted }) => self.alert(Alert::Volume { level, muted }),
             Event::Fullscreen(f) => self.hidden = f && self.settings.hide_in_fullscreen,
             Event::Apps(apps) => self.palette.set_apps(apps),
-            Event::Windows(w) => self.palette.set_windows((*w).clone()),
+            Event::Windows(w) => {
+                self.windows = (*w).clone();
+                self.palette.set_windows((*w).clone());
+            }
+            Event::Controller(on) => {
+                // The first report is the starting state, not a change.
+                let changed = self.controller.is_some_and(|p| p != on);
+                self.controller = Some(on);
+                if changed {
+                    self.alert(Alert::Controller(on));
+                }
+            }
             Event::Calendar(e) => self.events = (*e).clone(),
             Event::Clipboard(t) => self.clip_add(t),
             Event::Download(d) => {
@@ -424,6 +450,50 @@ impl Notch {
     }
 
     /// The event a meeting alert is about.
+    pub fn windows(&self) -> &[(isize, String)] {
+        &self.windows
+    }
+
+    /// True every couple of seconds while the Windows page is open, so the host refreshes the list.
+    pub fn wants_windows(&mut self) -> bool {
+        if self.is_open() && self.page == Page::Windows && self.windows_asked.elapsed() > Duration::from_secs(2) {
+            self.windows_asked = Instant::now();
+            return true;
+        }
+        false
+    }
+
+    /// Pointer position in pill coordinates while it is over the window; drives hover highlights.
+    pub fn set_pointer(&mut self, p: Option<(f32, f32)>) {
+        self.pointer = p;
+    }
+
+    pub fn pointer(&self) -> Option<(f32, f32)> {
+        self.pointer
+    }
+
+    pub fn toast(&mut self, msg: &str) {
+        self.toast = Some((msg.to_string(), Instant::now()));
+    }
+
+    /// Short confirmation text (e.g. "Copied") for about a second and a half.
+    pub fn toast_text(&self) -> Option<&str> {
+        self.toast.as_ref().filter(|(_, t)| t.elapsed() < Duration::from_millis(1500)).map(|(m, _)| m.as_str())
+    }
+
+    pub fn set_drop_hover(&mut self, on: bool) {
+        self.drop_hover = on;
+    }
+
+    pub fn drop_hover(&self) -> bool {
+        self.drop_hover
+    }
+
+    pub fn open_palette_with(&mut self, text: &str) {
+        self.open_palette();
+        self.palette.type_text(text);
+    }
+
     pub fn download(&self) -> Option<u64> {
         self.download
     }
@@ -490,6 +560,9 @@ impl Notch {
             Some(Duration::from_millis(100))
         } else if synced {
             Some(LYRIC_REFRESH)
+        } else if (media || closed_progress) && self.media.art.is_some() {
+            // The album-art backdrop drifts slowly, so keep drawing while music plays.
+            Some(WAVE_REFRESH)
         } else if media || closed_progress || self.timer.is_running() {
             Some(PROGRESS_REFRESH)
         } else if self.is_open() && self.page == Page::Control {
@@ -498,6 +571,10 @@ impl Notch {
             Some(STATS_REFRESH)
         } else {
             None
+        };
+        let base = match (base, self.toast_text().map(|_| Duration::from_millis(100))) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
         };
         match (base, self.eye_wake()) {
             (Some(a), Some(b)) => Some(a.min(b)),
@@ -1057,6 +1134,14 @@ impl Notch {
             Action::Launch(t) => Outcome::Launch(t),
             Action::OpenUrl(u) => Outcome::OpenUrl(u),
             Action::FocusWindow(h) => Outcome::FocusWindow(h),
+            Action::SetFileManager(cmd) => {
+                self.update_settings(|s| s.file_manager = if cmd.eq_ignore_ascii_case("default") { None } else { Some(cmd) });
+                self.toast("File manager updated");
+                // Open the pill so the confirmation is visible.
+                let page = self.page;
+                self.show_page(page);
+                Outcome::None
+            }
             Action::AddNote(t) => {
                 self.note_add(t);
                 self.show_page(Page::Notes);
