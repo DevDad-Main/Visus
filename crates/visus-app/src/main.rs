@@ -285,6 +285,7 @@ impl ApplicationHandler<UserEvent> for App {
         });
         self.fetcher = Some(lyrics::Fetcher::new(emit.clone()));
         self.emit = Some(emit.clone());
+        platform::set_app_folders(self.notch.settings().app_folders.clone());
         platform::start(emit);
 
         #[cfg(windows)]

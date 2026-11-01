@@ -6,6 +6,13 @@ use visus_core::Event;
 
 mod art;
 
+/// Extra folders the launcher scans for apps; set before `start`.
+pub static APP_FOLDERS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub fn set_app_folders(v: Vec<String>) {
+    *APP_FOLDERS.lock().unwrap() = v;
+}
+
 pub type Emit = Arc<dyn Fn(Event) + Send + Sync + 'static>;
 
 #[cfg(windows)]

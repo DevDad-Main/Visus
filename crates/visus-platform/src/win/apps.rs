@@ -8,31 +8,40 @@ use windows::core::{HSTRING, PCWSTR, w};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-fn start_menu_dirs() -> Vec<PathBuf> {
-    let rel = r"Microsoft\Windows\Start Menu\Programs";
-    ["ProgramData", "APPDATA"]
-        .iter()
-        .filter_map(|v| std::env::var_os(v))
-        .map(|base| PathBuf::from(base).join(rel))
-        .collect()
+fn env_dir(var: &str, rel: &str) -> Option<PathBuf> {
+    std::env::var_os(var).map(|b| PathBuf::from(b).join(rel))
 }
 
-fn collect(dir: &Path, depth: u32, out: &mut Vec<App>, seen: &mut HashSet<String>) {
+/// Executables that are not something a user launches on purpose.
+fn is_noise(lower: &str) -> bool {
+    ["unins", "setup", "install", "update", "crash", "helper", "redist", "service", "report", "notif", "elevat", "cef", "renderer", "host", "handler", "diagnos", "launcherhelper"]
+        .iter()
+        .any(|w| lower.contains(w))
+}
+
+const MAX_APPS: usize = 6000;
+
+fn collect(dir: &Path, depth: u32, max_depth: u32, exes: bool, out: &mut Vec<App>, seen: &mut HashSet<String>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for entry in rd.flatten() {
+        if out.len() >= MAX_APPS {
+            return;
+        }
         let path = entry.path();
         if path.is_dir() {
-            if depth < 4 {
-                collect(&path, depth + 1, out, seen);
+            if depth < max_depth {
+                collect(&path, depth + 1, max_depth, exes, out, seen);
             }
             continue;
         }
-        if path.extension().is_none_or(|e| !e.eq_ignore_ascii_case("lnk")) {
+        let ext = path.extension().and_then(|e| e.to_str()).map(str::to_lowercase).unwrap_or_default();
+        let shortcut = ext == "lnk" || ext == "url";
+        if !(shortcut || (exes && ext == "exe")) {
             continue;
         }
         let Some(name) = path.file_stem().and_then(|s| s.to_str()).map(str::to_string) else { continue };
         let lower = name.to_lowercase();
-        if lower.contains("uninstall") || !seen.insert(lower) {
+        if lower.contains("uninstall") || (!shortcut && is_noise(&lower)) || !seen.insert(lower) {
             continue;
         }
         let kind = guess_kind(&name, "");
@@ -40,11 +49,26 @@ fn collect(dir: &Path, depth: u32, out: &mut Vec<App>, seen: &mut HashSet<String
     }
 }
 
-/// Start Menu shortcuts (classic desktop apps; Store apps are not listed yet).
+/// Start Menu and Desktop shortcuts first, then executables under Program Files and any folders
+/// listed in settings (`app_folders`, any drive). Store/UWP apps are not listed yet.
 pub fn list() -> Vec<App> {
     let (mut apps, mut seen) = (Vec::new(), HashSet::new());
-    for dir in start_menu_dirs() {
-        collect(&dir, 0, &mut apps, &mut seen);
+    let shortcut_roots = [
+        env_dir("ProgramData", r"Microsoft\Windows\Start Menu\Programs"),
+        env_dir("APPDATA", r"Microsoft\Windows\Start Menu\Programs"),
+        env_dir("USERPROFILE", "Desktop"),
+        env_dir("PUBLIC", "Desktop"),
+    ];
+    for dir in shortcut_roots.into_iter().flatten() {
+        collect(&dir, 0, 4, false, &mut apps, &mut seen);
+    }
+    let program_roots = [env_dir("ProgramFiles", ""), env_dir("ProgramFiles(x86)", ""), env_dir("LOCALAPPDATA", "Programs")];
+    for dir in program_roots.into_iter().flatten() {
+        collect(&dir, 0, 2, true, &mut apps, &mut seen);
+    }
+    let extra = crate::APP_FOLDERS.lock().unwrap().clone();
+    for dir in extra {
+        collect(Path::new(&dir), 0, 3, true, &mut apps, &mut seen);
     }
     apps.sort_by_key(|a| a.name.to_lowercase());
     apps

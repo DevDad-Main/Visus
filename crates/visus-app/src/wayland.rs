@@ -147,6 +147,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     state.fetcher = Some(lyrics::Fetcher::new(emit.clone()));
     state.emit = Some(emit.clone());
+    visus_platform::set_app_folders(state.notch.settings().app_folders.clone());
     visus_platform::start(emit);
 
     while !state.exit {

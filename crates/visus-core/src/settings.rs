@@ -66,6 +66,8 @@ pub struct Settings {
     pub weather_lat: Option<f32>,
     pub weather_lon: Option<f32>,
     pub weather_city: Option<String>,
+    /// Extra folders (any drive) searched for apps by the launcher, in addition to the Start Menu.
+    pub app_folders: Vec<String>,
     pub eye_iris: Rgb,
     pub eye_sclera: Rgb,
 }
@@ -99,6 +101,7 @@ impl Default for Settings {
             weather_lat: None,
             weather_lon: None,
             weather_city: None,
+            app_folders: Vec::new(),
             eye_iris: Rgb([40, 110, 230]),
             eye_sclera: Rgb([255, 255, 255]),
         }
