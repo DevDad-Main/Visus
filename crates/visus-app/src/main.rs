@@ -1,30 +1,56 @@
+mod text;
+#[cfg(windows)]
+mod tray;
+mod ui;
+
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use softbuffer::{Context, Surface};
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Transform};
-use visus_core::{Alert, Notch, Page, Shape};
+use tiny_skia::Pixmap;
+use visus_core::{Alert, Event, MediaCommand, Notch};
+use visus_platform_windows as platform;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
-use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{Window, WindowAttributes, WindowId, WindowLevel};
+use winit::window::{Window, WindowId, WindowLevel};
 
 const WIN_W: f32 = 800.0;
 const WIN_H: f32 = 280.0;
 const FRAME: Duration = Duration::from_millis(16);
 
+#[derive(Debug)]
+pub enum UserEvent {
+    Os(Event),
+    ToggleAutostart,
+    Quit,
+}
+
 struct App {
+    proxy: EventLoopProxy<UserEvent>,
     window: Option<Rc<Window>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
+    hwnd: isize,
     notch: Notch,
+    text: text::Text,
+    cursor: (f32, f32),
+    shown: bool,
     last_tick: Instant,
+    #[cfg(windows)]
+    tray: Option<tray::Tray>,
 }
 
 impl App {
+    fn scale(&self) -> f32 {
+        self.window.as_ref().map_or(1.0, |w| w.scale_factor() as f32)
+    }
+
     fn render(&mut self) {
+        let scale = self.scale();
         let (Some(window), Some(surface)) = (&self.window, &mut self.surface) else { return };
         let size = window.inner_size();
         let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
@@ -33,8 +59,9 @@ impl App {
         surface.resize(w, h).unwrap();
         let Some(mut pixmap) = Pixmap::new(size.width, size.height) else { return };
 
-        let scale = window.scale_factor() as f32;
-        draw(&mut pixmap, &self.notch, scale);
+        if !self.notch.is_hidden() {
+            ui::draw(&mut pixmap, &self.text, &self.notch, scale);
+        }
 
         let mut buf = surface.buffer_mut().unwrap();
         // tiny-skia is premultiplied RGBA; softbuffer wants premultiplied 0xAARRGGBB.
@@ -46,85 +73,90 @@ impl App {
         }
         window.pre_present_notify();
         buf.present().unwrap();
-    }
 
-    fn set_cursor(&mut self, x: f32, y: f32) {
-        let scale = self.window.as_ref().map_or(1.0, |w| w.scale_factor() as f32);
-        let inside = self.notch.shape().rect.contains(x / scale, y / scale);
-        self.notch.hover(inside);
-    }
-}
-
-fn pill_path(s: &Shape) -> Option<tiny_skia::Path> {
-    const K: f32 = 0.5523;
-    let r = s.bottom_radius.min(s.rect.w / 2.0).min(s.rect.h);
-    let (x, y, w, h) = (s.rect.x, s.rect.y, s.rect.w, s.rect.h);
-    let mut p = PathBuilder::new();
-    p.move_to(x, y);
-    p.line_to(x + w, y);
-    p.line_to(x + w, y + h - r);
-    p.cubic_to(x + w, y + h - r + r * K, x + w - r + r * K, y + h, x + w - r, y + h);
-    p.line_to(x + r, y + h);
-    p.cubic_to(x + r - r * K, y + h, x, y + h - r + r * K, x, y + h - r);
-    p.close();
-    p.finish()
-}
-
-fn draw(pixmap: &mut Pixmap, notch: &Notch, scale: f32) {
-    let t = Transform::from_scale(scale, scale);
-    let shape = notch.shape();
-
-    let mut black = Paint::default();
-    black.set_color(Color::BLACK);
-    black.anti_alias = true;
-    if let Some(path) = pill_path(&shape) {
-        pixmap.fill_path(&path, &black, FillRule::Winding, t, None);
-    }
-
-    let cx = shape.rect.x + shape.rect.w / 2.0;
-    let mut paint = Paint::default();
-    paint.anti_alias = true;
-
-    if let Some(alert) = notch.alert_kind() {
-        paint.set_color(match alert {
-            Alert::Charging => Color::from_rgba8(48, 209, 88, 255),
-            Alert::Headphones => Color::from_rgba8(90, 200, 250, 255),
-        });
-        let r = 20.0;
-        let (ax, ay) = (shape.rect.x + 52.0, shape.rect.h / 2.0);
-        if let Some(c) = PathBuilder::from_circle(ax, ay, r) {
-            pixmap.fill_path(&c, &paint, FillRule::Winding, t, None);
+        if self.hwnd != 0 {
+            let s = self.notch.shape();
+            platform::set_window_region(
+                self.hwnd,
+                (s.rect.x * scale).floor() as i32,
+                0,
+                (s.rect.w * scale).ceil() as i32,
+                (s.rect.h * scale).ceil() as i32,
+                (s.bottom_radius * scale) as i32,
+            );
         }
     }
 
-    if notch.is_open() {
-        let n = Page::ALL.len() as f32;
-        let y = shape.rect.h - 12.0;
-        for (i, p) in Page::ALL.iter().enumerate() {
-            let active = *p == notch.page;
-            paint.set_color(Color::from_rgba8(255, 255, 255, if active { 255 } else { 110 }));
-            let dx = (i as f32 - (n - 1.0) / 2.0) * 14.0;
-            let rad = if active { 4.0 } else { 3.0 };
-            if let Some(c) = PathBuilder::from_circle(cx + dx, y, rad) {
-                pixmap.fill_path(&c, &paint, FillRule::Winding, t, None);
+    fn sync_visibility(&mut self) {
+        let want = !self.notch.is_hidden();
+        if want != self.shown {
+            self.shown = want;
+            if let Some(w) = &self.window {
+                w.set_visible(want);
+            }
+        }
+    }
+
+    fn cursor_moved(&mut self, x: f32, y: f32) {
+        let s = self.scale();
+        self.cursor = (x / s, y / s);
+        let inside = self.notch.shape().rect.contains(self.cursor.0, self.cursor.1);
+        self.notch.hover(inside);
+    }
+
+    fn click(&mut self) {
+        let (x, y) = self.cursor;
+        for (b, r) in ui::buttons(&self.notch) {
+            if r.contains(x, y) {
+                match b {
+                    ui::Button::Prev => platform::media_command(MediaCommand::Previous),
+                    ui::Button::PlayPause => platform::media_command(MediaCommand::PlayPause),
+                    ui::Button::Next => platform::media_command(MediaCommand::Next),
+                    ui::Button::TimerToggle => self.notch.toggle_timer(),
+                    ui::Button::TimerReset => self.notch.reset_timer(),
+                }
+                return;
             }
         }
     }
 }
 
-impl ApplicationHandler for App {
+#[cfg(windows)]
+fn native_handle(window: &Window) -> isize {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match window.window_handle().map(|h| h.as_raw()) {
+        Ok(RawWindowHandle::Win32(h)) => h.hwnd.get(),
+        _ => 0,
+    }
+}
+
+#[cfg(not(windows))]
+fn native_handle(_: &Window) -> isize {
+    0
+}
+
+fn window_attributes() -> winit::window::WindowAttributes {
+    let attrs = Window::default_attributes()
+        .with_title("Visus")
+        .with_inner_size(LogicalSize::new(WIN_W, WIN_H))
+        .with_decorations(false)
+        .with_transparent(true)
+        .with_resizable(false)
+        .with_window_level(WindowLevel::AlwaysOnTop);
+    #[cfg(windows)]
+    let attrs = {
+        use winit::platform::windows::WindowAttributesExtWindows;
+        attrs.with_skip_taskbar(true).with_undecorated_shadow(false)
+    };
+    attrs
+}
+
+impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
         }
-        let attrs: WindowAttributes = Window::default_attributes()
-            .with_title("Visus")
-            .with_inner_size(LogicalSize::new(WIN_W, WIN_H))
-            .with_decorations(false)
-            .with_transparent(true)
-            .with_resizable(false)
-            .with_window_level(WindowLevel::AlwaysOnTop);
-        let window = Rc::new(el.create_window(attrs).expect("window"));
+        let window = Rc::new(el.create_window(window_attributes()).expect("window"));
 
         if let Some(m) = el.primary_monitor().or_else(|| window.current_monitor()) {
             let win_w = window.outer_size().width as i32;
@@ -132,10 +164,45 @@ impl ApplicationHandler for App {
             window.set_outer_position(PhysicalPosition::new(x, m.position().y));
         }
 
+        self.hwnd = native_handle(&window);
+        if self.hwnd != 0 {
+            platform::prepare_window(self.hwnd);
+        }
+
         let ctx = Context::new(window.clone()).expect("softbuffer context");
         self.surface = Some(Surface::new(&ctx, window.clone()).expect("surface"));
         self.window = Some(window);
         self.last_tick = Instant::now();
+
+        let proxy = self.proxy.clone();
+        platform::start(Arc::new(move |ev| {
+            let _ = proxy.send_event(UserEvent::Os(ev));
+        }));
+
+        #[cfg(windows)]
+        {
+            self.tray = tray::create(self.proxy.clone());
+        }
+    }
+
+    fn user_event(&mut self, el: &ActiveEventLoop, ev: UserEvent) {
+        match ev {
+            UserEvent::Os(e) => {
+                self.notch.handle(e);
+                self.sync_visibility();
+            }
+            UserEvent::ToggleAutostart => {
+                let _ = platform::set_autostart(!platform::autostart_enabled());
+                #[cfg(windows)]
+                if let Some(t) = &self.tray {
+                    t.set_autostart_checked(platform::autostart_enabled());
+                }
+            }
+            UserEvent::Quit => el.exit(),
+        }
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, ev: WindowEvent) {
@@ -143,9 +210,12 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => el.exit(),
             WindowEvent::RedrawRequested => self.render(),
             WindowEvent::CursorMoved { position, .. } => {
-                self.set_cursor(position.x as f32, position.y as f32)
+                self.cursor_moved(position.x as f32, position.y as f32)
             }
             WindowEvent::CursorLeft { .. } => self.notch.hover(false),
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+                self.click()
+            }
             WindowEvent::MouseWheel { delta, .. } if self.notch.is_open() => {
                 let y = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
@@ -158,8 +228,8 @@ impl ApplicationHandler for App {
                     Key::Named(NamedKey::ArrowRight) => self.notch.next_page(1),
                     Key::Named(NamedKey::ArrowLeft) => self.notch.next_page(-1),
                     Key::Named(NamedKey::Escape) => el.exit(),
-                    // Dev shortcuts until real platform event sources exist.
-                    Key::Character("c") => self.notch.alert(Alert::Charging),
+                    // Dev shortcuts for peeking without real OS events.
+                    Key::Character("c") => self.notch.alert(Alert::Charging { percent: 70 }),
                     Key::Character("h") => self.notch.alert(Alert::Headphones),
                     _ => {}
                 }
@@ -182,20 +252,42 @@ impl ApplicationHandler for App {
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
-        } else {
-            // Idle: sleep until the next OS event, zero CPU.
-            el.set_control_flow(ControlFlow::Wait);
+            return;
+        }
+
+        // Idle: sleep until the clock minute changes or periodic content (progress) needs a refresh.
+        let mut wake = self.notch.refresh_interval();
+        if !self.notch.is_hidden() {
+            let secs = chrono::Timelike::second(&chrono::Local::now()) as u64;
+            let minute = Duration::from_secs(60 - secs) + Duration::from_millis(20);
+            wake = Some(wake.map_or(minute, |w| w.min(minute)));
+        }
+        match wake {
+            Some(d) => {
+                el.set_control_flow(ControlFlow::WaitUntil(now + d));
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+            None => el.set_control_flow(ControlFlow::Wait),
         }
     }
 }
 
 fn main() {
-    let el = EventLoop::new().expect("event loop");
+    let el = EventLoop::<UserEvent>::with_user_event().build().expect("event loop");
     let mut app = App {
+        proxy: el.create_proxy(),
         window: None,
         surface: None,
+        hwnd: 0,
         notch: Notch::new(WIN_W),
+        text: text::Text::new(),
+        cursor: (-1.0, -1.0),
+        shown: true,
         last_tick: Instant::now(),
+        #[cfg(windows)]
+        tray: None,
     };
     el.run_app(&mut app).expect("run");
 }

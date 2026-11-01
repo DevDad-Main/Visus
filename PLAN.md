@@ -96,6 +96,19 @@ Rule: `visus-core` must stay free of platform and rendering dependencies so macO
 8. Idle mascot, minimal mode, settings window, installer/MS Store packaging.
 9. macOS and Linux (layer-shell) ports.
 
+### Settings and idle eye (requested)
+
+- **Settings**: tray menu entry opens a settings window (autostart, minimal notch, hide in fullscreen,
+  notch size, mascot on/off, eye style, enabled pages/plugins). Every change applies instantly and is
+  persisted to the local settings store. Core holds a `Settings` struct; UI is a separate window.
+- **Idle eye**: after N seconds with no interaction the clock fades and a single eye appears in the closed
+  pill. It follows the global cursor (needs cursor position from the platform layer, polled only while the
+  eye is visible), dozes off after a longer idle period, and wakes with a blink when the user returns.
+  Redraws only while the pupil moves, to keep idle CPU near zero.
+- **Eye styles** (later, selectable in settings): default white eye; "Sauron" eye with a slit pupil, fiery
+  glow, and a sweeping searchlight cone that scans the screen. Styles are a `EyeStyle` trait/enum in
+  `visus-ui` so plugins can add more.
+
 ## Dev notes
 
 - Build/run: `cargo run -p visus-app`; tests: `cargo test`.

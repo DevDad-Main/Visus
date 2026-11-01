@@ -76,12 +76,12 @@ impl Text {
             let Some(outlined) = self.font.outline_glyph(glyph) else { continue };
             let b = outlined.px_bounds();
             outlined.draw(|gx, gy, cov| {
-                let (X, Y) = (b.min.x as i32 + gx as i32, b.min.y as i32 + gy as i32);
-                if X < 0 || Y < 0 || X >= pw || Y >= ph {
+                let (px_x, px_y) = (b.min.x as i32 + gx as i32, b.min.y as i32 + gy as i32);
+                if px_x < 0 || px_y < 0 || px_x >= pw || px_y >= ph {
                     return;
                 }
                 let a = cov * rgba[3] as f32 / 255.0;
-                let dst = &mut pixels[(Y * pw + X) as usize];
+                let dst = &mut pixels[(px_y * pw + px_x) as usize];
                 let inv = 1.0 - a;
                 let mix = |s: u8, d: u8| (s as f32 * a + d as f32 * inv).round().min(255.0) as u8;
                 // Source is premultiplied: colour * alpha.
