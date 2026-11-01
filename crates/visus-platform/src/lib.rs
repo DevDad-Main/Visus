@@ -5,6 +5,8 @@ use std::sync::Arc;
 use visus_core::Event;
 
 mod art;
+mod controls;
+pub use controls::*;
 
 /// Extra folders the launcher scans for apps; set before `start`.
 pub static APP_FOLDERS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());

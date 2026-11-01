@@ -136,6 +136,7 @@ pub struct Palette {
 fn visus_commands() -> Vec<(&'static str, &'static str, Command)> {
     vec![
         ("Open Music", "Show the music page", Command::ShowPage(Page::Music)),
+        ("Open Control Center", "Volume, Wi-Fi, Bluetooth, quiet mode", Command::ShowPage(Page::Control)),
         ("Open Timer", "Show the focus timer", Command::ShowPage(Page::Timer)),
         ("Open Stats", "Show CPU, memory and network", Command::ShowPage(Page::Stats)),
         ("Open To-do", "Show your tasks", Command::ShowPage(Page::Todo)),

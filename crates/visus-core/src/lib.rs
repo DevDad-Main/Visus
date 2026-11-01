@@ -1,6 +1,7 @@
 //! Platform-independent notch state and animation.
 
 mod anim;
+mod controls;
 mod event;
 mod extras;
 mod lyrics;
@@ -13,6 +14,7 @@ mod todo;
 
 pub use timer::{FOCUS, Timer};
 pub use anim::Spring;
+pub use controls::{Controls, Radio};
 pub use lyrics::{LyricLine, Lyrics, current_index, parse_lrc};
 pub use event::{Art, Event, Hud, MediaCommand, MediaInfo};
 pub use notch::{Alert, EyeState, Notch, Page, Rect, Shape};

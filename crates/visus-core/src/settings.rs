@@ -51,6 +51,8 @@ impl<'de> Deserialize<'de> for Rgb {
 pub struct Settings {
     /// Closed pill collapses to a thin line (for thick bezels).
     pub minimal: bool,
+    /// Silences pop-up alerts (timers and reminders still show).
+    pub quiet: bool,
     pub hide_in_fullscreen: bool,
     /// Show the idle eye when nothing has happened for a while.
     pub mascot: bool,
@@ -92,6 +94,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             minimal: false,
+            quiet: false,
             hide_in_fullscreen: true,
             mascot: true,
             idle_secs: 45,

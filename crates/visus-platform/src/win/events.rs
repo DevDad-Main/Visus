@@ -218,10 +218,11 @@ fn report_power(_changed: bool) {
         return;
     }
     // BatteryFlag bit 7 = no battery (desktop): nothing to report.
-    if s.BatteryFlag & 128 != 0 {
+    // Flag 255 / percent 255 = unknown (virtual machines, cloud rigs): also nothing to report.
+    if s.BatteryFlag & 128 != 0 || s.BatteryFlag == 255 || s.BatteryLifePercent > 100 {
         return;
     }
-    let percent = if s.BatteryLifePercent > 100 { 100 } else { s.BatteryLifePercent };
+    let percent = s.BatteryLifePercent;
     emit(Event::Power { on_ac: s.ACLineStatus == 1, percent });
 }
 

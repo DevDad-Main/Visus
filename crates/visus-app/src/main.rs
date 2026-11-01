@@ -185,6 +185,7 @@ impl App {
         self.cursor = ui::to_logical(&self.notch, x / s, y / s);
         let inside = self.notch.shape().rect.contains(self.cursor.0, self.cursor.1);
         self.notch.hover(inside);
+        ui::drag(&mut self.notch, self.cursor.0);
     }
 
     fn click(&mut self, el: &ActiveEventLoop) {
@@ -343,6 +344,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 self.click(el)
             }
+            WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => self.notch.end_drag(),
             WindowEvent::DroppedFile(path) => self.notch.shelf_add(path.to_string_lossy().into_owned()),
             WindowEvent::Focused(false) if self.notch.keyboard_active() => self.notch.key_escape(),
             WindowEvent::MouseWheel { delta, .. } if self.notch.is_open() => {
@@ -381,7 +383,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.last_tick = now;
         self.feed_eye();
         self.weather.tick(&self.notch, self.emit.as_ref());
-        actions::request_icons(&mut self.notch, self.emit.as_ref());
+        actions::pump(&mut self.notch, self.emit.as_ref());
         if self.notch.wants_stats() {
             if let Some(s) = &mut self.sampler {
                 self.notch.set_stats(s.sample());
@@ -477,7 +479,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             notch.tick(Duration::from_millis(16));
         }
     }
-    let idx = ["music", "timer", "stats", "shelf", "todo", "calendar", "weather"].iter().position(|p| *p == page).unwrap_or(0);
+    let idx = ["music", "control", "timer", "stats", "shelf", "todo", "calendar", "weather"].iter().position(|p| *p == page).unwrap_or(0);
     notch.next_page(idx as i32);
     if let Some(mut s) = stats::Sampler::new() {
         s.sample();

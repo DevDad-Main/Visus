@@ -3,7 +3,7 @@ use tiny_skia::{
     SpreadMode, FilterQuality, Pattern,
     Stroke, Transform, LineCap,
 };
-use visus_core::{Alert, AppKind, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, current_index, weather_label};
+use visus_core::{Alert, AppKind, Radio, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, current_index, weather_label};
 
 use crate::text::{Align, Text};
 
@@ -42,6 +42,8 @@ pub enum Button {
     DriveToggle(u8),
     FolderRemove(usize),
     FolderAdd,
+    Volume,
+    Tile(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,6 +167,70 @@ fn draw_todo(cx: &mut Ctx, notch: &Notch, a: f32) {
 
 const TIMER_PRESETS: [u32; 6] = [5, 10, 15, 25, 45, 60];
 
+fn tile_rect(x0: f32, i: usize) -> Rect {
+    rect(x0 + 36.0 + (i % 2) as f32 * 118.0, 64.0 + (i / 2) as f32 * 82.0, 108.0, 72.0)
+}
+
+fn slider_rect(x0: f32) -> Rect {
+    rect(x0 + 330.0, 112.0, 340.0, 44.0)
+}
+
+fn control_buttons(x0: f32) -> Vec<(Button, Rect)> {
+    let mut v: Vec<(Button, Rect)> = (0..4).map(|i| (Button::Tile(i as u8), tile_rect(x0, i))).collect();
+    v.push((Button::Volume, slider_rect(x0)));
+    v
+}
+
+/// Continues a volume-slider drag; call on pointer motion with pill-logical coordinates.
+pub fn drag(notch: &mut Notch, x: f32) {
+    if !notch.slider_dragging() {
+        return;
+    }
+    let r = slider_rect(notch.shape().rect.x);
+    let v = ((x - r.x) / r.w).clamp(0.0, 1.0);
+    notch.set_volume_local(v);
+    visus_platform::set_volume(v);
+}
+
+fn draw_control(cx: &mut Ctx, notch: &Notch, a: f32) {
+    let x0 = notch.shape().rect.x;
+    let c = notch.controls();
+    let tiles: [(&str, Option<bool>, [u8; 3]); 4] = [
+        ("Wi-Fi", c.wifi, BLUE),
+        ("Bluetooth", c.bluetooth, BLUE),
+        ("Mute", c.has_volume.then_some(c.muted), ORANGE),
+        ("Quiet", Some(notch.settings().quiet), [191, 90, 242]),
+    ];
+    for (i, (label, state, tint)) in tiles.iter().enumerate() {
+        let rc = tile_rect(x0, i);
+        let on = *state == Some(true);
+        let bg = match state {
+            Some(true) => color(*tint, 0.95 * a),
+            Some(false) => color(WHITE, 0.12 * a),
+            None => color(WHITE, 0.05 * a),
+        };
+        cx.rrect(rc, 20.0, bg);
+        let ink = if on { [0, 0, 0] } else if state.is_none() { GRAY } else { WHITE };
+        cx.t(label, rc.x + 16.0, rc.y + 32.0, 17.0, color(ink, a), Align::Left);
+        let sub = match state {
+            Some(true) => "On",
+            Some(false) => "Off",
+            None => "Unavailable",
+        };
+        cx.t(sub, rc.x + 16.0, rc.y + 54.0, 13.0, color(if on { [0, 0, 0] } else { GRAY }, 0.8 * a), Align::Left);
+    }
+    let s = slider_rect(x0);
+    let v = if c.muted { 0.0 } else { c.volume };
+    cx.t("Volume", s.x, s.y - 14.0, 17.0, color(WHITE, a), Align::Left);
+    cx.t(&format!("{:.0}%", v * 100.0), s.x + s.w, s.y - 14.0, 15.0, color(GRAY, a), Align::Right);
+    cx.rrect(s, 22.0, color(WHITE, 0.14 * a));
+    if v > 0.0 {
+        cx.rrect(rect(s.x, s.y, (s.w * v).max(s.h), s.h), 22.0, color(WHITE, 0.92 * a));
+    }
+    let hint = if c.has_volume { "Quiet hides pop-ups; timers still show" } else { "Volume control unavailable on this system" };
+    cx.t(hint, s.x, s.y + s.h + 28.0, 13.0, color(GRAY, a), Align::Left);
+}
+
 fn timer_buttons(x0: f32) -> Vec<(Button, Rect)> {
     let mut v: Vec<(Button, Rect)> = TIMER_PRESETS
         .iter()
@@ -195,6 +261,7 @@ fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
             (Button::PlayPause, rect(cx - 24.0, 190.0, 48.0, 40.0)),
             (Button::Next, rect(cx + 84.0 - 24.0, 190.0, 48.0, 40.0)),
         ],
+        Page::Control => control_buttons(x0),
         Page::Timer => timer_buttons(x0),
         Page::Todo => todo_buttons(notch, x0),
         Page::Shelf => shelf_buttons(notch, x0),
@@ -510,8 +577,9 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
     mask.fill_path(&almond, FillRule::Winding, true, cx.xf());
     if sauron {
         // Vertical slit pupil that follows the gaze.
-        let (px, ry) = (x + lx * ex * 0.35, h * 0.78);
-        if let Some(oval) = tiny_skia::Rect::from_xywh(px - ey * 0.1, y - ry, ey * 0.2, ry * 2.0).and_then(PathBuilder::from_oval) {
+        let (px, ry) = (x + lx * ex * 0.7, h * 0.62);
+        let py = y + ly * h * 0.2;
+        if let Some(oval) = tiny_skia::Rect::from_xywh(px - ey * 0.06, py - ry, ey * 0.12, ry * 2.0).and_then(PathBuilder::from_oval) {
             let mut ink = Paint::default();
             ink.anti_alias = true;
             ink.set_color(Color::from_rgba8(0, 0, 0, (fade * 255.0) as u8));
@@ -576,8 +644,13 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
         let t = chrono::Local::now().timestamp_millis() as f32 / 1000.0;
         for i in 0..5 {
             let f = i as f32;
-            let wave = 0.5 + 0.5 * (t * (5.0 + f * 1.7) + f * 1.3).sin() * (0.6 + 0.4 * (t * (2.3 + f) + f).sin());
-            let h = 4.0 + 12.0 * wave;
+            let shape = 0.5 + 0.5 * (t * (5.0 + f * 1.7) + f * 1.3).sin() * (0.6 + 0.4 * (t * (2.3 + f) + f).sin());
+            // Real output loudness when the OS reports it, otherwise a plain animation.
+            let wave = match notch.visualizer_level() {
+                Some(l) => 0.12 + l * (0.35 + 0.65 * shape),
+                None => shape,
+            };
+            let h = 3.0 + 13.0 * wave.min(1.0);
             let x = r.x + r.w - 42.0 + f * 5.5;
             cx.rrect(rect(x, mid - h / 2.0, 2.5, h), 1.25, color(WHITE, a));
         }
@@ -624,6 +697,7 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
 
     match notch.page {
         Page::Music => draw_music(cx, notch, a),
+        Page::Control => draw_control(cx, notch, a),
         Page::Timer => draw_timer(cx, notch, a),
         Page::Stats => draw_stats(cx, notch, a),
         Page::Todo => draw_todo(cx, notch, a),
@@ -895,6 +969,29 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                 return Outcome::Rescan;
             }
             Button::FolderAdd => notch.begin_folder_input(),
+            Button::Volume => {
+                notch.begin_drag();
+                drag(notch, x);
+            }
+            Button::Tile(i) => {
+                let c = notch.controls();
+                match i {
+                    0 | 1 => {
+                        let (radio, state) = if i == 0 { (Radio::Wifi, c.wifi) } else { (Radio::Bluetooth, c.bluetooth) };
+                        if let Some(on) = state {
+                            notch.set_radio_local(radio, !on);
+                            visus_platform::set_radio(radio, !on);
+                        }
+                    }
+                    2 => {
+                        if c.has_volume {
+                            notch.set_muted_local(!c.muted);
+                            visus_platform::set_muted(!c.muted);
+                        }
+                    }
+                    _ => notch.update_settings(|s| s.quiet = !s.quiet),
+                }
+            }
             Button::Update => {
                 return match notch.update_status() {
                     UpdateStatus::Available { .. } => {
@@ -1020,14 +1117,16 @@ fn draw_palette(cx: &mut Ctx, notch: &Notch) {
     let src_top = (l.panel.y - 16.0) * k + oy;
     let src_h = (l.panel.h + 32.0) * k;
     let y_shrink = 1.0 - smooth((g - 0.08) / 0.92);
-    let dst_top = src_top - 10.0 * k * smooth(g);
-    let alpha = 1.0 - smooth((g - 0.85) / 0.15);
+    // The funnel ends as a point just under the pill instead of inside it.
+    let pill_bottom = (notch.shape().rect.h + 3.0) * k + oy;
+    let dst_top = src_top + (pill_bottom - src_top) * smooth(g);
+    let alpha = 1.0 - smooth((g - 0.7) / 0.25);
     let half = (PANEL_W / 2.0 + 16.0) * k;
     const N: usize = 90;
     for i in 0..N {
         let (u0, u1) = (i as f32 / N as f32, (i + 1) as f32 / N as f32);
         let um = (u0 + u1) / 2.0;
-        let sx = 1.0 - 0.94 * smooth(g * 1.5 - 0.5 * um);
+        let sx = 1.0 - 0.97 * smooth(g * 1.5 - 0.5 * um);
         let (sy0, dy0, dy1) = (src_top + u0 * src_h, dst_top + u0 * src_h * y_shrink, dst_top + u1 * src_h * y_shrink);
         let dh = dy1 - dy0;
         if dh < 0.02 {

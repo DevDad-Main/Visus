@@ -1,9 +1,10 @@
-use crate::{Action, Command, Event, FOCUS, Hud, Lyrics, MediaInfo, Outcome, Palette, Settings, Spring, Stats, Timer, Todo, UpdateStatus, Weather, parse_task};
+use crate::{Controls, Action, Command, Event, FOCUS, Hud, Lyrics, MediaInfo, Outcome, Palette, Settings, Spring, Stats, Timer, Todo, UpdateStatus, Weather, parse_task};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Music,
+    Control,
     Timer,
     Stats,
     Shelf,
@@ -13,7 +14,7 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 7] = [Page::Music, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Calendar, Page::Weather];
+    pub const ALL: [Page; 8] = [Page::Music, Page::Control, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Calendar, Page::Weather];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +69,7 @@ enum Mode {
 const MINIMAL: (f32, f32) = (190.0, 6.0);
 /// Extra closed-pill width while the music visualizer is shown.
 const VISUALIZER_EXTRA: f32 = 60.0;
+const CONTROLS_REFRESH: Duration = Duration::from_millis(400);
 const VISUALIZER_REFRESH: Duration = Duration::from_millis(33);
 const PEEK: (f32, f32) = (500.0, 92.0);
 const OPEN: (f32, f32) = (744.0, 248.0);
@@ -121,6 +123,10 @@ pub struct Notch {
     look_y: Spring,
     tracking: bool,
     last_motion: Instant,
+    controls: Controls,
+    slider_drag: bool,
+    viz_level: f32,
+    viz_live: bool,
 }
 
 impl Notch {
@@ -166,6 +172,10 @@ impl Notch {
             look_y: Spring::new(0.0),
             tracking: false,
             last_motion: Instant::now(),
+            controls: Controls::default(),
+            slider_drag: false,
+            viz_level: 0.0,
+            viz_live: false,
         };
         n.retarget();
         n
@@ -239,6 +249,9 @@ impl Notch {
         if self.hidden || self.mode == Mode::Open || self.palette_open || self.settings_open {
             return;
         }
+        if self.settings.quiet && !matches!(a, Alert::TimerDone | Alert::TodoDue) {
+            return;
+        }
         self.touch();
         self.mode = Mode::Peek(a);
         self.peek_left = PEEK_TIME;
@@ -282,6 +295,8 @@ impl Notch {
             Some(LYRIC_REFRESH)
         } else if media || self.timer.is_running() {
             Some(PROGRESS_REFRESH)
+        } else if self.is_open() && self.page == Page::Control {
+            Some(CONTROLS_REFRESH)
         } else if self.wants_stats() {
             Some(STATS_REFRESH)
         } else {
@@ -296,6 +311,70 @@ impl Notch {
     /// The closed pill shows an equalizer (and widens) only while music plays.
     pub fn visualizer_active(&self) -> bool {
         !self.hidden && !self.settings.minimal && self.media.has_session && self.media.playing
+    }
+
+    /// True while the closed pill shows the visualizer, i.e. the host should sample audio.
+    pub fn wants_audio(&self) -> bool {
+        self.visualizer_active() && self.mode == Mode::Closed
+    }
+
+    /// Feeds the latest output peak (0..1); `None` when the OS cannot provide one.
+    pub fn set_audio_level(&mut self, raw: Option<f32>) {
+        let Some(r) = raw else {
+            self.viz_live = false;
+            return;
+        };
+        self.viz_live = true;
+        let t = (r.clamp(0.0, 1.0).sqrt() * 1.25).min(1.0);
+        self.viz_level = if t > self.viz_level { t } else { self.viz_level * 0.8 + t * 0.2 };
+    }
+
+    /// Smoothed loudness when real audio is available; `None` means animate without it.
+    pub fn visualizer_level(&self) -> Option<f32> {
+        self.viz_live.then_some(self.viz_level)
+    }
+
+    pub fn wants_controls(&self) -> bool {
+        self.is_open() && self.page == Page::Control
+    }
+
+    pub fn controls(&self) -> Controls {
+        self.controls
+    }
+
+    pub fn set_controls(&mut self, c: Controls) {
+        let volume = if self.slider_drag { self.controls.volume } else { c.volume };
+        self.controls = Controls { volume, ..c };
+    }
+
+    pub fn set_volume_local(&mut self, v: f32) {
+        self.touch();
+        self.controls.volume = v.clamp(0.0, 1.0);
+        self.controls.muted = false;
+        self.controls.has_volume = true;
+    }
+
+    pub fn set_muted_local(&mut self, m: bool) {
+        self.controls.muted = m;
+    }
+
+    pub fn set_radio_local(&mut self, r: crate::Radio, on: bool) {
+        match r {
+            crate::Radio::Wifi => self.controls.wifi = Some(on),
+            crate::Radio::Bluetooth => self.controls.bluetooth = Some(on),
+        }
+    }
+
+    pub fn begin_drag(&mut self) {
+        self.slider_drag = true;
+    }
+
+    pub fn end_drag(&mut self) {
+        self.slider_drag = false;
+    }
+
+    pub fn slider_dragging(&self) -> bool {
+        self.slider_drag
     }
 
     pub fn timer(&self) -> &Timer {
@@ -689,7 +768,7 @@ impl Notch {
     pub fn close_palette(&mut self) {
         self.palette_open = false;
         // Slow start, then accelerating: reads as being sucked into the pill.
-        self.palette_anim.tune(42.0, 13.0);
+        self.palette_anim.tune(80.0, 18.0);
         self.palette_anim.target = 0.0;
     }
 

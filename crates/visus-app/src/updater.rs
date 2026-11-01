@@ -23,9 +23,22 @@ fn agent() -> ureq::Agent {
     ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(30))).user_agent(USER_AGENT).build().into()
 }
 
+/// Downloads a URL; falls back to the system `curl` (which trusts the OS certificate store) if the built-in client fails.
+fn http_get(url: &str) -> Result<Vec<u8>, String> {
+    let first = agent().get(url).call().map_err(|e| e.to_string()).and_then(|mut r| r.body_mut().read_to_vec().map_err(|e| e.to_string()));
+    let Err(err) = first else { return first };
+    let mut cmd = std::process::Command::new("curl");
+    cmd.args(["-sSL", "--fail", "--max-time", "120", "-A", USER_AGENT, url]);
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
+    match cmd.output() {
+        Ok(o) if o.status.success() => Ok(o.stdout),
+        _ => Err(err),
+    }
+}
+
 fn fetch_latest() -> Result<(String, Release), String> {
-    let mut resp = agent().get(RELEASES).call().map_err(|e| format!("Update check failed: {e}"))?;
-    let body = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
+    let body = String::from_utf8(http_get(RELEASES).map_err(|e| format!("Update check failed: {e}"))?).map_err(|e| e.to_string())?;
     let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     let rel = json.get(0).ok_or("No releases found")?;
     let tag = rel["tag_name"].as_str().ok_or("Release has no tag")?.to_string();
@@ -76,10 +89,7 @@ fn install_inner() -> Result<(), String> {
 
     let rel = LATEST.lock().unwrap().clone().ok_or("Check for updates first")?;
     let (zip_url, sha_url) = rel.zip.zip(rel.sha).ok_or("Release has no Windows build")?;
-    let a = agent();
-    let get = |url: &str| -> Result<Vec<u8>, String> {
-        a.get(url).call().map_err(|e| e.to_string())?.body_mut().read_to_vec().map_err(|e| e.to_string())
-    };
+    let get = http_get;
     let zip_bytes = get(&zip_url)?;
     let expected = String::from_utf8_lossy(&get(&sha_url)?).split_whitespace().next().unwrap_or("").to_lowercase();
 

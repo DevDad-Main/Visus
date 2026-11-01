@@ -171,7 +171,7 @@ impl State {
         self.sync_keyboard();
         self.feed_eye();
         self.weather.tick(&self.notch, self.emit.as_ref());
-        actions::request_icons(&mut self.notch, self.emit.as_ref());
+        actions::pump(&mut self.notch, self.emit.as_ref());
         if self.notch.wants_stats() {
             if let Some(s) = &mut self.sampler {
                 self.notch.set_stats(s.sample());
@@ -310,6 +310,7 @@ impl State {
         self.cursor = ui::to_logical(&self.notch, pos.0 as f32, pos.1 as f32);
         let inside = self.notch.shape().rect.contains(self.cursor.0, self.cursor.1);
         self.notch.hover(inside);
+        ui::drag(&mut self.notch, self.cursor.0);
         self.needs_draw = true;
     }
 }
@@ -398,6 +399,7 @@ impl PointerHandler for State {
                     self.run_outcome(out);
                     self.needs_draw = true;
                 }
+                PointerEventKind::Release { button, .. } if button == BTN_LEFT => self.notch.end_drag(),
                 PointerEventKind::Axis { vertical, .. } if self.notch.is_open() => {
                     self.scroll_accum += vertical.absolute;
                     if self.scroll_accum.abs() >= SCROLL_STEP {
