@@ -48,6 +48,11 @@ impl Timer {
         }
     }
 
+    /// Changes the session length and restarts from the full time.
+    pub fn set_total(&mut self, total: Duration) {
+        *self = Timer::new(total);
+    }
+
     pub fn reset(&mut self) {
         self.banked = Duration::ZERO;
         self.started = None;

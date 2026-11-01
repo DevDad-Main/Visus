@@ -94,7 +94,9 @@ impl App {
             return;
         };
         surface.resize(w, h).unwrap();
-        let Some(mut pixmap) = Pixmap::new(size.width, size.height) else { return };
+        // Rows below the pill and launcher are always transparent, so they are not rasterised.
+        let rows = ((ui::content_bottom(&self.notch) * scale).ceil() as u32).clamp(1, size.height);
+        let Some(mut pixmap) = Pixmap::new(size.width, rows) else { return };
 
         if !self.notch.is_hidden() {
             ui::draw(&mut pixmap, &self.text, &self.notch, scale);
@@ -108,18 +110,26 @@ impl App {
                 | (src.green() as u32) << 8
                 | src.blue() as u32;
         }
+        buf[(rows * size.width) as usize..].fill(0);
         window.pre_present_notify();
         buf.present().unwrap();
 
         if self.hwnd != 0 {
-            let r = ui::hit_rect(&self.notch);
+            let animating = self.notch.is_animating();
+            let r = if animating { ui::region_rect(&self.notch) } else { ui::hit_rect(&self.notch) };
             let radius = self.notch.shape().bottom_radius * self.notch.settings().scale;
-            let region = (
+            let mut region = (
                 (r.x * scale).floor() as i32,
                 (r.w * scale).ceil() as i32,
                 (r.h * scale).ceil() as i32,
                 (radius * scale) as i32,
             );
+            // While animating the region only grows, so it changes once instead of every frame.
+            if let (true, Some(prev)) = (animating, self.last_region) {
+                let left = region.0.min(prev.0);
+                let right = (region.0 + region.1).max(prev.0 + prev.1);
+                region = (left, right - left, region.2.max(prev.2), region.3);
+            }
             // SetWindowRgn repaints the window, so repeating it every frame makes it flicker.
             if self.last_region != Some(region) {
                 self.last_region = Some(region);

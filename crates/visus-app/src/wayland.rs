@@ -257,7 +257,8 @@ impl State {
     fn draw(&mut self) {
         let scale = self.scale.max(1);
         let (w, h) = (WIN_W as i32 * scale, WIN_H as i32 * scale);
-        let Some(mut pixmap) = Pixmap::new(w as u32, h as u32) else { return };
+        let rows = ((ui::content_bottom(&self.notch) * scale as f32).ceil() as i32).clamp(1, h);
+        let Some(mut pixmap) = Pixmap::new(w as u32, rows as u32) else { return };
         ui::draw(&mut pixmap, &self.text, &self.notch, scale as f32);
 
         let Ok((buffer, canvas)) =
@@ -269,6 +270,7 @@ impl State {
         for (dst, src) in canvas.chunks_exact_mut(4).zip(pixmap.pixels()) {
             dst.copy_from_slice(&[src.blue(), src.green(), src.red(), src.alpha()]);
         }
+        canvas[(rows * w * 4) as usize..].fill(0);
 
         let surface = self.layer.wl_surface();
         let _ = self.layer.set_buffer_scale(scale as u32);

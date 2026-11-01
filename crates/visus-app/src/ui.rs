@@ -22,6 +22,9 @@ pub enum Button {
     Palette,
     TimerToggle,
     TimerReset,
+    TimerPreset(u32),
+    TimerMinus,
+    TimerPlus,
 }
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -38,6 +41,21 @@ pub fn buttons(notch: &Notch) -> Vec<(Button, Rect)> {
     let mut btns = page_buttons(notch, x0, cx);
     btns.push((Button::Palette, rect(x0 + s.rect.w - 76.0, 10.0, 44.0, 36.0)));
     btns
+}
+
+const TIMER_PRESETS: [u32; 6] = [5, 10, 15, 25, 45, 60];
+
+fn timer_buttons(x0: f32) -> Vec<(Button, Rect)> {
+    let mut v: Vec<(Button, Rect)> = TIMER_PRESETS
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (Button::TimerPreset(*m), rect(x0 + 330.0 + i as f32 * 58.0, 62.0, 52.0, 30.0)))
+        .collect();
+    v.push((Button::TimerToggle, rect(x0 + 330.0, 164.0, 150.0, 44.0)));
+    v.push((Button::TimerReset, rect(x0 + 496.0, 164.0, 100.0, 44.0)));
+    v.push((Button::TimerMinus, rect(x0 + 118.0, 188.0, 34.0, 34.0)));
+    v.push((Button::TimerPlus, rect(x0 + 188.0, 188.0, 34.0, 34.0)));
+    v
 }
 
 fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
@@ -57,10 +75,7 @@ fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
             (Button::PlayPause, rect(cx - 24.0, 190.0, 48.0, 40.0)),
             (Button::Next, rect(cx + 84.0 - 24.0, 190.0, 48.0, 40.0)),
         ],
-        Page::Timer => vec![
-            (Button::TimerToggle, rect(x0 + 330.0, 142.0, 150.0, 44.0)),
-            (Button::TimerReset, rect(x0 + 496.0, 142.0, 100.0, 44.0)),
-        ],
+        Page::Timer => timer_buttons(x0),
         _ => Vec::new(),
     }
 }
@@ -351,8 +366,19 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     let r = notch.shape().rect;
     let mid = r.y + r.h / 2.0;
     let timer = notch.timer();
-    let progress = if timer.is_running() { 1.0 - timer.progress() } else { 1.0 };
-    cx.ring(r.x + 28.0, mid, 8.0, 2.5, progress, GREEN, a);
+    let timer_active = timer.is_running() || timer.progress() > 0.0;
+    // Left slot: the focus timer while one is active, otherwise the battery level.
+    if timer_active {
+        let left = timer.remaining().as_secs_f32() / timer.total().as_secs_f32();
+        cx.ring(r.x + 28.0, mid, 8.0, 2.5, left, GREEN, a);
+    } else if let Some((charging, pct)) = notch.battery() {
+        let tint = if charging || pct > 20 { GREEN } else { ORANGE };
+        cx.ring(r.x + 28.0, mid, 8.0, 2.5, pct as f32 / 100.0, tint, a);
+        if charging {
+            cx.triangle([(r.x + 29.5, mid - 4.5), (r.x + 25.0, mid + 0.5), (r.x + 28.5, mid + 0.5)], color(WHITE, a));
+            cx.triangle([(r.x + 26.5, mid + 4.5), (r.x + 31.0, mid - 0.5), (r.x + 27.5, mid - 0.5)], color(WHITE, a));
+        }
+    }
     let clock = chrono::Local::now().format("%H:%M").to_string();
     cx.t(&clock, r.x + r.w / 2.0, mid + 7.0, 20.0, color(WHITE, a), Align::Center);
     // Equalizer glyph; flat when nothing plays.
@@ -575,27 +601,41 @@ fn draw_music_lyrics(cx: &mut Ctx, notch: &Notch, a: f32) {
 }
 
 fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
-    let r = notch.shape().rect;
-    let x0 = r.x;
+    let x0 = notch.shape().rect.x;
     let t = notch.timer();
-    cx.ring(x0 + 170.0, 120.0, 52.0, 9.0, 1.0 - t.progress(), GREEN, a);
-    cx.t(&mmss(t.remaining()), x0 + 170.0, 130.0, 30.0, color(WHITE, a), Align::Center);
+    // The arc shrinks as time runs out.
+    cx.ring(x0 + 170.0, 118.0, 52.0, 9.0, t.remaining().as_secs_f32() / t.total().as_secs_f32(), GREEN, a);
+    cx.t(&mmss(t.remaining()), x0 + 170.0, 128.0, 30.0, color(WHITE, a), Align::Center);
 
-    cx.t("Focus", x0 + 330.0, 98.0, 30.0, color(WHITE, a), Align::Left);
     let mins = t.total().as_secs() / 60;
-    cx.t(&format!("{mins} minute session"), x0 + 330.0, 124.0, 19.0, color(GRAY, a), Align::Left);
-
-    for (b, rc) in buttons(notch) {
-        let label = match b {
-            Button::TimerToggle => if t.is_running() { "Pause" } else { "Start" },
-            Button::TimerReset => "Reset",
-            _ => continue,
-        };
-        let fill = if b == Button::TimerToggle { color(GREEN, 0.9 * a) } else { color(WHITE, 0.14 * a) };
-        cx.rrect(rc, 22.0, fill);
-        let ink = if b == Button::TimerToggle { color([0, 0, 0], a) } else { color(WHITE, a) };
-        cx.t(label, rc.x + rc.w / 2.0, rc.y + 29.0, 20.0, ink, Align::Center);
+    for (b, rc) in timer_buttons(x0) {
+        match b {
+            Button::TimerPreset(m) => {
+                let active = u64::from(m) == mins;
+                cx.rrect(rc, 15.0, if active { color(GREEN, 0.9 * a) } else { color(WHITE, 0.12 * a) });
+                let ink = if active { color([0, 0, 0], a) } else { color(WHITE, a) };
+                cx.t(&format!("{m}m"), rc.x + rc.w / 2.0, rc.y + 20.0, 15.0, ink, Align::Center);
+            }
+            Button::TimerMinus | Button::TimerPlus => {
+                cx.rrect(rc, 17.0, color(WHITE, 0.12 * a));
+                let (cx_, cy) = (rc.x + rc.w / 2.0, rc.y + rc.h / 2.0);
+                cx.rrect(rect(cx_ - 6.0, cy - 1.0, 12.0, 2.0), 1.0, color(WHITE, a));
+                if b == Button::TimerPlus {
+                    cx.rrect(rect(cx_ - 1.0, cy - 6.0, 2.0, 12.0), 1.0, color(WHITE, a));
+                }
+            }
+            Button::TimerToggle | Button::TimerReset => {
+                let go = b == Button::TimerToggle;
+                let label = if go { if t.is_running() { "Pause" } else { "Start" } } else { "Reset" };
+                cx.rrect(rc, 22.0, if go { color(GREEN, 0.9 * a) } else { color(WHITE, 0.14 * a) });
+                let ink = if go { color([0, 0, 0], a) } else { color(WHITE, a) };
+                cx.t(label, rc.x + rc.w / 2.0, rc.y + 29.0, 20.0, ink, Align::Center);
+            }
+            _ => {}
+        }
     }
+    cx.t("Focus", x0 + 330.0, 128.0, 26.0, color(WHITE, a), Align::Left);
+    cx.t(&format!("{mins} minute session"), x0 + 330.0, 150.0, 16.0, color(GRAY, a), Align::Left);
 }
 
 /// Handles a left click at pill-logical coordinates; the host runs the returned outcome.
@@ -618,6 +658,9 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                 Button::Palette => notch.open_palette(),
                 Button::TimerToggle => notch.toggle_timer(),
                 Button::TimerReset => notch.reset_timer(),
+                Button::TimerPreset(m) => notch.set_timer_minutes(m),
+                Button::TimerMinus => notch.adjust_timer(-1),
+                Button::TimerPlus => notch.adjust_timer(1),
             }
             break;
         }
@@ -713,7 +756,7 @@ fn draw_palette(cx: &mut Ctx, notch: &Notch) {
     let pal = notch.palette();
 
     // Soft shadow, then the body and a hairline edge so it reads as glass-black beneath the pill.
-    for (grow, alpha) in [(14.0, 0.05), (8.0, 0.08), (3.0, 0.12)] {
+    for (grow, alpha) in [(12.0, 0.06), (4.0, 0.12)] {
         cx.rrect(rect(l.panel.x - grow, l.panel.y - grow * 0.4, l.panel.w + 2.0 * grow, l.panel.h + 2.0 * grow), 30.0 + grow, color([0, 0, 0], alpha * p));
     }
     cx.rrect(l.panel, 28.0, color([0, 0, 0], p));
@@ -864,4 +907,31 @@ fn draw_art(cx: &mut Ctx, r: Rect, radius: f32, m: &visus_core::MediaInfo, a: f3
         p.anti_alias = true;
         cx.pm.fill_path(&path, &p, FillRule::Winding, xf, None);
     }
+}
+
+/// Pill plus launcher panel at their final sizes; used to size the OS window region once per animation.
+pub fn region_rect(notch: &Notch) -> Rect {
+    let now = hit_rect(notch);
+    let (tw, th) = notch.target_size();
+    let k = notch.settings().scale;
+    let s = notch.shape().rect;
+    let centre = s.x + s.w / 2.0;
+    let half = (tw / 2.0 + 14.0) * k;
+    let mut left = now.x.min(centre - half);
+    let mut right = (now.x + now.w).max(centre + half);
+    let mut bottom = now.y + now.h.max(th * k);
+    if notch.palette_is_open() || notch.palette_progress() > 0.01 {
+        let n = notch.palette().results.len().max(1) as f32;
+        let full = PANEL_TOP_PAD + n * ROW_H + PANEL_FOOTER;
+        left = left.min(centre - PANEL_W / 2.0 * k);
+        right = right.max(centre + PANEL_W / 2.0 * k);
+        bottom = bottom.max((th + 10.0 + full) * k);
+    }
+    Rect { x: left, y: 0.0, w: right - left, h: bottom }
+}
+
+/// Window-logical y below which nothing is drawn (shadow margin included); lets hosts skip empty rows.
+pub fn content_bottom(notch: &Notch) -> f32 {
+    let r = region_rect(notch);
+    r.y + r.h + 28.0
 }

@@ -83,6 +83,7 @@ pub struct Notch {
     media: MediaInfo,
     media_at: Instant,
     on_ac: Option<bool>,
+    battery: Option<(bool, u8)>,
     hidden: bool,
     timer: Timer,
     settings: Settings,
@@ -113,6 +114,7 @@ impl Notch {
             media: MediaInfo::default(),
             media_at: Instant::now(),
             on_ac: None,
+            battery: None,
             hidden: false,
             timer: Timer::new(FOCUS),
             settings: Settings::default(),
@@ -138,6 +140,7 @@ impl Notch {
                 // The first report is the initial state, not a plug/unplug.
                 let changed = self.on_ac.is_some_and(|prev| prev != on_ac);
                 self.on_ac = Some(on_ac);
+                self.battery = Some((on_ac, percent));
                 if changed {
                     self.alert(if on_ac {
                         Alert::Charging { percent }
@@ -229,6 +232,31 @@ impl Notch {
         &self.timer
     }
 
+    /// (charging, percent) once the OS has reported a battery.
+    pub fn battery(&self) -> Option<(bool, u8)> {
+        self.battery
+    }
+
+    /// Size the pill is animating towards, in window-logical pixels.
+    pub fn target_size(&self) -> (f32, f32) {
+        (self.w.target, self.h.target)
+    }
+
+    pub fn set_timer_minutes(&mut self, minutes: u32) {
+        self.touch();
+        self.update_settings(|s| s.timer_minutes = minutes);
+        // Also restarts a timer that was already running with the new length.
+        self.timer.set_total(Duration::from_secs(self.settings.timer_minutes as u64 * 60));
+    }
+
+    /// Steps the session length: by 1 minute up to 10, then by 5.
+    pub fn adjust_timer(&mut self, dir: i32) {
+        let m = self.settings.timer_minutes as i32;
+        let step = if m < 10 || (m == 10 && dir < 0) { 1 } else { 5 };
+        let next = if dir > 0 && m < 10 && m + step > 10 { 10 } else { m + dir * step };
+        self.set_timer_minutes(next.max(1) as u32);
+    }
+
     pub fn toggle_timer(&mut self) {
         self.touch();
         self.timer.toggle();
@@ -249,6 +277,10 @@ impl Notch {
 
     pub fn set_settings(&mut self, s: Settings) {
         self.settings = s.clamped();
+        let total = Duration::from_secs(self.settings.timer_minutes as u64 * 60);
+        if !self.timer.is_running() && self.timer.total() != total {
+            self.timer.set_total(total);
+        }
         if self.hidden && !self.settings.hide_in_fullscreen {
             self.hidden = false;
         }

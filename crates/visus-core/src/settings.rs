@@ -52,6 +52,7 @@ pub struct Settings {
     /// Closed pill size in logical pixels, before `scale`.
     pub closed_width: f32,
     pub closed_height: f32,
+    pub timer_minutes: u32,
     pub eye_iris: Rgb,
     pub eye_sclera: Rgb,
 }
@@ -65,6 +66,7 @@ impl Settings {
         self.closed_width = self.closed_width.clamp(140.0, 400.0);
         self.closed_height = self.closed_height.clamp(24.0, 80.0);
         self.idle_secs = self.idle_secs.clamp(5, 3600);
+        self.timer_minutes = self.timer_minutes.clamp(1, 180);
         self
     }
 }
@@ -79,6 +81,7 @@ impl Default for Settings {
             scale: 1.0,
             closed_width: 228.0,
             closed_height: 38.0,
+            timer_minutes: 25,
             eye_iris: Rgb([40, 110, 230]),
             eye_sclera: Rgb([255, 255, 255]),
         }
