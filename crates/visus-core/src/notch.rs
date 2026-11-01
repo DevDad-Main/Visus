@@ -21,6 +21,8 @@ impl Page {
 pub enum EyeState {
     Hidden,
     Awake,
+    /// Reserved: the eye no longer dozes off on its own.
+    #[allow(dead_code)]
     Asleep,
 }
 
@@ -931,11 +933,9 @@ impl Notch {
         let wake = Duration::from_secs(self.settings.idle_secs as u64);
         if idle < wake {
             EyeState::Hidden
-        } else if idle < wake * 4 || self.last_motion.elapsed() < wake * 2 {
-            // Someone is still moving the mouse, so the eye keeps watching instead of dozing off.
-            EyeState::Awake
         } else {
-            EyeState::Asleep
+            // The eye keeps blinking for as long as the pill stays idle; it never dozes off into a closed lid.
+            EyeState::Awake
         }
     }
 
@@ -1030,12 +1030,7 @@ impl Notch {
                 if t < EYE_FADE_IN {
                     next = next.min(0.016);
                 }
-                let to_sleep = (wake * 4).saturating_sub(idle).max((wake * 2).saturating_sub(self.last_motion.elapsed()));
-                let mut d = Duration::from_secs_f32(next.max(0.005));
-                if !to_sleep.is_zero() {
-                    d = d.min(to_sleep + Duration::from_millis(20));
-                }
-                Some(d)
+                Some(Duration::from_secs_f32(next.max(0.005)))
             }
             // A sleeping eye only needs a slow look at the cursor to notice you coming back.
             EyeState::Asleep => self.tracking.then_some(Duration::from_millis(500)),

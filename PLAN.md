@@ -107,6 +107,7 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
    v1.0.7: Alt+Space handled in the low-level keyboard hook (works even when another app owns the hotkey; Ctrl+Alt+Space still registered), genie closes into a point with a small swell at the start and a quicker spring.
    v1.0.8: the shelf closes 0.5 s after a file drag leaves the window without dropping.
    v1.1.0: Windows installer (Inno Setup, installer/visus.iss, built in the release workflow, per-user in %LOCALAPPDATA%\\Programs\\Visus), Control Center now has volume + brightness sliders (DDC/CI for external monitors, WMI for laptop panels, brightnessctl on Linux; hidden when unsupported) and Wi-Fi/Bluetooth/Mute/Quiet tiles, settings gained Quiet mode, 24-hour clock, Visualizer and Battery ring toggles, lyrics.ovh as a third (plain, evenly spread) lyrics source, widgets mock removed, bench code behind the `dev` feature, more tests.
+   v1.1.0 also: the idle eye no longer falls asleep (closed-lid slit) after a few minutes; it keeps blinking until the pill is used again.
    Still to do: real audio-driven visualizer (WASAPI loopback / PipeWire), lyrics fallback source, user-configurable hotkey, Linux global hotkey without compositor binding, Wayland drag-and-drop.
 2. Bluetooth/brightness HUDs, notifications center, calendar events, shelf drag-out.
 3. Plugin host behind a data-driven page registry; more eye styles; macOS port; installer/Store packaging.
