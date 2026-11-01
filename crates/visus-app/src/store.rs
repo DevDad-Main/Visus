@@ -23,6 +23,10 @@ fn save(n: &Notch) {
 
 /// Loads saved settings; an unreadable file falls back to defaults. Writes the file so it can be hand-edited.
 pub fn load_into(n: &mut Notch) {
+    // Earlier builds kept a water tally here; it is no longer used.
+    if let Some(old) = dirs::data_dir().map(|d| d.join("visus").join("data.json")) {
+        let _ = fs::remove_file(old);
+    }
     let settings = settings_path()
         .and_then(|p| fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
