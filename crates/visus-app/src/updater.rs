@@ -54,6 +54,15 @@ fn fetch_latest() -> Result<(String, Release), String> {
 }
 
 pub fn check(emit: Emit) {
+    check_inner(emit, false);
+}
+
+/// Background check: reports only a newer release, never errors or "up to date".
+pub fn check_silent(emit: Emit) {
+    check_inner(emit, true);
+}
+
+fn check_inner(emit: Emit, silent: bool) {
     std::thread::spawn(move || {
         let status = match fetch_latest() {
             Ok((tag, rel)) => {
@@ -63,6 +72,9 @@ pub fn check(emit: Emit) {
             }
             Err(e) => UpdateStatus::Failed(e),
         };
+        if silent && !matches!(status, UpdateStatus::Available { .. }) {
+            return;
+        }
         emit(Event::Update(status));
     });
 }

@@ -518,7 +518,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
     });
     let fetcher = lyrics::Fetcher::new(emit.clone());
     platform::start(emit.clone());
-    let wait = if std::env::var_os("VISUS_ART").is_some() { 400 } else { 6000 };
+    let wait = if std::env::var_os("VISUS_ART").is_some() || std::env::var_os("VISUS_FAST").is_some() { 400 } else { 6000 };
     let deadline = std::time::Instant::now() + Duration::from_millis(wait);
     let mut got_apps = false;
     while std::time::Instant::now() < deadline {
@@ -625,15 +625,45 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             notch.handle(Event::Power { on_ac: true, percent: 76 });
             notch.handle(Event::Download(Some(12_500_000)));
         } else {
-            notch.alert(match name {
+            let alert = match name {
                 "unplugged" => visus_core::Alert::Unplugged { percent: 40 },
                 "headphones" => visus_core::Alert::Headphones,
                 "offline" => visus_core::Alert::Offline,
                 "timer" => visus_core::Alert::TimerDone,
                 "todo" => visus_core::Alert::TodoDue,
                 "controller" => visus_core::Alert::Controller(true),
+                "controller_off" => visus_core::Alert::Controller(false),
+                "online" => visus_core::Alert::Online,
+                "meeting" => visus_core::Alert::Meeting { mins: 5 },
+                "update" => {
+                    notch.handle(Event::Update(visus_core::UpdateStatus::Available { version: "v1.9.0".into() }));
+                    visus_core::Alert::UpdateAvailable
+                }
+                "caps" => visus_core::Alert::CapsLock(true),
+                "volume" => visus_core::Alert::Volume { level: 0.62, muted: false },
+                "download-done" => {
+                    notch.handle(Event::DownloadDone("Visus-Setup.exe".into()));
+                    visus_core::Alert::DownloadDone
+                }
                 _ => visus_core::Alert::Charging { percent: 80 },
-            });
+            };
+            notch.alert(alert);
+        }
+        // `VISUS_FRAMES=n` records the reaction in real time as n numbered PNGs.
+        let frames: usize = std::env::var("VISUS_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        if frames > 0 {
+            let step: u64 = std::env::var("VISUS_STEP_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(70);
+            let text = text::Text::new();
+            for i in 0..frames {
+                let mut pm = Pixmap::new(WIN_W as u32 * 2, 240).expect("pixmap");
+                ui::draw(&mut pm, &text, &notch, 2.0);
+                pm.save_png(format!("{}_{i:03}.png", out.trim_end_matches(".png"))).expect("write png");
+                std::thread::sleep(Duration::from_millis(step));
+                for _ in 0..(step / 16).max(1) {
+                    notch.tick(Duration::from_millis(16));
+                }
+            }
+            return;
         }
         for _ in 0..60 {
             notch.tick(Duration::from_millis(16));
@@ -686,9 +716,21 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         }
         notch.touch();
         notch.rewind_activity(Duration::from_secs_f32(query.and_then(|q| q.parse().ok()).unwrap_or(60.0)));
-        let mut pm = Pixmap::new(WIN_W as u32 * 2, 160).expect("pixmap");
-        ui::draw(&mut pm, &text::Text::new(), &notch, 2.0);
-        pm.save_png(out).expect("write png");
+        let frames: usize = std::env::var("VISUS_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        let step: u64 = std::env::var("VISUS_STEP_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(70);
+        let text = text::Text::new();
+        for i in 0..frames {
+            if i > 0 {
+                notch.rewind_activity(Duration::from_millis(step));
+                for _ in 0..(step / 16).max(1) {
+                    notch.tick(Duration::from_millis(16));
+                }
+            }
+            let mut pm = Pixmap::new(WIN_W as u32 * 2, 160).expect("pixmap");
+            ui::draw(&mut pm, &text, &notch, 2.0);
+            let path = if frames > 1 { format!("{}_{i:03}.png", out.trim_end_matches(".png")) } else { out.to_string() };
+            pm.save_png(path).expect("write png");
+        }
         return;
     }
     let idx = ["music", "control", "windows", "timer", "stats", "shelf", "todo", "notes", "clipboard", "calendar", "weather"].iter().position(|p| *p == page).unwrap_or(0);

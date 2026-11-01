@@ -29,6 +29,16 @@ pub fn pump(notch: &mut visus_core::Notch, emit: Option<&Emit>) {
     }
     request_icons(notch, emit);
     if let Some(e) = emit {
+        static STARTED: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        static LAST_CHECK: Mutex<Option<Instant>> = Mutex::new(None);
+        let started = *STARTED.get_or_init(Instant::now);
+        let mut last_check = LAST_CHECK.lock().unwrap();
+        if notch.settings().auto_update && started.elapsed() > Duration::from_secs(25) && last_check.is_none_or(|t| t.elapsed() > Duration::from_secs(12 * 3600)) {
+            *last_check = Some(Instant::now());
+            updater::check_silent(e.clone());
+        }
+    }
+    if let Some(e) = emit {
         crate::game::set_active(notch.game_active(), e);
     }
     notch.set_hour(chrono::Timelike::hour(&chrono::Local::now()) as u8);

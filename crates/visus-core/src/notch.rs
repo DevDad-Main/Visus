@@ -73,6 +73,7 @@ pub enum Alert {
     Meeting { mins: u16 },
     DownloadDone,
     Controller(bool),
+    UpdateAvailable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -345,7 +346,14 @@ impl Notch {
                 }
                 None => self.location_note = Some("City not found".into()),
             },
-            Event::Update(u) => self.update = u,
+            Event::Update(u) => {
+                let was = matches!(self.update, UpdateStatus::Available { .. });
+                let now = matches!(u, UpdateStatus::Available { .. });
+                self.update = u;
+                if now && !was {
+                    self.alert(Alert::UpdateAvailable);
+                }
+            }
             Event::Network { online } => {
                 // The first report is the starting state, not a change.
                 let changed = self.online.is_some_and(|p| p != online);
@@ -1802,6 +1810,15 @@ mod tests {
         assert!(n.alert_kind().is_none());
         n.handle(Event::Power { on_ac: true, percent: 70 });
         assert_eq!(n.alert_kind(), Some(Alert::Charging { percent: 70 }));
+    }
+
+    #[test]
+    fn update_available_pops_up_once() {
+        let mut n = Notch::new(800.0);
+        n.handle(Event::Update(crate::UpdateStatus::Available { version: "v9.0.0".into() }));
+        assert_eq!(n.alert_kind(), Some(Alert::UpdateAvailable));
+        n.handle(Event::Update(crate::UpdateStatus::Available { version: "v9.0.0".into() }));
+        assert!(matches!(n.update_status(), crate::UpdateStatus::Available { .. }));
     }
 
     #[test]

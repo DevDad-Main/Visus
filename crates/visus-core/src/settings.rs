@@ -101,6 +101,8 @@ pub struct Settings {
     pub file_manager: Option<String>,
     pub hide_in_fullscreen: bool,
     pub game_hud: bool,
+    /// Look for a newer release in the background (a few seconds after start, then twice a day).
+    pub auto_update: bool,
     /// Show the idle eye when nothing has happened for a while.
     pub mascot: bool,
     pub idle_secs: u32,
@@ -153,6 +155,7 @@ impl Default for Settings {
             file_manager: None,
             hide_in_fullscreen: true,
             game_hud: true,
+            auto_update: true,
             mascot: true,
             idle_secs: 45,
             scale: 1.0,

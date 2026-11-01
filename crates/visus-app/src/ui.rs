@@ -76,6 +76,7 @@ pub enum Toggle {
     EyeMoods,
     ClockStyle,
     GameHud,
+    AutoUpdate,
 }
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -810,6 +811,10 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     if let (Some(alert), true) = (notch.alert_kind(), peek_a > 0.0) {
         let text = match alert {
             Alert::DownloadDone => notch.alert_text(),
+            Alert::UpdateAvailable => match notch.update_status() {
+                UpdateStatus::Available { version } => Some(version.as_str()),
+                _ => None,
+            },
             _ => notch.alert_event().map(|e| e.title.as_str()),
         };
         draw_alert(&mut cx, &shape, alert, text, (notch.settings().eye_style, notch.settings().eye_moods, notch.alert_age().unwrap_or(1.0)), peek_a);
@@ -1435,7 +1440,7 @@ fn expr_for(a: Alert) -> Option<Expr> {
         Alert::Offline => Some(Expr::Dizzy),
         Alert::Controller(true) => Some(Expr::Game),
         Alert::Controller(false) => Some(Expr::Sad),
-        Alert::TimerDone => Some(Expr::Party),
+        Alert::TimerDone | Alert::UpdateAvailable => Some(Expr::Party),
         Alert::TodoDue | Alert::Meeting { .. } => Some(Expr::Alert),
         _ => None,
     }
@@ -1551,6 +1556,7 @@ fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, event_title: Option<&st
         Alert::Offline => ("Offline", "Connection lost".into(), ORANGE, 0.0, None),
         Alert::Language(l) => ("Keyboard", String::from_utf8_lossy(&l).to_uppercase(), BLUE, 1.0, None),
         Alert::TodoDue => ("Time's up!", "A task is due".into(), ORANGE, 1.0, None),
+        Alert::UpdateAvailable => ("Update available", format!("{} is ready \u{b7} tap to install", event_title.unwrap_or("A new version")), cx.accent, 1.0, None),
         Alert::Controller(on) => ("Controller", if on { "Connected" } else { "Disconnected" }.into(), if on { BLUE } else { GRAY }, 1.0, None),
         Alert::DownloadDone => ("Download complete", event_title.unwrap_or("").to_string(), GREEN, 1.0, None),
         Alert::Meeting { .. } => (meeting.as_str(), event_title.unwrap_or("Click to join").to_string(), BLUE, 1.0, None),
@@ -1826,6 +1832,10 @@ fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
 /// Handles a left click at pill-logical coordinates; the host runs the returned outcome.
 pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
     use visus_core::MediaCommand;
+    if notch.alert_kind() == Some(Alert::UpdateAvailable) {
+        notch.open_settings();
+        return Outcome::None;
+    }
     if notch.alert_kind() == Some(Alert::DownloadDone) {
         if let Some(d) = dirs::download_dir() {
             return Outcome::OpenFolder { path: d.to_string_lossy().into_owned(), manager: notch.settings().file_manager.clone() };
@@ -1903,6 +1913,7 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                 Toggle::EyeMoods => notch.update_settings(|s| s.eye_moods = !s.eye_moods),
                 Toggle::ClockStyle => notch.update_settings(|s| s.clock_style = s.clock_style.next()),
                 Toggle::GameHud => notch.update_settings(|s| s.game_hud = !s.game_hud),
+                Toggle::AutoUpdate => notch.update_settings(|s| s.auto_update = !s.auto_update),
                 Toggle::Autostart => {
                     let _ = visus_platform::set_autostart(!visus_platform::autostart_enabled());
                 }
@@ -2667,7 +2678,7 @@ fn settings_buttons_raw(x0: f32) -> Vec<(Button, Rect)> {
     v
 }
 
-const CHIPS: [(Toggle, &str); 8] = [
+const CHIPS: [(Toggle, &str); 9] = [
     (Toggle::Quiet, "Quiet"),
     (Toggle::Clock24, "24h clock"),
     (Toggle::Visualizer, "Visualizer"),
@@ -2676,6 +2687,7 @@ const CHIPS: [(Toggle, &str); 8] = [
     (Toggle::EyeMoods, "Eye moods"),
     (Toggle::ClockStyle, "Clock"),
     (Toggle::GameHud, "Game HUD"),
+    (Toggle::AutoUpdate, "Auto updates"),
 ];
 
 fn chip_rect(x0: f32, i: usize) -> Rect {
@@ -2873,6 +2885,7 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
             Toggle::EyeMoods => s.eye_moods,
             Toggle::ClockStyle => false,
             Toggle::GameHud => s.game_hud,
+            Toggle::AutoUpdate => s.auto_update,
             _ => s.show_battery,
         };
         let rc = chip_rect(x0, i);
