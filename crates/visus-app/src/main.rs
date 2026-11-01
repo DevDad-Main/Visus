@@ -1,4 +1,6 @@
 mod text;
+#[cfg(target_os = "linux")]
+mod wayland;
 #[cfg(windows)]
 mod tray;
 mod ui;
@@ -10,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use softbuffer::{Context, Surface};
 use tiny_skia::Pixmap;
-use visus_core::{Alert, Event, MediaCommand, Notch};
+use visus_core::{Alert, Event, Notch};
 use visus_platform_windows as platform;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
@@ -106,18 +108,7 @@ impl App {
 
     fn click(&mut self) {
         let (x, y) = self.cursor;
-        for (b, r) in ui::buttons(&self.notch) {
-            if r.contains(x, y) {
-                match b {
-                    ui::Button::Prev => platform::media_command(MediaCommand::Previous),
-                    ui::Button::PlayPause => platform::media_command(MediaCommand::PlayPause),
-                    ui::Button::Next => platform::media_command(MediaCommand::Next),
-                    ui::Button::TimerToggle => self.notch.toggle_timer(),
-                    ui::Button::TimerReset => self.notch.reset_timer(),
-                }
-                return;
-            }
-        }
+        ui::click(&mut self.notch, x, y);
     }
 }
 
@@ -255,13 +246,7 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
 
-        // Idle: sleep until the clock minute changes or periodic content (progress) needs a refresh.
-        let mut wake = self.notch.refresh_interval();
-        if !self.notch.is_hidden() {
-            let secs = chrono::Timelike::second(&chrono::Local::now()) as u64;
-            let minute = Duration::from_secs(60 - secs) + Duration::from_millis(20);
-            wake = Some(wake.map_or(minute, |w| w.min(minute)));
-        }
+        let wake = ui::idle_wake(&self.notch);
         match wake {
             Some(d) => {
                 el.set_control_flow(ControlFlow::WaitUntil(now + d));
@@ -275,6 +260,15 @@ impl ApplicationHandler<UserEvent> for App {
 }
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var("VISUS_BACKEND").map_or(true, |v| v != "winit")
+    {
+        match wayland::run() {
+            Ok(()) => return,
+            Err(e) => eprintln!("layer-shell unavailable ({e}); using a plain window"),
+        }
+    }
     let el = EventLoop::<UserEvent>::with_user_event().build().expect("event loop");
     let mut app = App {
         proxy: el.create_proxy(),

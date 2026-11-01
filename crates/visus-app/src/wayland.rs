@@ -1,0 +1,288 @@
+//! Linux host: a wlr-layer-shell surface anchored to the top edge. Falls back to winit if unavailable.
+
+use std::time::{Duration, Instant};
+
+use smithay_client_toolkit::{
+    compositor::{CompositorHandler, CompositorState, Region},
+    delegate_registry,
+    output::{OutputHandler, OutputState},
+    reexports::{
+        calloop::EventLoop,
+        calloop_wayland_source::WaylandSource,
+        client::{
+            Connection, QueueHandle,
+            globals::registry_queue_init,
+            protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+        },
+    },
+    registry::{ProvidesRegistryState, RegistryState},
+    registry_handlers,
+    seat::{
+        Capability, SeatHandler, SeatState,
+        pointer::{PointerEvent, PointerEventKind, PointerHandler},
+    },
+    shell::{
+        WaylandSurface,
+        wlr_layer::{
+            Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
+            LayerSurfaceConfigure,
+        },
+    },
+    shm::{Shm, ShmHandler, slot::SlotPool},
+};
+use tiny_skia::Pixmap;
+use visus_core::Notch;
+
+use crate::{text::Text, ui};
+
+const WIN_W: u32 = 800;
+const WIN_H: u32 = 280;
+const FRAME: Duration = Duration::from_millis(16);
+const BTN_LEFT: u32 = 0x110;
+const SCROLL_STEP: f64 = 12.0;
+
+struct State {
+    registry_state: RegistryState,
+    seat_state: SeatState,
+    output_state: OutputState,
+    compositor: CompositorState,
+    shm: Shm,
+    pool: SlotPool,
+    layer: LayerSurface,
+    pointer: Option<wl_pointer::WlPointer>,
+
+    notch: Notch,
+    text: Text,
+    scale: i32,
+    cursor: (f32, f32),
+    scroll_accum: f64,
+    configured: bool,
+    needs_draw: bool,
+    next_wake: Option<Instant>,
+    last_tick: Instant,
+    exit: bool,
+}
+
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let conn = Connection::connect_to_env()?;
+    let (globals, event_queue) = registry_queue_init::<State>(&conn)?;
+    let qh = event_queue.handle();
+
+    let compositor = CompositorState::bind(&globals, &qh)?;
+    let layer_shell = LayerShell::bind(&globals, &qh)?;
+    let shm = Shm::bind(&globals, &qh)?;
+
+    let surface = compositor.create_surface(&qh);
+    let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Overlay, Some("visus"), None);
+    layer.set_anchor(Anchor::TOP);
+    layer.set_size(WIN_W, WIN_H);
+    // -1: draw over panels instead of being pushed below them.
+    layer.set_exclusive_zone(-1);
+    layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+    layer.commit();
+
+    let pool = SlotPool::new((WIN_W * WIN_H * 4 * 2) as usize, &shm)?;
+
+    let mut state = State {
+        registry_state: RegistryState::new(&globals),
+        seat_state: SeatState::new(&globals, &qh),
+        output_state: OutputState::new(&globals, &qh),
+        compositor,
+        shm,
+        pool,
+        layer,
+        pointer: None,
+        notch: Notch::new(WIN_W as f32),
+        text: Text::new(),
+        scale: 1,
+        cursor: (-1.0, -1.0),
+        scroll_accum: 0.0,
+        configured: false,
+        needs_draw: true,
+        next_wake: None,
+        last_tick: Instant::now(),
+        exit: false,
+    };
+
+    let mut event_loop: EventLoop<State> = EventLoop::try_new()?;
+    WaylandSource::new(conn, event_queue).insert(event_loop.handle())?;
+
+    while !state.exit {
+        let timeout = state.step();
+        event_loop.dispatch(timeout, &mut state)?;
+    }
+    Ok(())
+}
+
+impl State {
+    /// Advances animation, draws if needed, and returns how long the loop may sleep.
+    fn step(&mut self) -> Option<Duration> {
+        if !self.configured {
+            return None;
+        }
+        let now = Instant::now();
+        let dt = now - self.last_tick;
+        self.last_tick = now;
+        self.notch.tick(dt.min(Duration::from_millis(50)));
+
+        let animating = self.notch.is_animating();
+        let wake_due = self.next_wake.is_some_and(|t| now >= t);
+        if animating || self.needs_draw || wake_due {
+            self.draw();
+            self.needs_draw = false;
+        }
+
+        if animating {
+            self.next_wake = None;
+            return Some(FRAME);
+        }
+        let wake = ui::idle_wake(&self.notch);
+        self.next_wake = wake.map(|d| now + d);
+        wake
+    }
+
+    fn draw(&mut self) {
+        let scale = self.scale.max(1);
+        let (w, h) = (WIN_W as i32 * scale, WIN_H as i32 * scale);
+        let Some(mut pixmap) = Pixmap::new(w as u32, h as u32) else { return };
+        ui::draw(&mut pixmap, &self.text, &self.notch, scale as f32);
+
+        let Ok((buffer, canvas)) =
+            self.pool.create_buffer(w, h, w * 4, wl_shm::Format::Argb8888)
+        else {
+            return;
+        };
+        // Premultiplied RGBA -> little-endian ARGB8888 (bytes B, G, R, A).
+        for (dst, src) in canvas.chunks_exact_mut(4).zip(pixmap.pixels()) {
+            dst.copy_from_slice(&[src.blue(), src.green(), src.red(), src.alpha()]);
+        }
+
+        let surface = self.layer.wl_surface();
+        let _ = self.layer.set_buffer_scale(scale as u32);
+        surface.damage_buffer(0, 0, w, h);
+
+        // Only the pill takes input; everything around it is click-through.
+        let r = self.notch.shape().rect;
+        if let Ok(region) = Region::new(&self.compositor) {
+            region.add(r.x.floor() as i32, 0, r.w.ceil() as i32, r.h.ceil() as i32);
+            self.layer.set_input_region(Some(region.wl_region()));
+        }
+
+        if buffer.attach_to(surface).is_ok() {
+            self.layer.commit();
+        }
+    }
+
+    fn pointer_moved(&mut self, pos: (f64, f64)) {
+        self.cursor = (pos.0 as f32, pos.1 as f32);
+        let inside = self.notch.shape().rect.contains(self.cursor.0, self.cursor.1);
+        self.notch.hover(inside);
+        self.needs_draw = true;
+    }
+}
+
+impl CompositorHandler for State {
+    fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, factor: i32) {
+        self.scale = factor.max(1);
+        self.needs_draw = true;
+    }
+
+    fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: wl_output::Transform) {}
+
+    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
+
+    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
+
+    fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
+}
+
+impl OutputHandler for State {
+    fn output_state(&mut self) -> &mut OutputState {
+        &mut self.output_state
+    }
+    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+}
+
+impl LayerShellHandler for State {
+    fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &LayerSurface) {
+        self.exit = true;
+    }
+
+    fn configure(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &LayerSurface, _: LayerSurfaceConfigure, _: u32) {
+        self.configured = true;
+        self.needs_draw = true;
+    }
+}
+
+impl SeatHandler for State {
+    fn seat_state(&mut self) -> &mut SeatState {
+        &mut self.seat_state
+    }
+    fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+
+    fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, cap: Capability) {
+        if cap == Capability::Pointer && self.pointer.is_none() {
+            self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
+        }
+    }
+
+    fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, cap: Capability) {
+        if cap == Capability::Pointer {
+            if let Some(p) = self.pointer.take() {
+                p.release();
+            }
+        }
+    }
+
+    fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+}
+
+impl PointerHandler for State {
+    fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
+        for ev in events {
+            if &ev.surface != self.layer.wl_surface() {
+                continue;
+            }
+            match ev.kind {
+                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => self.pointer_moved(ev.position),
+                PointerEventKind::Leave { .. } => {
+                    self.notch.hover(false);
+                    self.needs_draw = true;
+                }
+                PointerEventKind::Press { button, .. } if button == BTN_LEFT => {
+                    self.pointer_moved(ev.position);
+                    ui::click(&mut self.notch, self.cursor.0, self.cursor.1);
+                    self.needs_draw = true;
+                }
+                PointerEventKind::Axis { vertical, .. } if self.notch.is_open() => {
+                    self.scroll_accum += vertical.absolute;
+                    if self.scroll_accum.abs() >= SCROLL_STEP {
+                        self.notch.next_page(if self.scroll_accum > 0.0 { 1 } else { -1 });
+                        self.scroll_accum = 0.0;
+                        self.needs_draw = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl ShmHandler for State {
+    fn shm_state(&mut self) -> &mut Shm {
+        &mut self.shm
+    }
+}
+
+delegate_registry!(State);
+
+impl ProvidesRegistryState for State {
+    fn registry(&mut self) -> &mut RegistryState {
+        &mut self.registry_state
+    }
+    registry_handlers![OutputState, SeatState];
+}
+
+smithay_client_toolkit::delegate_dispatch2!(State);

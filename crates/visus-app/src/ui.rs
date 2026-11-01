@@ -322,13 +322,17 @@ fn draw_music(cx: &mut Ctx, notch: &Notch, a: f32) {
     let pos = notch.media_position();
     let frac = if m.duration.is_zero() { 0.0 } else { (pos.as_secs_f32() / m.duration.as_secs_f32()).clamp(0.0, 1.0) };
     let (bx, bw, by) = (x0 + 136.0 + 24.0, 400.0, 172.0);
-    cx.t(&mmss(pos), x0 + 44.0, by + 7.0, 20.0, color(WHITE, a), Align::Left);
+    if m.has_session {
+        cx.t(&mmss(pos), x0 + 44.0, by + 7.0, 20.0, color(WHITE, a), Align::Left);
+    }
     cx.rrect(rect(bx, by - 2.5, bw, 5.0), 2.5, color(WHITE, 0.25 * a));
     if frac > 0.0 {
         cx.rrect(rect(bx, by - 2.5, (bw * frac).max(5.0), 5.0), 2.5, color(WHITE, a));
     }
-    let left = m.duration.saturating_sub(pos);
-    cx.t(&format!("-{}", mmss(left)), r.x + r.w - 44.0, by + 7.0, 20.0, color(WHITE, a), Align::Right);
+    if m.has_session {
+        let left = m.duration.saturating_sub(pos);
+        cx.t(&format!("-{}", mmss(left)), r.x + r.w - 44.0, by + 7.0, 20.0, color(WHITE, a), Align::Right);
+    }
 
     // Transport
     let cy = 210.0;
@@ -370,4 +374,34 @@ fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
         let ink = if b == Button::TimerToggle { color([0, 0, 0], a) } else { color(WHITE, a) };
         cx.t(label, rc.x + rc.w / 2.0, rc.y + 29.0, 20.0, ink, Align::Center);
     }
+}
+
+/// Handles a left click at window-logical coordinates; returns true if a button was hit.
+pub fn click(notch: &mut Notch, x: f32, y: f32) -> bool {
+    use visus_core::MediaCommand;
+    for (b, r) in buttons(notch) {
+        if r.contains(x, y) {
+            match b {
+                Button::Prev => visus_platform_windows::media_command(MediaCommand::Previous),
+                Button::PlayPause => visus_platform_windows::media_command(MediaCommand::PlayPause),
+                Button::Next => visus_platform_windows::media_command(MediaCommand::Next),
+                Button::TimerToggle => notch.toggle_timer(),
+                Button::TimerReset => notch.reset_timer(),
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// How long the app may sleep while nothing animates: the next clock minute or content refresh.
+pub fn idle_wake(notch: &Notch) -> Option<std::time::Duration> {
+    use std::time::Duration;
+    let mut wake = notch.refresh_interval();
+    if !notch.is_hidden() {
+        let secs = chrono::Timelike::second(&chrono::Local::now()) as u64;
+        let minute = Duration::from_secs(60 - secs) + Duration::from_millis(20);
+        wake = Some(wake.map_or(minute, |w| w.min(minute)));
+    }
+    wake
 }
