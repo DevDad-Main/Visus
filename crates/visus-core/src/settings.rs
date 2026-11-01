@@ -1,5 +1,13 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EyeStyle {
+    #[default]
+    Classic,
+    Sauron,
+}
+
 /// sRGB colour stored as `#rrggbb` in settings so it is easy to hand-edit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rgb(pub [u8; 3]);
@@ -53,6 +61,10 @@ pub struct Settings {
     pub closed_width: f32,
     pub closed_height: f32,
     pub timer_minutes: u32,
+    pub eye_style: EyeStyle,
+    /// Weather is only fetched once a location is set (latitude/longitude in degrees).
+    pub weather_lat: Option<f32>,
+    pub weather_lon: Option<f32>,
     pub eye_iris: Rgb,
     pub eye_sclera: Rgb,
 }
@@ -82,6 +94,9 @@ impl Default for Settings {
             closed_width: 228.0,
             closed_height: 38.0,
             timer_minutes: 25,
+            eye_style: EyeStyle::Classic,
+            weather_lat: None,
+            weather_lon: None,
             eye_iris: Rgb([40, 110, 230]),
             eye_sclera: Rgb([255, 255, 255]),
         }

@@ -1,6 +1,6 @@
 [package]
 name = "visus-app"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 edition = "2024"
 
 [dependencies]
@@ -9,6 +9,7 @@ chrono = "0.4.45"
 dirs = "7.0.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.11.1"
 softbuffer = "0.4"
 sysinfo = { version = "0.40.1", default-features = false, features = ["system", "network"] }
 tiny-skia = "0.11"
@@ -16,6 +17,7 @@ ureq = "3"
 visus-core = { version = "0.1.0", path = "../visus-core" }
 visus-platform = { version = "0.1.0", path = "../visus-platform" }
 winit = "0.30"
+zip = { version = "9.2.1", default-features = false, features = ["deflate"] }
 
 [target."cfg(windows)".dependencies]
 tray-icon = "0.26.1"

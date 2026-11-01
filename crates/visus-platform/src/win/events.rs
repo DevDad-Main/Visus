@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::sync::OnceLock;
 
 use visus_core::{Event, Hud};
@@ -38,6 +38,7 @@ use crate::Emit;
 static EMIT: OnceLock<Emit> = OnceLock::new();
 static HWND_RAW: AtomicIsize = AtomicIsize::new(0);
 static FULLSCREEN: AtomicBool = AtomicBool::new(false);
+static LAYOUT: AtomicU32 = AtomicU32::new(0);
 
 const WM_KEY_CAPS: u32 = WM_APP + 1;
 const WM_KEY_VOLUME: u32 = WM_APP + 2;
@@ -144,6 +145,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_FOREGROUND => {
                 report_fullscreen();
+                report_language();
                 LRESULT(0)
             }
             WM_TIMER => {
@@ -220,6 +222,28 @@ fn report_power(_changed: bool) {
     }
     let percent = if s.BatteryLifePercent > 100 { 100 } else { s.BatteryLifePercent };
     emit(Event::Power { on_ac: s.ACLineStatus == 1, percent });
+}
+
+/// Announces the keyboard layout of the focused window when it changes (e.g. Alt+Shift).
+fn report_language() {
+    use windows::Win32::Globalization::{GetLocaleInfoW, LOCALE_SISO639LANGNAME};
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+    let langid = unsafe {
+        let thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        (GetKeyboardLayout(thread).0 as usize & 0xFFFF) as u32
+    };
+    let prev = LAYOUT.swap(langid, Ordering::Relaxed);
+    if prev == 0 || prev == langid || langid == 0 {
+        return;
+    }
+    let mut buf = [0u16; 9];
+    let n = unsafe { GetLocaleInfoW(langid, LOCALE_SISO639LANGNAME, Some(&mut buf)) };
+    if n >= 3 {
+        let code = [buf[0] as u8, buf[1] as u8];
+        emit(Event::Hud(Hud::Language([code[0].to_ascii_uppercase(), code[1].to_ascii_uppercase()])));
+    }
 }
 
 fn report_fullscreen() {

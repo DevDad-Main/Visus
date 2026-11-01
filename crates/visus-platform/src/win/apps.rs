@@ -58,6 +58,15 @@ pub fn launch(target: &str) {
     shell_open(target);
 }
 
+pub fn open_path(path: &str) {
+    shell_open(path);
+}
+
+/// Opens the Windows snipping overlay.
+pub fn screenshot() {
+    shell_open("ms-screenclip:");
+}
+
 pub fn open_url(url: &str) {
     // Only web addresses are handed to the shell.
     if url.starts_with("https://") || url.starts_with("http://") {

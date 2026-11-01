@@ -33,6 +33,8 @@ pub struct MediaInfo {
 pub enum Hud {
     CapsLock(bool),
     Volume { level: f32, muted: bool },
+    /// Two-letter keyboard layout code, e.g. `EN`.
+    Language([u8; 2]),
 }
 
 /// Everything the OS layer can tell the notch about.
@@ -46,6 +48,9 @@ pub enum Event {
     Apps(Arc<Vec<App>>),
     /// Global hotkey pressed.
     TogglePalette,
+    Weather(Option<crate::Weather>),
+    Update(crate::UpdateStatus),
+    Network { online: bool },
     /// Result of a lyrics lookup for a track; `None` means nothing was found.
     Lyrics { title: String, artist: String, lines: Option<Arc<Vec<LyricLine>>> },
 }

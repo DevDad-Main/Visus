@@ -1,8 +1,11 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod actions;
 mod events;
 mod lyrics;
 mod stats;
+mod updater;
+mod weather;
 mod store;
 mod text;
 #[cfg(target_os = "linux")]
@@ -72,6 +75,8 @@ struct App {
     text: text::Text,
     sampler: Option<stats::Sampler>,
     fetcher: Option<lyrics::Fetcher>,
+    emit: Option<platform::Emit>,
+    weather: weather::Poller,
     cursor: (f32, f32),
     shown: bool,
     focus_requested: bool,
@@ -177,11 +182,8 @@ impl App {
     }
 
     fn run_outcome(&mut self, el: &ActiveEventLoop, outcome: Outcome) {
-        match outcome {
-            Outcome::None => {}
-            Outcome::Launch(t) => platform::launch(&t),
-            Outcome::OpenUrl(u) => platform::open_url(&u),
-            Outcome::Quit => el.exit(),
+        if actions::run(outcome, self.emit.as_ref()) {
+            el.exit();
         }
     }
 
@@ -282,6 +284,7 @@ impl ApplicationHandler<UserEvent> for App {
             let _ = proxy.send_event(UserEvent::Os(ev));
         });
         self.fetcher = Some(lyrics::Fetcher::new(emit.clone()));
+        self.emit = Some(emit.clone());
         platform::start(emit);
 
         #[cfg(windows)]
@@ -326,6 +329,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 self.click(el)
             }
+            WindowEvent::DroppedFile(path) => self.notch.shelf_add(path.to_string_lossy().into_owned()),
             WindowEvent::Focused(false) if self.notch.keyboard_active() => self.notch.key_escape(),
             WindowEvent::MouseWheel { delta, .. } if self.notch.is_open() => {
                 let y = match delta {
@@ -362,6 +366,7 @@ impl ApplicationHandler<UserEvent> for App {
         let dt = now - self.last_tick;
         self.last_tick = now;
         self.feed_eye();
+        self.weather.tick(&self.notch, self.emit.as_ref());
         if self.notch.wants_stats() {
             if let Some(s) = &mut self.sampler {
                 self.notch.set_stats(s.sample());
@@ -438,7 +443,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             notch.tick(Duration::from_millis(16));
         }
     }
-    let idx = ["music", "timer", "stats", "shelf", "todo"].iter().position(|p| *p == page).unwrap_or(0);
+    let idx = ["music", "timer", "stats", "shelf", "todo", "calendar", "weather", "settings"].iter().position(|p| *p == page).unwrap_or(0);
     notch.next_page(idx as i32);
     if let Some(mut s) = stats::Sampler::new() {
         s.sample();
@@ -482,6 +487,8 @@ fn main() {
         text: text::Text::new(),
         sampler: stats::Sampler::new(),
         fetcher: None,
+        emit: None,
+        weather: weather::Poller::default(),
         cursor: (-1.0, -1.0),
         shown: true,
         focus_requested: false,

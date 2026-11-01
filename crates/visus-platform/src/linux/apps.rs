@@ -81,6 +81,17 @@ pub fn launch(target: &str) {
     spawn_detached(c);
 }
 
+pub fn open_path(path: &str) {
+    open_url(path);
+}
+
+/// Region screenshot into ~/Pictures via grim + slurp.
+pub fn screenshot() {
+    let mut c = Command::new("sh");
+    c.arg("-c").arg("grim -g \"$(slurp)\" \"$HOME/Pictures/visus-$(date +%Y%m%d-%H%M%S).png\"");
+    spawn_detached(c);
+}
+
 pub fn open_url(url: &str) {
     let mut c = Command::new("xdg-open");
     c.arg(url);

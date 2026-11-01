@@ -32,3 +32,7 @@ pub fn set_focusable(_hwnd: isize, _on: bool) {}
 pub fn send_toggle() -> bool {
     false
 }
+
+pub fn open_path(_path: &str) {}
+
+pub fn screenshot() {}

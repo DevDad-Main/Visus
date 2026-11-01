@@ -7,7 +7,7 @@ mod mpris;
 mod power;
 
 pub use autostart::{autostart_enabled, set_autostart};
-pub use apps::{launch, open_url};
+pub use apps::{launch, open_path, open_url, screenshot};
 pub use ipc::send_toggle;
 pub use mpris::media_command;
 

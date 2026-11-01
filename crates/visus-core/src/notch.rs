@@ -1,4 +1,4 @@
-use crate::{Action, Command, Event, FOCUS, Hud, Lyrics, MediaInfo, Outcome, Palette, Settings, Spring, Stats, Timer, Todo, parse_task};
+use crate::{Action, Command, Event, FOCUS, Hud, Lyrics, MediaInfo, Outcome, Palette, Settings, Spring, Stats, Timer, Todo, UpdateStatus, Weather, parse_task};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -8,10 +8,14 @@ pub enum Page {
     Stats,
     Shelf,
     Todo,
+    Calendar,
+    Weather,
+    Settings,
 }
 
 impl Page {
-    pub const ALL: [Page; 5] = [Page::Music, Page::Timer, Page::Stats, Page::Shelf, Page::Todo];
+    pub const ALL: [Page; 8] =
+        [Page::Music, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Calendar, Page::Weather, Page::Settings];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +34,9 @@ pub enum Alert {
     Volume { level: f32, muted: bool },
     TimerDone,
     TodoDue,
+    Online,
+    Offline,
+    Language([u8; 2]),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -92,6 +99,11 @@ pub struct Notch {
     lyrics: Lyrics,
     lyrics_open: bool,
     todos: Vec<Todo>,
+    shelf: Vec<String>,
+    shelf_dirty: bool,
+    weather: Option<Weather>,
+    update: UpdateStatus,
+    online: Option<bool>,
     todo_input: Option<String>,
     todos_dirty: bool,
     palette: Palette,
@@ -126,6 +138,11 @@ impl Notch {
             lyrics: Lyrics::None,
             lyrics_open: false,
             todos: Vec::new(),
+            shelf: Vec::new(),
+            shelf_dirty: false,
+            weather: None,
+            update: UpdateStatus::Idle,
+            online: None,
             todo_input: None,
             todos_dirty: false,
             palette: Palette::default(),
@@ -173,6 +190,17 @@ impl Notch {
                 }
             }
             Event::Hud(Hud::CapsLock(on)) => self.alert(Alert::CapsLock(on)),
+            Event::Hud(Hud::Language(l)) => self.alert(Alert::Language(l)),
+            Event::Weather(w) => self.weather = w,
+            Event::Update(u) => self.update = u,
+            Event::Network { online } => {
+                // The first report is the starting state, not a change.
+                let changed = self.online.is_some_and(|p| p != online);
+                self.online = Some(online);
+                if changed {
+                    self.alert(if online { Alert::Online } else { Alert::Offline });
+                }
+            }
             Event::Hud(Hud::Volume { level, muted }) => self.alert(Alert::Volume { level, muted }),
             Event::Fullscreen(f) => self.hidden = f && self.settings.hide_in_fullscreen,
             Event::Apps(apps) => self.palette.set_apps(apps),
@@ -318,6 +346,64 @@ impl Notch {
     pub fn toggle_lyrics(&mut self) {
         self.touch();
         self.lyrics_open = !self.lyrics_open;
+    }
+
+    pub fn shelf(&self) -> &[String] {
+        &self.shelf
+    }
+
+    pub fn set_shelf(&mut self, s: Vec<String>) {
+        self.shelf = s;
+    }
+
+    pub fn take_shelf_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.shelf_dirty)
+    }
+
+    /// Adds a dropped file and shows the Shelf page briefly.
+    pub fn shelf_add(&mut self, path: String) {
+        if !self.shelf.contains(&path) {
+            self.shelf.push(path);
+            self.shelf_dirty = true;
+        }
+        self.show_page(Page::Shelf);
+    }
+
+    pub fn shelf_remove(&mut self, i: usize) {
+        if i < self.shelf.len() {
+            self.shelf.remove(i);
+            self.shelf_dirty = true;
+        }
+        self.touch();
+    }
+
+    pub fn weather(&self) -> Option<Weather> {
+        self.weather
+    }
+
+    /// Weather is fetched only while its page is open and a location is configured.
+    pub fn wants_weather(&self) -> bool {
+        self.is_open()
+            && self.page == Page::Weather
+            && self.settings.weather_lat.is_some()
+            && self.settings.weather_lon.is_some()
+    }
+
+    pub fn update_status(&self) -> &UpdateStatus {
+        &self.update
+    }
+
+    pub fn set_update_status(&mut self, s: UpdateStatus) {
+        self.update = s;
+    }
+
+    /// Opens the pill on `page`; it closes by itself unless the pointer takes over.
+    pub fn show_page(&mut self, page: Page) {
+        self.touch();
+        self.page = page;
+        self.mode = Mode::Open;
+        self.leave_left = Some(Duration::from_secs(4));
+        self.retarget();
     }
 
     pub fn todos(&self) -> &[Todo] {
@@ -493,12 +579,14 @@ impl Notch {
             Action::Command(c) => match c {
                 Command::Quit => Outcome::Quit,
                 Command::ShowPage(p) => {
-                    self.page = p;
-                    self.mode = Mode::Open;
-                    // Closes by itself unless the pointer arrives and takes over.
-                    self.leave_left = Some(Duration::from_secs(4));
-                    self.retarget();
+                    self.show_page(p);
                     Outcome::None
+                }
+                Command::Screenshot => Outcome::Screenshot,
+                Command::CheckUpdates => {
+                    self.show_page(Page::Settings);
+                    self.update = UpdateStatus::Checking;
+                    Outcome::CheckUpdates
                 }
                 Command::ToggleTimer => {
                     self.toggle_timer();
@@ -798,7 +886,7 @@ mod tests {
     fn pages_wrap() {
         let mut n = Notch::new(800.0);
         n.next_page(-1);
-        assert_eq!(n.page, Page::Todo);
+        assert_eq!(n.page, Page::Settings);
     }
 
     #[test]

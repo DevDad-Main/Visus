@@ -65,54 +65,41 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 ## Current state (what works)
 
 - Closed pill (default 228x38, flared into the screen edge), hover to open, springs between states.
-- Pages (wheel/arrow keys): Music (title/artist/progress/transport, lyrics toggle), Timer (Pomodoro),
-  Stats (CPU, memory, network), To-do (add/complete/delete; `@14:30` suffix sets a reminder peek,
-  saved to `todos.json`). Shelf is "Coming soon".
-- Synced lyrics from LRCLIB shown in a split pane (current line highlighted).
-- Quick launcher / command palette: a panel that drops down beneath the pill. Searches installed apps
-  (Start Menu shortcuts / .desktop files), Visus commands, arithmetic (`12*7+3`), URLs, and falls back to a
-  web search. Open it with the search button in the open pill, **Alt+Space** (Windows), or on Linux bind a
-  key to `visus-app --toggle-palette` (Hyprland: `bind = SUPER, space, exec, visus-app --toggle-palette`).
-- Album art from SMTC thumbnails (Windows) and MPRIS `artUrl` (Linux); gradient placeholder otherwise.
-- Alert peeks: charger plugged/unplugged, Caps Lock, volume (Windows), timer done.
-- Idle eye: almond eye with iris, blinks (irregular, sometimes double), glances around, follows the
-  cursor (Windows via `GetCursorPos`, Hyprland via IPC), dozes off with "zz".
-- Settings in `settings.json` (`%APPDATA%\visus` / `~/.config/visus`): `scale`, `closed_width`,
-  `closed_height`, `minimal`, `mascot`, `idle_secs`, `hide_in_fullscreen`, `eye_iris`, `eye_sclera`
-  (hex colours). Windows tray menu toggles the common ones and has size/eye-colour presets.
-- Dev tooling: `visus-app --snapshot <music|lyrics|timer|stats|shelf|todo> out.png` renders the open pill
-  headlessly using live OS state (handy for visual checks without hover automation).
+  Left ring = focus timer while one runs, otherwise battery level (bolt when charging).
+- Pages (wheel/arrow keys): Music (art, progress, transport, synced lyrics via LRCLIB), Timer (presets,
+  steppers, shrinking ring), Stats (CPU/RAM/network), Shelf (drop files onto the pill; click to open),
+  To-do (`@14:30` suffix = reminder, saved to `todos.json`), Calendar (month grid), Weather (Open-Meteo,
+  needs `weather_lat`/`weather_lon` in settings), Settings (toggles, size, eye colour/style, update check).
+- Quick launcher / command palette beneath the pill: apps, Visus commands, arithmetic, URLs, web search,
+  "Take screenshot", "Check for updates". Open via the magnifier in the open pill, **Alt+Space** (Windows),
+  or on Linux bind a key to `visus-app --toggle-palette`.
+- Alert peeks: charger, Caps Lock, volume, keyboard language and Wi-Fi/online changes (Windows), timer done,
+  task due.
+- Idle eye: blinks, glances, follows the cursor (Windows; Hyprland), dozes off. Styles: Classic (colour
+  configurable) and Sauron (burning lens, slit pupil).
+- Auto-update: Settings -> "Check for updates" reads GitHub Releases; "Install" (Windows) downloads the zip,
+  verifies SHA-256, swaps the exe and relaunches. Manual only.
+- Settings file `settings.json` (`%APPDATA%\visus` / `~/.config/visus`), plus `todos.json`, `shelf.json`.
+- Dev tooling: `visus-app --snapshot <music|lyrics|timer|stats|shelf|todo|calendar|weather|settings|palette> out.png`.
 - CI builds and tests on Windows and Linux; tags `v*` publish a Windows zip (see `release.yml`).
 
 ## Known gaps / caveats
 
-- Windows code is verified to compile in CI but has had little hands-on testing: check click-through,
-  transparency, tray, media controls, charger and volume HUDs on a real machine.
-- Wi-Fi and Bluetooth peeks missing. No brightness/language HUDs.
-- Lyrics: no click-to-seek, no disk cache. Position is extrapolated between player updates.
-- No settings window yet (tray menu on Windows, hand-edit `settings.json` elsewhere). No tray on Linux.
-- Linux layer-shell uses integer scaling only; the eye only tracks the cursor under Hyprland.
-- Shelf (drag in/out) is not built. To-do has no snooze or editing yet.
-- Hyprland cursor warping via `hyprctl` does not reliably trigger hover, so test open states with
-  `--snapshot`.
+- Windows code compiles in CI but has had limited hands-on testing: click-through, tray, media, charger,
+  volume, drag-and-drop, launcher focus, updater, network and language alerts all need real-machine checks.
+- Not built: Bluetooth headphone peek, brightness HUD, notifications center, screen recording, calendar
+  events (month grid only), dragging files back *out* of the shelf, searchlight sweep for the Sauron eye,
+  plugin system, macOS port. Wi-Fi/language alerts are Windows only.
+- Wayland host has no drag-and-drop yet (use the Windows/X11 host for shelf drops).
+- Lyrics: no click-to-seek. Launcher: no Store/UWP apps or icons yet.
+- Hyprland cursor warping via `hyprctl` does not reliably trigger hover, so test with `--snapshot`.
 
 ## Roadmap
 
 1. Windows hands-on fixes from real-machine testing.
-2. Keyboard input is in (Windows drops `WS_EX_NOACTIVATE` while typing; Wayland grabs the keyboard
-   exclusively while the launcher is open) -> To-do with reminders can reuse it; the quick
-   launcher is done; To-do and File shelf (drag & drop) still to do. Launcher follow-ups: Store/UWP apps
-   on Windows, app icons, clipboard history, configurable hotkey, plugin-provided results.
-3. Settings window (sizes, colours, pages, eye style) replacing hand-editing, with an **auto-updater**:
-   "Check for updates" queries the GitHub Releases API (`/repos/DevDad-Main/Visus/releases/latest`),
-   compares semver with the running version, downloads `Visus-windows-x64.zip`, verifies the published
-   SHA-256 (`Visus.exe.sha256`), swaps the exe (rename running exe, place new one, relaunch) and
-   offers rollback. Prereleases only when the user opts in. Network use stays opt-in and manual.
-4. Wi-Fi and Bluetooth peeks, brightness and keyboard-language HUDs.
-5. Eye styles: "Sauron" eye with fiery glow and searchlight sweep; selectable in settings.
-6. Visus extras: calendar, weather, notifications center, launcher, capture shortcuts.
-7. Data-driven page registry, then a WASM plugin host.
-8. macOS port; installer / Store packaging.
+2. Bluetooth/brightness HUDs, notifications center, calendar events, drag-out from the shelf.
+3. Sauron searchlight sweep, more eye styles; plugin host (WASM) behind a data-driven page registry.
+4. macOS port; installer / Store packaging.
 
 ## Dev notes
 

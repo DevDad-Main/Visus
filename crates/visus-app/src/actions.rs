@@ -1,0 +1,27 @@
+use visus_core::Outcome;
+use visus_platform::Emit;
+
+use crate::updater;
+
+/// Performs what a confirmed result asks of the OS; returns true when the app should quit.
+pub fn run(outcome: Outcome, emit: Option<&Emit>) -> bool {
+    match outcome {
+        Outcome::None => {}
+        Outcome::Launch(t) => visus_platform::launch(&t),
+        Outcome::OpenUrl(u) => visus_platform::open_url(&u),
+        Outcome::OpenPath(p) => visus_platform::open_path(&p),
+        Outcome::Screenshot => visus_platform::screenshot(),
+        Outcome::CheckUpdates => {
+            if let Some(e) = emit {
+                updater::check(e.clone());
+            }
+        }
+        Outcome::InstallUpdate => {
+            if let Some(e) = emit {
+                updater::install(e.clone());
+            }
+        }
+        Outcome::Quit => return true,
+    }
+    false
+}

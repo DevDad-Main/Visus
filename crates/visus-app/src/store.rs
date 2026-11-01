@@ -24,6 +24,12 @@ fn write_atomic(path: PathBuf, json: String) {
     }
 }
 
+fn save_shelf(n: &Notch) {
+    if let (Some(path), Ok(json)) = (settings_path().map(|p| p.with_file_name("shelf.json")), serde_json::to_string_pretty(n.shelf())) {
+        write_atomic(path, json);
+    }
+}
+
 fn save_todos(n: &Notch) {
     if let (Some(path), Ok(json)) = (todos_path(), serde_json::to_string_pretty(n.todos())) {
         write_atomic(path, json);
@@ -58,6 +64,12 @@ pub fn load_into(n: &mut Notch) {
         .and_then(|s| serde_json::from_str::<Vec<Todo>>(&s).ok())
         .unwrap_or_default();
     n.set_todos(todos);
+    let shelf = settings_path()
+        .map(|p| p.with_file_name("shelf.json"))
+        .and_then(|p| fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default();
+    n.set_shelf(shelf);
     n.take_dirty();
     save(n);
 }
@@ -72,5 +84,8 @@ pub fn sync(n: &mut Notch) {
     }
     if n.take_todos_dirty() {
         save_todos(n);
+    }
+    if n.take_shelf_dirty() {
+        save_shelf(n);
     }
 }

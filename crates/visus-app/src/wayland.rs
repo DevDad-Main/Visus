@@ -37,7 +37,7 @@ use smithay_client_toolkit::{
 use tiny_skia::Pixmap;
 use visus_core::{Event, Notch, Outcome};
 
-use crate::{events, lyrics, stats, store, text::Text, ui};
+use crate::{actions, events, lyrics, weather, stats, store, text::Text, ui};
 
 const WIN_W: u32 = 960;
 const WIN_H: u32 = 500;
@@ -61,6 +61,8 @@ struct State {
     text: Text,
     sampler: Option<stats::Sampler>,
     fetcher: Option<lyrics::Fetcher>,
+    emit: Option<visus_platform::Emit>,
+    weather: weather::Poller,
     scale: i32,
     cursor: (f32, f32),
     scroll_accum: f64,
@@ -112,6 +114,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         text: Text::new(),
         sampler: stats::Sampler::new(),
         fetcher: None,
+        emit: None,
+        weather: weather::Poller::default(),
         scale: 1,
         cursor: (-1.0, -1.0),
         scroll_accum: 0.0,
@@ -142,6 +146,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     state.fetcher = Some(lyrics::Fetcher::new(emit.clone()));
+    state.emit = Some(emit.clone());
     visus_platform::start(emit);
 
     while !state.exit {
@@ -162,6 +167,7 @@ impl State {
         self.last_tick = now;
         self.sync_keyboard();
         self.feed_eye();
+        self.weather.tick(&self.notch, self.emit.as_ref());
         if self.notch.wants_stats() {
             if let Some(s) = &mut self.sampler {
                 self.notch.set_stats(s.sample());
@@ -224,11 +230,8 @@ impl State {
     }
 
     fn run_outcome(&mut self, outcome: Outcome) {
-        match outcome {
-            Outcome::None => {}
-            Outcome::Launch(t) => visus_platform::launch(&t),
-            Outcome::OpenUrl(u) => visus_platform::open_url(&u),
-            Outcome::Quit => self.exit = true,
+        if actions::run(outcome, self.emit.as_ref()) {
+            self.exit = true;
         }
     }
 

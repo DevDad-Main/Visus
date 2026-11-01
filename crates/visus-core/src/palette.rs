@@ -20,6 +20,8 @@ pub enum Command {
     ResetTimer,
     ToggleMinimal,
     ToggleEye,
+    Screenshot,
+    CheckUpdates,
     Quit,
 }
 
@@ -53,6 +55,10 @@ pub enum Outcome {
     None,
     Launch(String),
     OpenUrl(String),
+    OpenPath(String),
+    Screenshot,
+    CheckUpdates,
+    InstallUpdate,
     Quit,
 }
 
@@ -69,6 +75,13 @@ fn visus_commands() -> Vec<(&'static str, &'static str, Command)> {
         ("Open Music", "Show the music page", Command::ShowPage(Page::Music)),
         ("Open Timer", "Show the focus timer", Command::ShowPage(Page::Timer)),
         ("Open Stats", "Show CPU, memory and network", Command::ShowPage(Page::Stats)),
+        ("Open To-do", "Show your tasks", Command::ShowPage(Page::Todo)),
+        ("Open Shelf", "Show shelved files", Command::ShowPage(Page::Shelf)),
+        ("Open Calendar", "Show this month", Command::ShowPage(Page::Calendar)),
+        ("Open Weather", "Show current conditions", Command::ShowPage(Page::Weather)),
+        ("Open Settings", "Sizes, eye, updates", Command::ShowPage(Page::Settings)),
+        ("Take screenshot", "Select an area to capture", Command::Screenshot),
+        ("Check for updates", "Look for a newer Visus", Command::CheckUpdates),
         ("Start or pause focus timer", "Pomodoro", Command::ToggleTimer),
         ("Reset focus timer", "Pomodoro", Command::ResetTimer),
         ("Toggle minimal notch", "Thin line when closed", Command::ToggleMinimal),
