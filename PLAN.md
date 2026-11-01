@@ -85,21 +85,19 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 
 ## Known gaps / caveats
 
-- Windows code compiles in CI but has had limited hands-on testing: click-through, tray, media, charger,
-  volume, drag-and-drop, launcher focus, updater, network and language alerts all need real-machine checks.
-- Not built: Bluetooth headphone peek, brightness HUD, notifications center, screen recording, calendar
-  events (month grid only), dragging files back *out* of the shelf, searchlight sweep for the Sauron eye,
-  plugin system, macOS port. Wi-Fi/language alerts are Windows only.
-- Wayland host has no drag-and-drop yet (use the Windows/X11 host for shelf drops).
-- Lyrics: no click-to-seek. Launcher: no Store/UWP apps or icons yet.
-- Hyprland cursor warping via `hyprctl` does not reliably trigger hover, so test with `--snapshot`.
+- Windows code compiles in CI but has had limited hands-on testing (click-through, tray, drag-and-drop, launcher
+  focus, updater, network/language alerts, icon extraction).
+- Post-v1 ideas: Bluetooth headphone peek, brightness HUD, notifications center, screen recording, calendar
+  events, dragging files back out of the shelf, Sauron searchlight sweep, plugin system (WASM), macOS port,
+  Store/UWP apps in the launcher, lyrics click-to-seek.
+- Wayland host has no drag-and-drop (shelf drops work on Windows/X11). Wi-Fi/language alerts are Windows only.
+- Single instance enforced (Windows mutex, Linux socket); panics write `crash.log` next to `settings.json`.
 
-## Roadmap
+## Roadmap (after v1.0)
 
-1. Windows hands-on fixes from real-machine testing.
-2. Bluetooth/brightness HUDs, notifications center, calendar events, drag-out from the shelf.
-3. Sauron searchlight sweep, more eye styles; plugin host (WASM) behind a data-driven page registry.
-4. macOS port; installer / Store packaging.
+1. Fix whatever real-world Windows testing finds.
+2. Bluetooth/brightness HUDs, notifications center, calendar events, shelf drag-out.
+3. Plugin host behind a data-driven page registry; more eye styles; macOS port; installer/Store packaging.
 
 ## Dev notes
 

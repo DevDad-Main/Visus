@@ -28,3 +28,23 @@ jobs:
             Visus.exe.sha256
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
+
+  linux:
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
+      - run: cargo build --release -p visus-app
+      - name: Package
+        run: |
+          mkdir visus && cp target/release/visus-app visus/visus
+          tar czf Visus-linux-x64.tar.gz visus
+          sha256sum Visus-linux-x64.tar.gz > Visus-linux-x64.tar.gz.sha256
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Visus-linux-x64.tar.gz
+            Visus-linux-x64.tar.gz.sha256

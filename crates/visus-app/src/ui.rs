@@ -1199,6 +1199,10 @@ fn draw_calendar(cx: &mut Ctx, notch: &Notch, a: f32) {
     cx.t(&today.format("%A").to_string(), x0 + 130.0, 92.0, 18.0, color(GRAY, a), Align::Center);
     cx.t(&today.day().to_string(), x0 + 130.0, 160.0, 68.0, color(WHITE, a), Align::Center);
     cx.t(&today.format("%B %Y").to_string(), x0 + 130.0, 196.0, 18.0, color(GRAY, a), Align::Center);
+    let due = notch.todos().iter().filter(|t| !t.done && t.due.is_some()).count();
+    if due > 0 {
+        cx.t(&format!("{due} reminder{} today", if due == 1 { "" } else { "s" }), x0 + 130.0, 220.0, 14.0, color(ORANGE, a), Align::Center);
+    }
 
     let first = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
     let lead = first.weekday().num_days_from_monday() as f32;

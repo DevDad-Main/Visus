@@ -468,6 +468,14 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("--toggle-palette") {
         std::process::exit(if platform::send_toggle() { 0 } else { 1 });
     }
+    std::panic::set_hook(Box::new(|info| {
+        if let Some(p) = store::settings_path().map(|p| p.with_file_name("crash.log")) {
+            let _ = std::fs::write(p, format!("{info}\n"));
+        }
+    }));
+    if platform::already_running() {
+        return;
+    }
     if let [_, flag, page, out, rest @ ..] = &args[..] {
         if flag == "--snapshot" {
             snapshot(page, out, rest.first().map(String::as_str));

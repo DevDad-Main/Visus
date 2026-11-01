@@ -33,6 +33,11 @@ pub fn listen(emit: Emit) {
         .expect("spawn ipc thread");
 }
 
+/// True when another Visus is already listening.
+pub fn already_running() -> bool {
+    socket_path().is_some_and(|p| UnixStream::connect(p).is_ok())
+}
+
 /// Asks the running instance to toggle the launcher; false if none is running.
 pub fn send_toggle() -> bool {
     use std::io::Write;

@@ -31,6 +31,19 @@ pub fn start(emit: Emit) {
     std::thread::spawn(move || emit(visus_core::Event::Apps(std::sync::Arc::new(apps::list()))));
 }
 
+/// True when another Visus holds the single-instance mutex (this process takes it otherwise).
+pub fn already_running() -> bool {
+    use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows::Win32::System::Threading::CreateMutexW;
+    unsafe {
+        let handle = CreateMutexW(None, true, windows::core::w!("Local\\VisusSingleInstance"));
+        let exists = GetLastError() == ERROR_ALREADY_EXISTS;
+        // The mutex must outlive main; the OS releases it at exit.
+        std::mem::forget(handle);
+        exists
+    }
+}
+
 /// Linux-only: asks a running instance to toggle the launcher (Windows uses the Alt+Space hotkey).
 pub fn send_toggle() -> bool {
     false

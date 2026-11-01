@@ -16,7 +16,7 @@ pub fn request_icon(app: visus_core::App, emit: crate::Emit) {
         emit(visus_core::Event::AppIcon { target: app.target, art });
     });
 }
-pub use ipc::send_toggle;
+pub use ipc::{already_running, send_toggle};
 pub use mpris::media_command;
 
 use crate::Emit;
