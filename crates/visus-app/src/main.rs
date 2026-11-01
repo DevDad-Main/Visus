@@ -367,6 +367,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.last_tick = now;
         self.feed_eye();
         self.weather.tick(&self.notch, self.emit.as_ref());
+        actions::request_icons(&mut self.notch, self.emit.as_ref());
         if self.notch.wants_stats() {
             if let Some(s) = &mut self.sampler {
                 self.notch.set_stats(s.sample());
@@ -412,7 +413,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         }
     });
     let fetcher = lyrics::Fetcher::new(emit.clone());
-    platform::start(emit);
+    platform::start(emit.clone());
     let deadline = std::time::Instant::now() + Duration::from_secs(6);
     let mut got_apps = false;
     while std::time::Instant::now() < deadline {
@@ -439,6 +440,13 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
     if page == "palette" {
         notch.open_palette();
         notch.palette_type(query.unwrap_or(""));
+        // Icons load off-thread; give them a moment so the snapshot shows them.
+        for _ in 0..8 {
+            actions::request_icons(&mut notch, Some(&emit));
+            if let Ok(ev) = rx.recv_timeout(Duration::from_millis(150)) {
+                events::apply(&mut notch, Some(&fetcher), ev);
+            }
+        }
         for _ in 0..200 {
             notch.tick(Duration::from_millis(16));
         }

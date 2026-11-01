@@ -8,6 +8,14 @@ mod power;
 
 pub use autostart::{autostart_enabled, set_autostart};
 pub use apps::{launch, open_path, open_url, screenshot};
+
+/// Loads an app's icon off-thread and reports it as an event (None when it has no usable PNG).
+pub fn request_icon(app: visus_core::App, emit: crate::Emit) {
+    std::thread::spawn(move || {
+        let art = apps::load_icon(&app);
+        emit(visus_core::Event::AppIcon { target: app.target, art });
+    });
+}
 pub use ipc::send_toggle;
 pub use mpris::media_command;
 

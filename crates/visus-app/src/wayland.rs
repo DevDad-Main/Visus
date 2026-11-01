@@ -168,6 +168,7 @@ impl State {
         self.sync_keyboard();
         self.feed_eye();
         self.weather.tick(&self.notch, self.emit.as_ref());
+        actions::request_icons(&mut self.notch, self.emit.as_ref());
         if self.notch.wants_stats() {
             if let Some(s) = &mut self.sampler {
                 self.notch.set_stats(s.sample());

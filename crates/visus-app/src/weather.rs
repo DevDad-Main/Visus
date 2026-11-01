@@ -26,6 +26,29 @@ impl Poller {
     }
 }
 
+/// Looks a city name up (Open-Meteo geocoding) and reports its coordinates.
+pub fn geocode(query: String, emit: Emit) {
+    std::thread::spawn(move || {
+        let found = (|| {
+            let mut resp = ureq::get("https://geocoding-api.open-meteo.com/v1/search")
+                .query("name", &query)
+                .query("count", "1")
+                .query("language", "en")
+                .call()
+                .ok()?;
+            let v: serde_json::Value = serde_json::from_str(&resp.body_mut().read_to_string().ok()?).ok()?;
+            let r = v["results"].get(0)?;
+            let name = r["name"].as_str()?;
+            let city = match r["country"].as_str() {
+                Some(c) => format!("{name}, {c}"),
+                None => name.to_string(),
+            };
+            Some((city, r["latitude"].as_f64()? as f32, r["longitude"].as_f64()? as f32))
+        })();
+        emit(Event::Geocode(found));
+    });
+}
+
 fn fetch(lat: f32, lon: f32) -> Option<Weather> {
     let url = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code,wind_speed_10m"

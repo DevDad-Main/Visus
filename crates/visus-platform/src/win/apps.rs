@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use visus_core::App;
+use std::sync::Arc;
+
+use visus_core::{App, Art, guess_kind};
 use windows::core::{HSTRING, PCWSTR, w};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -33,7 +35,8 @@ fn collect(dir: &Path, depth: u32, out: &mut Vec<App>, seen: &mut HashSet<String
         if lower.contains("uninstall") || !seen.insert(lower) {
             continue;
         }
-        out.push(App { name, target: path.to_string_lossy().into_owned() });
+        let kind = guess_kind(&name, "");
+        out.push(App { name, target: path.to_string_lossy().into_owned(), icon: String::new(), kind });
     }
 }
 
@@ -45,6 +48,70 @@ pub fn list() -> Vec<App> {
     }
     apps.sort_by_key(|a| a.name.to_lowercase());
     apps
+}
+
+/// The shortcut's icon as 48x48 RGBA, taken from the shell.
+pub fn load_icon(app: &App) -> Option<Arc<Art>> {
+    use std::ffi::c_void;
+    use windows::Win32::Graphics::Gdi::{
+        BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, HGDIOBJ,
+        SelectObject,
+    };
+    use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
+    use windows::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
+    use windows::Win32::UI::WindowsAndMessaging::{DI_NORMAL, DestroyIcon, DrawIconEx};
+
+    const SIZE: i32 = 48;
+    let path = HSTRING::from(app.target.as_str());
+    unsafe {
+        let mut info = SHFILEINFOW::default();
+        let ok = SHGetFileInfoW(
+            PCWSTR(path.as_ptr()),
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            Some(&mut info),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            SHGFI_ICON | SHGFI_LARGEICON,
+        );
+        if ok == 0 || info.hIcon.is_invalid() {
+            return None;
+        }
+        let hdc = CreateCompatibleDC(None);
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: SIZE,
+                biHeight: -SIZE,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits: *mut c_void = std::ptr::null_mut();
+        let dib = CreateDIBSection(Some(hdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0);
+        let mut rgba = None;
+        if let Ok(dib) = dib {
+            let old = SelectObject(hdc, HGDIOBJ(dib.0));
+            if DrawIconEx(hdc, 0, 0, info.hIcon, SIZE, SIZE, 0, None, DI_NORMAL).is_ok() && !bits.is_null() {
+                let mut px = std::slice::from_raw_parts(bits as *const u8, (SIZE * SIZE * 4) as usize).to_vec();
+                // Some icons draw without alpha; treat any painted pixel as opaque then.
+                let has_alpha = px.chunks_exact(4).any(|p| p[3] != 0);
+                for p in px.chunks_exact_mut(4) {
+                    p.swap(0, 2);
+                    if !has_alpha && (p[0] | p[1] | p[2]) != 0 {
+                        p[3] = 255;
+                    }
+                }
+                rgba = Some(px);
+            }
+            SelectObject(hdc, old);
+            let _ = DeleteObject(HGDIOBJ(dib.0));
+        }
+        let _ = DeleteDC(hdc);
+        let _ = DestroyIcon(info.hIcon);
+        rgba.map(|px| crate::art::from_rgba(SIZE as u32, px))
+    }
 }
 
 fn shell_open(target: &str) {

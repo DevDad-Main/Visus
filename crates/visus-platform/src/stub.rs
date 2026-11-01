@@ -36,3 +36,7 @@ pub fn send_toggle() -> bool {
 pub fn open_path(_path: &str) {}
 
 pub fn screenshot() {}
+
+pub fn request_icon(app: visus_core::App, emit: crate::Emit) {
+    emit(visus_core::Event::AppIcon { target: app.target, art: None });
+}

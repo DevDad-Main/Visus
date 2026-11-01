@@ -4,6 +4,13 @@ use visus_core::Art;
 
 const SIZE: u32 = 160;
 
+/// Wraps already-decoded square RGBA pixels (e.g. a Windows icon).
+#[allow(dead_code)]
+pub fn from_rgba(size: u32, rgba: Vec<u8>) -> Arc<Art> {
+    let id = rgba.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x0100_0000_01b3));
+    Arc::new(Art { size, rgba, id })
+}
+
 /// Decodes PNG/JPEG cover bytes into a centre-cropped square thumbnail.
 #[allow(dead_code)]
 pub fn decode(bytes: &[u8]) -> Option<Arc<Art>> {

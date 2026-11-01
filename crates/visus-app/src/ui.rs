@@ -3,7 +3,7 @@ use tiny_skia::{
     SpreadMode,
     Stroke, Transform, LineCap,
 };
-use visus_core::{Alert, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, current_index, weather_label};
+use visus_core::{Alert, AppKind, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, current_index, weather_label};
 
 use crate::text::{Align, Text};
 
@@ -35,6 +35,7 @@ pub enum Button {
     EyeColour(u8),
     Style(u8),
     Update,
+    Location,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,6 +192,7 @@ fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
         Page::Todo => todo_buttons(notch, x0),
         Page::Shelf => shelf_buttons(notch, x0),
         Page::Settings => settings_buttons(x0),
+        Page::Weather => vec![(Button::Location, rect(x0 + 36.0, 204.0, 300.0, 30.0))],
         _ => Vec::new(),
     }
 }
@@ -835,6 +837,7 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
             Button::Size(i) => notch.update_settings(|s| s.scale = SIZES[i as usize % SIZES.len()].1),
             Button::EyeColour(i) => notch.update_settings(|s| s.eye_iris = Rgb(EYE_COLOURS[i as usize % EYE_COLOURS.len()])),
             Button::Style(i) => notch.update_settings(|s| s.eye_style = if i == 0 { EyeStyle::Classic } else { EyeStyle::Sauron }),
+            Button::Location => notch.begin_location_input(),
             Button::Update => {
                 return match notch.update_status() {
                     UpdateStatus::Available { .. } => {
@@ -981,14 +984,22 @@ fn draw_palette(cx: &mut Ctx, notch: &Notch) {
             cx.rrect(*row, 13.0, color(WHITE, 0.11 * ca));
         }
         let tile = rect(row.x + 10.0, row.y + 7.0, 30.0, 30.0);
-        let (tint, glyph) = match item.kind {
-            Kind::Visus => ([96, 120, 255], "V".to_string()),
-            Kind::Calc => (GREEN, "=".to_string()),
-            Kind::Web => (BLUE, "\u{2197}".to_string()),
-            Kind::App => (hue_rgb((hash(&item.title) % 360) as f32 / 360.0), item.title.chars().next().map_or("?".into(), |c| c.to_uppercase().to_string())),
-        };
-        cx.rrect(tile, 9.0, color(tint, ca));
-        cx.t(&glyph, tile.x + 15.0, tile.y + 21.0, 16.0, color(WHITE, ca), Align::Center);
+        if let Some(art) = pal.icon_for(item) {
+            cx.rrect(tile, 9.0, color(WHITE, 0.06 * ca));
+            draw_image(cx, tile, 8.0, art, ca);
+        } else {
+            let kind = item.app.as_ref().map_or(AppKind::Generic, |a| a.kind);
+            let (tint, glyph) = match item.kind {
+                Kind::Visus => ([96, 120, 255], "V".to_string()),
+                Kind::Calc => (GREEN, "=".to_string()),
+                Kind::Web => (BLUE, "\u{2197}".to_string()),
+                Kind::App => (kind_tint(kind, &item.title), item.title.chars().next().map_or("?".into(), |c| c.to_uppercase().to_string())),
+            };
+            cx.rrect(tile, 9.0, color(tint, ca));
+            if item.kind != Kind::App || !draw_kind_glyph(cx, tile, kind, ca) {
+                cx.t(&glyph, tile.x + 15.0, tile.y + 21.0, 16.0, color(WHITE, ca), Align::Center);
+            }
+        }
 
         let text_x = row.x + 54.0;
         let room = row.w - 54.0 - 40.0;
@@ -1035,46 +1046,54 @@ fn draw_stats(cx: &mut Ctx, notch: &Notch, a: f32) {
 }
 
 thread_local! {
-    /// Premultiplied copy of the current cover, rebuilt only when the cover changes.
-    static ART_PIXMAP: std::cell::RefCell<Option<(u64, Pixmap)>> = const { std::cell::RefCell::new(None) };
+    /// Premultiplied copies of recently drawn images (covers, app icons), keyed by content id.
+    static ART_PIXMAPS: std::cell::RefCell<std::collections::HashMap<u64, Pixmap>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Draws a square image into a rounded rectangle.
+fn draw_image(cx: &mut Ctx, r: Rect, radius: f32, art: &visus_core::Art, a: f32) {
+    let Some(path) = rrect(r.x, r.y, r.w, r.h, radius) else { return };
+    let xf = cx.xf();
+    ART_PIXMAPS.with(|cell| {
+        let mut map = cell.borrow_mut();
+        if !map.contains_key(&art.id) {
+            let Some(mut pm) = Pixmap::new(art.size, art.size) else { return };
+            for (dst, src) in pm.pixels_mut().iter_mut().zip(art.rgba.chunks_exact(4)) {
+                let al = src[3] as u32;
+                let mul = |c: u8| ((c as u32 * al + 127) / 255) as u8;
+                if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(mul(src[0]), mul(src[1]), mul(src[2]), src[3]) {
+                    *dst = p;
+                }
+            }
+            if map.len() > 40 {
+                map.clear();
+            }
+            map.insert(art.id, pm);
+        }
+        let Some(pm) = map.get(&art.id) else { return };
+        let k = r.w / art.size as f32;
+        let pattern = tiny_skia::Pattern::new(
+            pm.as_ref(),
+            SpreadMode::Pad,
+            tiny_skia::FilterQuality::Bilinear,
+            a,
+            Transform::from_row(k, 0.0, 0.0, k, r.x, r.y),
+        );
+        let mut p = Paint::default();
+        p.shader = pattern;
+        p.anti_alias = true;
+        cx.pm.fill_path(&path, &p, FillRule::Winding, xf, None);
+    });
 }
 
 /// Cover art in a rounded square, or a gradient seeded from the title when there is none.
 fn draw_art(cx: &mut Ctx, r: Rect, radius: f32, m: &visus_core::MediaInfo, a: f32) {
-    let Some(path) = rrect(r.x, r.y, r.w, r.h, radius) else { return };
-    let xf = cx.xf();
-
     if let Some(art) = m.art.as_ref() {
-        ART_PIXMAP.with(|cell| {
-            let mut cell = cell.borrow_mut();
-            if cell.as_ref().is_none_or(|(id, _)| *id != art.id) {
-                let Some(mut pm) = Pixmap::new(art.size, art.size) else { return };
-                for (dst, src) in pm.pixels_mut().iter_mut().zip(art.rgba.chunks_exact(4)) {
-                    let al = src[3] as u32;
-                    let mul = |c: u8| ((c as u32 * al + 127) / 255) as u8;
-                    if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(mul(src[0]), mul(src[1]), mul(src[2]), src[3]) {
-                        *dst = p;
-                    }
-                }
-                *cell = Some((art.id, pm));
-            }
-            let Some((_, pm)) = cell.as_ref() else { return };
-            let k = r.w / art.size as f32;
-            let pattern = tiny_skia::Pattern::new(
-                pm.as_ref(),
-                SpreadMode::Pad,
-                tiny_skia::FilterQuality::Bilinear,
-                a,
-                Transform::from_row(k, 0.0, 0.0, k, r.x, r.y),
-            );
-            let mut p = Paint::default();
-            p.shader = pattern;
-            p.anti_alias = true;
-            cx.pm.fill_path(&path, &p, FillRule::Winding, xf, None);
-        });
+        draw_image(cx, r, radius, art, a);
         return;
     }
-
+    let Some(path) = rrect(r.x, r.y, r.w, r.h, radius) else { return };
+    let xf = cx.xf();
     let h = if m.has_session { (hash(&m.title) % 360) as f32 / 360.0 } else { 0.62 };
     let (c1, c2) = (hue_rgb(h), hue_rgb((h + 0.12) % 1.0));
     let grad = LinearGradient::new(
@@ -1209,8 +1228,9 @@ fn draw_weather(cx: &mut Ctx, notch: &Notch, a: f32) {
     let r = notch.shape().rect;
     let mid = r.x + r.w / 2.0;
     if notch.settings().weather_lat.is_none() || notch.settings().weather_lon.is_none() {
-        cx.t("Set your location", mid, 118.0, 26.0, color(WHITE, a), Align::Center);
-        cx.t("Add \"weather_lat\" and \"weather_lon\" to settings.json", mid, 148.0, 16.0, color(GRAY, a), Align::Center);
+        cx.t("Where are you?", mid, 118.0, 26.0, color(WHITE, a), Align::Center);
+        cx.t("Type a city below to see the weather", mid, 148.0, 16.0, color(GRAY, a), Align::Center);
+        draw_location_row(cx, notch, rect(r.x + 36.0, 204.0, 300.0, 30.0), a);
         return;
     }
     match notch.weather() {
@@ -1221,12 +1241,13 @@ fn draw_weather(cx: &mut Ctx, notch: &Notch, a: f32) {
         }
         None => cx.t("Loading\u{2026}", mid, 140.0, 22.0, color(GRAY, a), Align::Center),
     }
+    draw_location_row(cx, notch, rect(r.x + 36.0, 204.0, 300.0, 30.0), a);
 }
 
 fn settings_buttons(x0: f32) -> Vec<(Button, Rect)> {
     let mut v = Vec::new();
     for (i, t) in [Toggle::Minimal, Toggle::Eye, Toggle::Fullscreen, Toggle::Autostart].into_iter().enumerate() {
-        v.push((Button::Toggle(t), rect(x0 + 36.0, 60.0 + i as f32 * 34.0, 300.0, 30.0)));
+        v.push((Button::Toggle(t), rect(x0 + 36.0, 58.0 + i as f32 * 30.0, 300.0, 28.0)));
     }
     for i in 0..SIZES.len() {
         v.push((Button::Size(i as u8), rect(x0 + 380.0 + i as f32 * 76.0, 70.0, 70.0, 28.0)));
@@ -1237,7 +1258,8 @@ fn settings_buttons(x0: f32) -> Vec<(Button, Rect)> {
     for i in 0..2 {
         v.push((Button::Style(i), rect(x0 + 380.0 + i as f32 * 96.0, 178.0, 90.0, 28.0)));
     }
-    v.push((Button::Update, rect(x0 + 36.0, 204.0, 130.0, 28.0)));
+    v.push((Button::Location, rect(x0 + 36.0, 182.0, 300.0, 26.0)));
+    v.push((Button::Update, rect(x0 + 36.0, 214.0, 130.0, 26.0)));
     v
 }
 
@@ -1247,9 +1269,9 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, a: f32) {
     let autostart = visus_platform::autostart_enabled();
     let toggles = [("Minimal notch", s.minimal), ("Idle eye", s.mascot), ("Hide in full screen", s.hide_in_fullscreen), ("Start at login", autostart)];
     for (i, (label, on)) in toggles.iter().enumerate() {
-        let y = 60.0 + i as f32 * 34.0;
-        cx.t(label, x0 + 36.0, y + 21.0, 17.0, color(WHITE, a), Align::Left);
-        let sw = rect(x0 + 290.0, y + 3.0, 44.0, 24.0);
+        let y = 58.0 + i as f32 * 30.0;
+        cx.t(label, x0 + 36.0, y + 20.0, 17.0, color(WHITE, a), Align::Left);
+        let sw = rect(x0 + 290.0, y + 2.0, 44.0, 24.0);
         cx.rrect(sw, 12.0, if *on { color(GREEN, a) } else { color(WHITE, 0.18 * a) });
         cx.circle(if *on { sw.x + 32.0 } else { sw.x + 12.0 }, sw.y + 12.0, 9.0, color(WHITE, a));
     }
@@ -1284,10 +1306,142 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, a: f32) {
         UpdateStatus::Installing => ("Installing\u{2026}".to_string(), String::new()),
         UpdateStatus::Failed(e) => ("Try again".to_string(), e.clone()),
     };
-    let rc = rect(x0 + 36.0, 204.0, 130.0, 28.0);
-    cx.rrect(rc, 14.0, color(GREEN, 0.9 * a));
+    draw_location_row(cx, notch, rect(x0 + 36.0, 182.0, 300.0, 26.0), a);
+    let rc = rect(x0 + 36.0, 214.0, 130.0, 26.0);
+    cx.rrect(rc, 13.0, color(GREEN, 0.9 * a));
     let fitted = cx.fit(&label, 13.0, 120.0);
-    cx.t(&fitted, rc.x + 65.0, rc.y + 19.0, 13.0, color([0, 0, 0], a), Align::Center);
+    cx.t(&fitted, rc.x + 65.0, rc.y + 18.0, 13.0, color([0, 0, 0], a), Align::Center);
     let st = cx.fit(&format!("v{} {}", env!("CARGO_PKG_VERSION"), status), 12.0, 180.0);
-    cx.t(&st, x0 + 176.0, 223.0, 12.0, color(GRAY, a), Align::Left);
+    cx.t(&st, x0 + 176.0, 232.0, 12.0, color(GRAY, a), Align::Left);
+}
+
+fn kind_tint(kind: AppKind, name: &str) -> [u8; 3] {
+    match kind {
+        AppKind::Game => [136, 84, 255],
+        AppKind::Browser => [48, 130, 246],
+        AppKind::Terminal => [58, 62, 74],
+        AppKind::Music => [236, 72, 100],
+        AppKind::Video => [246, 130, 40],
+        AppKind::Code => [20, 160, 150],
+        AppKind::Office => [50, 110, 210],
+        AppKind::Files => [228, 160, 30],
+        AppKind::Settings => [110, 116, 130],
+        AppKind::Chat => [48, 190, 100],
+        AppKind::Graphics => [220, 80, 170],
+        AppKind::Generic => hue_rgb((hash(name) % 360) as f32 / 360.0),
+    }
+}
+
+/// Vector glyph for apps without an icon; returns false for Generic so the caller draws a letter.
+fn draw_kind_glyph(cx: &mut Ctx, t: Rect, kind: AppKind, a: f32) -> bool {
+    let (x, y) = (t.x + t.w / 2.0, t.y + t.h / 2.0);
+    let w = color(WHITE, a);
+    let dark = color([0, 0, 0], 0.55 * a);
+    let line = |cx: &mut Ctx, pts: &[(f32, f32)], width: f32| {
+        let mut pb = PathBuilder::new();
+        for (i, (px, py)) in pts.iter().enumerate() {
+            if i == 0 { pb.move_to(*px, *py) } else { pb.line_to(*px, *py) }
+        }
+        if let Some(p) = pb.finish() {
+            cx.stroke(&p, w, width);
+        }
+    };
+    match kind {
+        AppKind::Generic => return false,
+        AppKind::Game => {
+            cx.rrect(rect(x - 10.0, y - 5.5, 20.0, 12.0), 6.0, w);
+            cx.rrect(rect(x - 6.5, y - 0.8, 6.0, 1.8), 0.9, dark);
+            cx.rrect(rect(x - 4.5, y - 2.8, 1.8, 6.0), 0.9, dark);
+            cx.circle(x + 4.0, y - 1.5, 1.5, dark);
+            cx.circle(x + 7.0, y + 1.5, 1.5, dark);
+        }
+        AppKind::Browser => {
+            if let Some(p) = PathBuilder::from_circle(x, y, 8.0) {
+                cx.stroke(&p, w, 1.7);
+            }
+            if let Some(p) = tiny_skia::Rect::from_xywh(x - 3.5, y - 8.0, 7.0, 16.0).and_then(PathBuilder::from_oval) {
+                cx.stroke(&p, w, 1.4);
+            }
+            line(cx, &[(x - 8.0, y), (x + 8.0, y)], 1.4);
+        }
+        AppKind::Terminal => {
+            line(cx, &[(x - 7.0, y - 4.5), (x - 1.5, y), (x - 7.0, y + 4.5)], 2.0);
+            cx.rrect(rect(x + 1.0, y + 3.5, 7.0, 2.0), 1.0, w);
+        }
+        AppKind::Music => {
+            cx.circle(x - 3.0, y + 5.0, 3.4, w);
+            cx.rrect(rect(x - 0.5, y - 8.0, 2.0, 13.0), 1.0, w);
+            cx.rrect(rect(x - 0.5, y - 8.0, 7.0, 3.0), 1.5, w);
+        }
+        AppKind::Video => cx.triangle([(x - 4.5, y - 7.0), (x - 4.5, y + 7.0), (x + 7.5, y)], w),
+        AppKind::Code => cx.t("</>", x, y + 4.5, 13.0, w, Align::Center),
+        AppKind::Office => {
+            if let Some(p) = rrect(x - 6.0, y - 8.0, 12.0, 16.0, 2.5) {
+                cx.stroke(&p, w, 1.6);
+            }
+            for dy in [-3.0, 0.5, 4.0] {
+                cx.rrect(rect(x - 3.0, y + dy, 6.0, 1.4), 0.7, w);
+            }
+        }
+        AppKind::Files => {
+            cx.rrect(rect(x - 9.0, y - 7.0, 8.0, 5.0), 2.0, w);
+            cx.rrect(rect(x - 9.0, y - 4.5, 18.0, 12.0), 3.0, w);
+        }
+        AppKind::Settings => {
+            if let Some(p) = PathBuilder::from_circle(x, y, 5.5) {
+                cx.stroke(&p, w, 2.2);
+            }
+            for (dx, dy) in [(0.0, -8.5), (0.0, 8.5), (-8.5, 0.0), (8.5, 0.0)] {
+                cx.circle(x + dx, y + dy, 1.5, w);
+            }
+        }
+        AppKind::Chat => {
+            cx.rrect(rect(x - 9.0, y - 7.5, 18.0, 12.5), 4.5, w);
+            cx.triangle([(x - 5.0, y + 4.0), (x - 1.0, y + 4.0), (x - 6.0, y + 9.0)], w);
+        }
+        AppKind::Graphics => {
+            cx.triangle([(x - 9.0, y + 7.0), (x - 2.0, y - 5.0), (x + 4.0, y + 7.0)], w);
+            cx.circle(x + 5.0, y - 4.5, 2.6, w);
+        }
+    }
+    true
+}
+
+/// City row shared by the Weather and Settings pages; becomes a text field while typing.
+fn draw_location_row(cx: &mut Ctx, notch: &Notch, rc: Rect, a: f32) {
+    let h = rc.h;
+    match notch.location_input() {
+        Some(input) => {
+            cx.rrect(rc, h / 2.0, color(WHITE, 0.14 * a));
+            if input.is_empty() {
+                cx.t("City name, then Enter", rc.x + 16.0, rc.y + h * 0.68, 14.0, color(GRAY, 0.9 * a), Align::Left);
+                cx.rrect(rect(rc.x + 14.0, rc.y + 6.0, 1.6, h - 12.0), 0.8, color(WHITE, a));
+            } else {
+                let mut shown = input;
+                while shown.chars().count() > 1 && cx.text_width(shown, 15.0) > rc.w - 36.0 {
+                    shown = &shown[shown.chars().next().map_or(1, char::len_utf8)..];
+                }
+                cx.t(shown, rc.x + 16.0, rc.y + h * 0.7, 15.0, color(WHITE, a), Align::Left);
+                let cxp = rc.x + 16.0 + cx.text_width(shown, 15.0) + 1.0;
+                cx.rrect(rect(cxp, rc.y + 6.0, 1.6, h - 12.0), 0.8, color(WHITE, a));
+            }
+        }
+        None => {
+            cx.rrect(rc, h / 2.0, color(WHITE, 0.07 * a));
+            // Map pin: ring with a point below.
+            let (px, py) = (rc.x + 17.0, rc.y + h / 2.0 - 1.5);
+            if let Some(p) = PathBuilder::from_circle(px, py, 4.5) {
+                cx.stroke(&p, color(GRAY, a), 1.6);
+            }
+            cx.triangle([(px - 3.6, py + 3.0), (px + 3.6, py + 3.0), (px, py + 9.0)], color(GRAY, a));
+            let (label, tint) = match (notch.location_note(), notch.settings().weather_city.as_deref()) {
+                (Some(note), _) => (note.to_string(), ORANGE),
+                (None, Some(city)) => (city.to_string(), WHITE),
+                (None, None) => ("Set location".to_string(), GRAY),
+            };
+            let label = cx.fit(&label, 15.0, rc.w - 90.0);
+            cx.t(&label, rc.x + 34.0, rc.y + h * 0.7, 15.0, color(tint, a), Align::Left);
+            cx.t("Change", rc.x + rc.w - 14.0, rc.y + h * 0.7, 12.0, color(GRAY, 0.8 * a), Align::Right);
+        }
+    }
 }

@@ -48,6 +48,9 @@ pub enum Event {
     Apps(Arc<Vec<App>>),
     /// Global hotkey pressed.
     TogglePalette,
+    AppIcon { target: String, art: Option<Arc<Art>> },
+    /// Result of a city lookup: display name, latitude, longitude.
+    Geocode(Option<(String, f32, f32)>),
     Weather(Option<crate::Weather>),
     Update(crate::UpdateStatus),
     Network { online: bool },

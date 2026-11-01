@@ -100,6 +100,8 @@ pub struct Notch {
     lyrics_open: bool,
     todos: Vec<Todo>,
     shelf: Vec<String>,
+    location_input: Option<String>,
+    location_note: Option<String>,
     shelf_dirty: bool,
     weather: Option<Weather>,
     update: UpdateStatus,
@@ -139,6 +141,8 @@ impl Notch {
             lyrics_open: false,
             todos: Vec::new(),
             shelf: Vec::new(),
+            location_input: None,
+            location_note: None,
             shelf_dirty: false,
             weather: None,
             update: UpdateStatus::Idle,
@@ -192,6 +196,19 @@ impl Notch {
             Event::Hud(Hud::CapsLock(on)) => self.alert(Alert::CapsLock(on)),
             Event::Hud(Hud::Language(l)) => self.alert(Alert::Language(l)),
             Event::Weather(w) => self.weather = w,
+            Event::AppIcon { target, art } => self.palette.set_icon(target, art),
+            Event::Geocode(found) => match found {
+                Some((city, lat, lon)) => {
+                    self.location_note = None;
+                    self.weather = None;
+                    self.update_settings(|s| {
+                        s.weather_city = Some(city);
+                        s.weather_lat = Some(lat);
+                        s.weather_lon = Some(lon);
+                    });
+                }
+                None => self.location_note = Some("City not found".into()),
+            },
             Event::Update(u) => self.update = u,
             Event::Network { online } => {
                 // The first report is the starting state, not a change.
@@ -348,6 +365,25 @@ impl Notch {
         self.lyrics_open = !self.lyrics_open;
     }
 
+    pub fn location_input(&self) -> Option<&str> {
+        self.location_input.as_deref()
+    }
+
+    pub fn location_note(&self) -> Option<&str> {
+        self.location_note.as_deref()
+    }
+
+    pub fn begin_location_input(&mut self) {
+        self.touch();
+        self.location_note = None;
+        self.location_input = Some(String::new());
+    }
+
+    /// Apps whose icons should be loaded for the visible launcher results.
+    pub fn take_icon_requests(&mut self) -> Vec<crate::App> {
+        self.palette.take_icon_requests()
+    }
+
     pub fn shelf(&self) -> &[String] {
         &self.shelf
     }
@@ -460,13 +496,13 @@ impl Notch {
 
     /// True while typing goes to the launcher or the to-do field.
     pub fn keyboard_active(&self) -> bool {
-        self.palette_open || self.todo_input.is_some()
+        self.palette_open || self.todo_input.is_some() || self.location_input.is_some()
     }
 
     pub fn key_text(&mut self, s: &str) {
         if self.palette_open {
             self.palette.type_text(s);
-        } else if let Some(i) = &mut self.todo_input {
+        } else if let Some(i) = self.todo_input.as_mut().or(self.location_input.as_mut()) {
             i.extend(s.chars().filter(|c| !c.is_control()));
         }
     }
@@ -474,7 +510,7 @@ impl Notch {
     pub fn key_backspace(&mut self) {
         if self.palette_open {
             self.palette.backspace();
-        } else if let Some(i) = &mut self.todo_input {
+        } else if let Some(i) = self.todo_input.as_mut().or(self.location_input.as_mut()) {
             i.pop();
         }
     }
@@ -488,7 +524,7 @@ impl Notch {
     pub fn key_escape(&mut self) {
         if self.palette_open {
             self.close_palette();
-        } else if self.todo_input.take().is_some() {
+        } else if self.todo_input.take().is_some() || self.location_input.take().is_some() {
             self.leave_left = Some(HOVER_CLOSE_DELAY);
         }
     }
@@ -496,6 +532,13 @@ impl Notch {
     pub fn key_enter(&mut self) -> Outcome {
         if self.palette_open {
             return self.palette_activate();
+        }
+        if let Some(q) = self.location_input.take() {
+            self.leave_left = Some(HOVER_CLOSE_DELAY);
+            if !q.trim().is_empty() {
+                return Outcome::Geocode(q.trim().to_string());
+            }
+            return Outcome::None;
         }
         if let Some(input) = self.todo_input.take() {
             if let Some(task) = parse_task(&input) {
@@ -727,7 +770,7 @@ impl Notch {
     }
 
     pub fn hover(&mut self, inside: bool) {
-        if self.hidden || self.palette_open || self.todo_input.is_some() {
+        if self.hidden || self.palette_open || self.todo_input.is_some() || self.location_input.is_some() {
             return;
         }
         if inside {

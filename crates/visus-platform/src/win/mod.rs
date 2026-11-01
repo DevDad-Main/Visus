@@ -9,6 +9,14 @@ mod network;
 mod window;
 
 pub use apps::{launch, open_path, open_url, screenshot};
+
+/// Loads an app's icon off-thread and reports it as an event (None when the shell has none).
+pub fn request_icon(app: visus_core::App, emit: crate::Emit) {
+    std::thread::spawn(move || {
+        let art = apps::load_icon(&app);
+        emit(visus_core::Event::AppIcon { target: app.target, art });
+    });
+}
 pub use autostart::{autostart_enabled, set_autostart};
 pub use media::media_command;
 pub use window::{cursor_pos, prepare_window, set_focusable, set_window_region};

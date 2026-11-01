@@ -3,6 +3,14 @@ use visus_platform::Emit;
 
 use crate::updater;
 
+/// Asks the platform for icons of launcher results that do not have one yet.
+pub fn request_icons(notch: &mut visus_core::Notch, emit: Option<&Emit>) {
+    let Some(emit) = emit else { return };
+    for app in notch.take_icon_requests() {
+        visus_platform::request_icon(app, emit.clone());
+    }
+}
+
 /// Performs what a confirmed result asks of the OS; returns true when the app should quit.
 pub fn run(outcome: Outcome, emit: Option<&Emit>) -> bool {
     match outcome {
@@ -19,6 +27,11 @@ pub fn run(outcome: Outcome, emit: Option<&Emit>) -> bool {
         Outcome::InstallUpdate => {
             if let Some(e) = emit {
                 updater::install(e.clone());
+            }
+        }
+        Outcome::Geocode(q) => {
+            if let Some(e) = emit {
+                crate::weather::geocode(q, e.clone());
             }
         }
         Outcome::Quit => return true,

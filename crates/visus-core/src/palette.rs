@@ -1,14 +1,69 @@
 //! Quick launcher / command palette: search state, ranking and a tiny calculator.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::Page;
 
 pub const MAX_RESULTS: usize = 5;
 
-#[derive(Clone, Debug, PartialEq)]
+/// Rough category used to pick a fallback icon when an app has none of its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AppKind {
+    #[default]
+    Generic,
+    Game,
+    Browser,
+    Terminal,
+    Music,
+    Video,
+    Code,
+    Office,
+    Files,
+    Settings,
+    Chat,
+    Graphics,
+}
+
+/// Guesses an app's category from freedesktop `Categories=` (may be empty) and its name.
+pub fn guess_kind(name: &str, categories: &str) -> AppKind {
+    let c = categories.to_lowercase();
+    let n = name.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
+    let cat = |words: &[&str]| words.iter().any(|w| c.contains(w));
+    if cat(&["game"]) || has(&["steam", "game", "epic", "battle.net", "riot", "minecraft", "launcher"]) {
+        AppKind::Game
+    } else if cat(&["webbrowser"]) || has(&["chrome", "firefox", "edge", "brave", "opera", "browser", "vivaldi"]) {
+        AppKind::Browser
+    } else if cat(&["terminalemulator"]) || has(&["terminal", "powershell", "cmd", "konsole", "alacritty", "wezterm", "kitty"]) {
+        AppKind::Terminal
+    } else if cat(&["instantmessaging", "chat"]) || has(&["discord", "telegram", "slack", "teams", "whatsapp", "signal"]) {
+        AppKind::Chat
+    } else if cat(&["video"]) || has(&["vlc", "mpv", "video", "movies", "netflix"]) {
+        AppKind::Video
+    } else if cat(&["audio", "music"]) || has(&["spotify", "music", "foobar", "audacity"]) {
+        AppKind::Music
+    } else if cat(&["development", "texteditor"]) || has(&["code", "studio", "vim", "intellij", "pycharm", "rider", "sublime", "notepad"]) {
+        AppKind::Code
+    } else if cat(&["office"]) || has(&["word", "excel", "powerpoint", "office", "onenote", "outlook"]) {
+        AppKind::Office
+    } else if cat(&["filemanager"]) || has(&["explorer", "nautilus", "dolphin", "thunar"]) {
+        AppKind::Files
+    } else if cat(&["settings", "system"]) || has(&["settings", "control panel"]) {
+        AppKind::Settings
+    } else if cat(&["graphics"]) || has(&["photoshop", "gimp", "krita", "blender", "figma", "inkscape", "paint"]) {
+        AppKind::Graphics
+    } else {
+        AppKind::Generic
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct App {
     pub name: String,
+    /// Icon theme name or file path (Linux); empty when the platform finds it from `target`.
+    pub icon: String,
+    pub kind: AppKind,
     /// What the platform needs to start it (shortcut path on Windows, command line on Linux).
     pub target: String,
 }
@@ -47,12 +102,15 @@ pub struct Item {
     pub kind: Kind,
     /// None for informational rows such as a calculator result.
     pub action: Option<Action>,
+    /// Set for application rows so the icon can be looked up.
+    pub app: Option<App>,
 }
 
 /// What the host must do after the user confirms a result.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
     None,
+    Geocode(String),
     Launch(String),
     OpenUrl(String),
     OpenPath(String),
@@ -68,6 +126,8 @@ pub struct Palette {
     pub selected: usize,
     pub results: Vec<Item>,
     apps: Arc<Vec<App>>,
+    icons: HashMap<String, Option<Arc<crate::Art>>>,
+    requested: HashSet<String>,
 }
 
 fn visus_commands() -> Vec<(&'static str, &'static str, Command)> {
@@ -91,6 +151,27 @@ fn visus_commands() -> Vec<(&'static str, &'static str, Command)> {
 }
 
 impl Palette {
+    /// A loaded icon for an app result, if one was found.
+    pub fn icon_for(&self, item: &Item) -> Option<&Arc<crate::Art>> {
+        let app = item.app.as_ref()?;
+        self.icons.get(&app.target)?.as_ref()
+    }
+
+    pub fn set_icon(&mut self, target: String, art: Option<Arc<crate::Art>>) {
+        self.icons.insert(target, art);
+    }
+
+    /// Apps in the current results whose icons have not been requested yet.
+    pub fn take_icon_requests(&mut self) -> Vec<App> {
+        let mut out = Vec::new();
+        for app in self.results.iter().filter_map(|i| i.app.as_ref()) {
+            if !self.icons.contains_key(&app.target) && self.requested.insert(app.target.clone()) {
+                out.push(app.clone());
+            }
+        }
+        out
+    }
+
     pub fn set_apps(&mut self, apps: Arc<Vec<App>>) {
         self.apps = apps;
         self.refresh();
@@ -162,28 +243,28 @@ pub fn search(query: &str, apps: &[App]) -> Vec<Item> {
         return visus_commands()
             .into_iter()
             .take(MAX_RESULTS)
-            .map(|(t, s, c)| Item { title: t.into(), subtitle: s.into(), kind: Kind::Visus, action: Some(Action::Command(c)) })
+            .map(|(t, s, c)| Item { title: t.into(), subtitle: s.into(), kind: Kind::Visus, action: Some(Action::Command(c)), app: None })
             .collect();
     }
 
     if let Some(v) = eval_expression(q) {
-        out.push(Item { title: format_number(v), subtitle: format!("{q} ="), kind: Kind::Calc, action: None });
+        out.push(Item { title: format_number(v), subtitle: format!("{q} ="), kind: Kind::Calc, action: None, app: None });
     }
     if looks_like_url(q) {
         let url = if q.contains("://") { q.to_string() } else { format!("https://{q}") };
-        out.push(Item { title: format!("Open {q}"), subtitle: "Web address".into(), kind: Kind::Web, action: Some(Action::OpenUrl(url)) });
+        out.push(Item { title: format!("Open {q}"), subtitle: "Web address".into(), kind: Kind::Web, action: Some(Action::OpenUrl(url)), app: None });
     }
 
     let mut scored: Vec<(i32, Item)> = Vec::new();
     for app in apps {
         if let Some(s) = score(&app.name.to_lowercase(), &lower) {
-            scored.push((s, Item { title: app.name.clone(), subtitle: "Application".into(), kind: Kind::App, action: Some(Action::Launch(app.target.clone())) }));
+            scored.push((s, Item { title: app.name.clone(), subtitle: "Application".into(), kind: Kind::App, action: Some(Action::Launch(app.target.clone())), app: Some(app.clone()) }));
         }
     }
     for (title, sub, cmd) in visus_commands() {
         if let Some(s) = score(&title.to_lowercase(), &lower) {
             // Slight bias so a Visus command does not bury an exact app match.
-            scored.push((s - 20, Item { title: title.into(), subtitle: sub.into(), kind: Kind::Visus, action: Some(Action::Command(cmd)) }));
+            scored.push((s - 20, Item { title: title.into(), subtitle: sub.into(), kind: Kind::Visus, action: Some(Action::Command(cmd)), app: None }));
         }
     }
     scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.title.len().cmp(&b.1.title.len())));
@@ -201,6 +282,7 @@ pub fn search(query: &str, apps: &[App]) -> Vec<Item> {
             subtitle: "DuckDuckGo".into(),
             kind: Kind::Web,
             action: Some(Action::OpenUrl(format!("https://duckduckgo.com/?q={encoded}"))),
+            app: None,
         });
     }
     out.truncate(MAX_RESULTS);
@@ -322,7 +404,7 @@ mod tests {
     fn apps() -> Vec<App> {
         ["Firefox", "Files", "Visual Studio Code", "Spotify"]
             .iter()
-            .map(|n| App { name: n.to_string(), target: format!("run-{n}") })
+            .map(|n| App { name: n.to_string(), target: format!("run-{n}"), ..Default::default() })
             .collect()
     }
 

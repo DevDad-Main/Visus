@@ -65,6 +65,7 @@ pub struct Settings {
     /// Weather is only fetched once a location is set (latitude/longitude in degrees).
     pub weather_lat: Option<f32>,
     pub weather_lon: Option<f32>,
+    pub weather_city: Option<String>,
     pub eye_iris: Rgb,
     pub eye_sclera: Rgb,
 }
@@ -97,6 +98,7 @@ impl Default for Settings {
             eye_style: EyeStyle::Classic,
             weather_lat: None,
             weather_lon: None,
+            weather_city: None,
             eye_iris: Rgb([40, 110, 230]),
             eye_sclera: Rgb([255, 255, 255]),
         }
