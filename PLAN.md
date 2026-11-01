@@ -68,6 +68,7 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 - Pages (wheel/arrow keys): Music (title/artist/progress/transport, lyrics toggle), Timer (Pomodoro),
   Stats (CPU, memory, network). Shelf and To-do are "Coming soon".
 - Synced lyrics from LRCLIB shown in a split pane (current line highlighted).
+- Album art from SMTC thumbnails (Windows) and MPRIS `artUrl` (Linux); gradient placeholder otherwise.
 - Alert peeks: charger plugged/unplugged, Caps Lock, volume (Windows), timer done.
 - Idle eye: almond eye with iris, blinks (irregular, sometimes double), glances around, follows the
   cursor (Windows via `GetCursorPos`, Hyprland via IPC), dozes off with "zz".
@@ -82,7 +83,7 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 
 - Windows code is verified to compile in CI but has had little hands-on testing: check click-through,
   transparency, tray, media controls, charger and volume HUDs on a real machine.
-- No album art (gradient placeholder). Wi-Fi and Bluetooth peeks missing. No brightness/language HUDs.
+- Wi-Fi and Bluetooth peeks missing. No brightness/language HUDs.
 - Lyrics: no click-to-seek, no disk cache. Position is extrapolated between player updates.
 - No settings window yet (tray menu on Windows, hand-edit `settings.json` elsewhere). No tray on Linux.
 - Linux layer-shell uses integer scaling only; the eye only tracks the cursor under Hyprland.
@@ -93,8 +94,14 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 ## Roadmap
 
 1. Windows hands-on fixes from real-machine testing.
-2. To-do page with reminders (text entry), File shelf (drag & drop), album art from SMTC/MPRIS.
-3. Settings window (sizes, colours, pages, eye style) replacing hand-editing.
+2. Keyboard-input subsystem (focusable on demand: Windows drops `WS_EX_NOACTIVATE` while typing,
+   Wayland layer-shell `OnDemand` + wl_keyboard) -> enables To-do with reminders and the quick
+   launcher / command palette (not started; needs this first). Then File shelf (drag & drop).
+3. Settings window (sizes, colours, pages, eye style) replacing hand-editing, with an **auto-updater**:
+   "Check for updates" queries the GitHub Releases API (`/repos/DevDad-Main/Visus/releases/latest`),
+   compares semver with the running version, downloads `Visus-windows-x64.zip`, verifies the published
+   SHA-256 (`Visus.exe.sha256`), swaps the exe (rename running exe, place new one, relaunch) and
+   offers rollback. Prereleases only when the user opts in. Network use stays opt-in and manual.
 4. Wi-Fi and Bluetooth peeks, brightness and keyboard-language HUDs.
 5. Eye styles: "Sauron" eye with fiery glow and searchlight sweep; selectable in settings.
 6. Visus extras: calendar, weather, notifications center, launcher, capture shortcuts.
