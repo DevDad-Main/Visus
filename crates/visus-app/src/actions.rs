@@ -12,7 +12,7 @@ pub fn request_icons(notch: &mut visus_core::Notch, emit: Option<&Emit>) {
 }
 
 /// Performs what a confirmed result asks of the OS; returns true when the app should quit.
-pub fn run(outcome: Outcome, emit: Option<&Emit>) -> bool {
+pub fn run(outcome: Outcome, emit: Option<&Emit>, folders: &[String]) -> bool {
     match outcome {
         Outcome::None => {}
         Outcome::Launch(t) => visus_platform::launch(&t),
@@ -32,6 +32,12 @@ pub fn run(outcome: Outcome, emit: Option<&Emit>) -> bool {
         Outcome::Geocode(q) => {
             if let Some(e) = emit {
                 crate::weather::geocode(q, e.clone());
+            }
+        }
+        Outcome::Rescan => {
+            visus_platform::set_app_folders(folders.to_vec());
+            if let Some(e) = emit {
+                visus_platform::rescan_apps(e.clone());
             }
         }
         Outcome::Quit => return true,

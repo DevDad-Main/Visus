@@ -71,6 +71,7 @@ pub struct App {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     ShowPage(Page),
+    OpenSettings,
     ToggleTimer,
     ResetTimer,
     ToggleMinimal,
@@ -114,6 +115,8 @@ pub enum Outcome {
     Launch(String),
     OpenUrl(String),
     OpenPath(String),
+    /// App folders changed; rebuild the launcher's app list.
+    Rescan,
     Screenshot,
     CheckUpdates,
     InstallUpdate,
@@ -139,7 +142,7 @@ fn visus_commands() -> Vec<(&'static str, &'static str, Command)> {
         ("Open Shelf", "Show shelved files", Command::ShowPage(Page::Shelf)),
         ("Open Calendar", "Show this month", Command::ShowPage(Page::Calendar)),
         ("Open Weather", "Show current conditions", Command::ShowPage(Page::Weather)),
-        ("Open Settings", "Sizes, eye, updates", Command::ShowPage(Page::Settings)),
+        ("Open Settings", "Sizes, eye, updates", Command::OpenSettings),
         ("Take screenshot", "Select an area to capture", Command::Screenshot),
         ("Check for updates", "Look for a newer Visus", Command::CheckUpdates),
         ("Start or pause focus timer", "Pomodoro", Command::ToggleTimer),

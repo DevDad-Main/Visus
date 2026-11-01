@@ -31,6 +31,17 @@ pub fn start(emit: Emit) {
     std::thread::spawn(move || emit(visus_core::Event::Apps(std::sync::Arc::new(apps::list()))));
 }
 
+/// Rebuilds the app list (after the user changes search folders) and reports it.
+pub fn rescan_apps(emit: crate::Emit) {
+    std::thread::spawn(move || emit(visus_core::Event::Apps(std::sync::Arc::new(apps::list()))));
+}
+
+/// Drive roots present on this PC, e.g. `C:\`, `D:\`.
+pub fn list_drives() -> Vec<String> {
+    let mask = unsafe { windows::Win32::Storage::FileSystem::GetLogicalDrives() };
+    (0..26u8).filter(|i| mask >> i & 1 == 1).map(|i| format!("{}:\\", (b'A' + i) as char)).collect()
+}
+
 /// True when another Visus holds the single-instance mutex (this process takes it otherwise).
 pub fn already_running() -> bool {
     use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};

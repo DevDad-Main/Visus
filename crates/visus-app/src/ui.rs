@@ -36,6 +36,12 @@ pub enum Button {
     Style(u8),
     Update,
     Location,
+    SettingsOpen,
+    SettingsClose,
+    EyeTime(i8),
+    DriveToggle(u8),
+    FolderRemove(usize),
+    FolderAdd,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +65,7 @@ pub fn buttons(notch: &Notch) -> Vec<(Button, Rect)> {
     let (x0, cx) = (s.rect.x, s.rect.x + s.rect.w / 2.0);
     let mut btns = page_buttons(notch, x0, cx);
     btns.push((Button::Palette, rect(x0 + s.rect.w - 76.0, 10.0, 44.0, 36.0)));
+    btns.push((Button::SettingsOpen, rect(x0 + s.rect.w - 124.0, 10.0, 44.0, 36.0)));
     btns
 }
 
@@ -191,7 +198,6 @@ fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
         Page::Timer => timer_buttons(x0),
         Page::Todo => todo_buttons(notch, x0),
         Page::Shelf => shelf_buttons(notch, x0),
-        Page::Settings => settings_buttons(x0),
         Page::Weather => vec![(Button::Location, rect(x0 + 36.0, 204.0, 300.0, 30.0))],
         _ => Vec::new(),
     }
@@ -253,11 +259,13 @@ struct Ctx<'a> {
     scale: f32,
     /// Physical-pixel x offset so scaling happens around the pill's centre line.
     ox: f32,
+    /// Physical-pixel y offset; lets popup content reuse page-style coordinates.
+    oy: f32,
 }
 
 impl Ctx<'_> {
     fn xf(&self) -> Transform {
-        Transform::from_row(self.scale, 0.0, 0.0, self.scale, self.ox, 0.0)
+        Transform::from_row(self.scale, 0.0, 0.0, self.scale, self.ox, self.oy)
     }
 
     fn paint(c: [u8; 4]) -> Paint<'static> {
@@ -312,7 +320,7 @@ impl Ctx<'_> {
 
     fn t(&mut self, s: &str, x: f32, y: f32, px: f32, c: [u8; 4], align: Align) {
         let k = self.scale;
-        self.text.draw(self.pm, s, x * k + self.ox, y * k, px * k, c, align);
+        self.text.draw(self.pm, s, x * k + self.ox, y * k + self.oy, px * k, c, align);
     }
 
     fn text_width(&self, s: &str, px: f32) -> f32 {
@@ -356,7 +364,7 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     let shape = notch.shape();
     let user = notch.settings().scale;
     let centre = shape.rect.x + shape.rect.w / 2.0;
-    let mut cx = Ctx { pm, text, scale: scale * user, ox: centre * (1.0 - user) * scale };
+    let mut cx = Ctx { pm, text, scale: scale * user, ox: centre * (1.0 - user) * scale, oy: 0.0 };
 
     if let Some(path) = pill_path(&shape) {
         cx.fill(&path, [0, 0, 0, 255]);
@@ -382,6 +390,7 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
         draw_open(&mut cx, notch, open_a);
     }
     draw_palette(&mut cx, notch);
+    draw_settings_panel(&mut cx, notch);
 }
 
 /// An almond-shaped eye with iris, pupil and highlight; blinks, looks around and dozes off.
@@ -608,6 +617,7 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
     let header = format!("{}  {}", now.format("%a %-d %b %Y"), now.format("%H:%M"));
     cx.t(&header, mid, 44.0, 22.0, color(WHITE, a), Align::Center);
     magnifier(cx, r.x + r.w - 62.0, 25.0, color(WHITE, 0.85 * a));
+    gear(cx, r.x + r.w - 102.0, 25.0, color(WHITE, 0.85 * a));
 
     match notch.page {
         Page::Music => draw_music(cx, notch, a),
@@ -617,7 +627,6 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
         Page::Shelf => draw_shelf(cx, notch, a),
         Page::Calendar => draw_calendar(cx, notch, a),
         Page::Weather => draw_weather(cx, notch, a),
-        Page::Settings => draw_settings(cx, notch, a),
     }
 
     let n = Page::ALL.len() as f32;
@@ -832,7 +841,8 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
         }
         return Outcome::None;
     }
-    for (b, r) in buttons(notch) {
+    let list = if notch.settings_is_open() { settings_buttons(notch) } else { buttons(notch) };
+    for (b, r) in list {
         if !r.contains(x, y) {
             continue;
         }
@@ -868,6 +878,20 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
             Button::EyeColour(i) => notch.update_settings(|s| s.eye_iris = Rgb(EYE_COLOURS[i as usize % EYE_COLOURS.len()])),
             Button::Style(i) => notch.update_settings(|s| s.eye_style = if i == 0 { EyeStyle::Classic } else { EyeStyle::Sauron }),
             Button::Location => notch.begin_location_input(),
+            Button::SettingsOpen => notch.open_settings(),
+            Button::SettingsClose => notch.close_settings(),
+            Button::EyeTime(d) => notch.adjust_eye_delay(d as i32),
+            Button::DriveToggle(i) => {
+                if let Some(d) = visus_platform::list_drives().get(i as usize) {
+                    notch.toggle_app_folder(d);
+                    return Outcome::Rescan;
+                }
+            }
+            Button::FolderRemove(i) => {
+                notch.remove_app_folder(i);
+                return Outcome::Rescan;
+            }
+            Button::FolderAdd => notch.begin_folder_input(),
             Button::Update => {
                 return match notch.update_status() {
                     UpdateStatus::Available { .. } => {
@@ -916,8 +940,8 @@ pub fn hit_rect(notch: &Notch) -> Rect {
     let half = s.rect.w / 2.0 + f;
     let pill = Rect { x: centre - half * k, y: 0.0, w: half * 2.0 * k, h: s.rect.h * k };
     // While the launcher is visible the panel is part of the interactive area too.
-    let Some(layout) = palette_layout(notch) else { return pill };
-    let p = layout.panel;
+    let extra = palette_layout(notch).map(|l| l.panel).or_else(|| settings_panel(notch));
+    let Some(p) = extra else { return pill };
     let (px, pw) = (centre + (p.x - centre) * k, p.w * k);
     let (x, right) = (pill.x.min(px), (pill.x + pill.w).max(px + pw));
     Rect { x, y: 0.0, w: right - x, h: (p.y + p.h) * k }
@@ -1162,6 +1186,11 @@ pub fn region_rect(notch: &Notch) -> Rect {
         right = right.max(centre + PANEL_W / 2.0 * k);
         bottom = bottom.max((th + 10.0 + full) * k);
     }
+    if notch.settings_is_open() || notch.settings_progress() > 0.01 {
+        left = left.min(centre - SETTINGS_W / 2.0 * k);
+        right = right.max(centre + SETTINGS_W / 2.0 * k);
+        bottom = bottom.max((th + 10.0 + SETTINGS_H) * k);
+    }
     Rect { x: left, y: 0.0, w: right - left, h: bottom }
 }
 
@@ -1278,7 +1307,7 @@ fn draw_weather(cx: &mut Ctx, notch: &Notch, a: f32) {
     draw_location_row(cx, notch, rect(r.x + 36.0, 204.0, 300.0, 30.0), a);
 }
 
-fn settings_buttons(x0: f32) -> Vec<(Button, Rect)> {
+fn settings_buttons_raw(x0: f32) -> Vec<(Button, Rect)> {
     let mut v = Vec::new();
     for (i, t) in [Toggle::Minimal, Toggle::Eye, Toggle::Fullscreen, Toggle::Autostart].into_iter().enumerate() {
         v.push((Button::Toggle(t), rect(x0 + 36.0, 58.0 + i as f32 * 30.0, 300.0, 28.0)));
@@ -1294,11 +1323,82 @@ fn settings_buttons(x0: f32) -> Vec<(Button, Rect)> {
     }
     v.push((Button::Location, rect(x0 + 36.0, 182.0, 300.0, 26.0)));
     v.push((Button::Update, rect(x0 + 36.0, 214.0, 130.0, 26.0)));
+    v.push((Button::SettingsClose, rect(x0 + SETTINGS_W - 56.0, 40.0, 36.0, 28.0)));
+    v.push((Button::EyeTime(-1), rect(x0 + 190.0, 250.0, 30.0, 26.0)));
+    v.push((Button::EyeTime(1), rect(x0 + 276.0, 250.0, 30.0, 26.0)));
+    for i in 0..visus_platform::list_drives().len().min(7) {
+        v.push((Button::DriveToggle(i as u8), rect(x0 + 380.0 + i as f32 * 52.0, 270.0, 46.0, 26.0)));
+    }
     v
 }
 
-fn draw_settings(cx: &mut Ctx, notch: &Notch, a: f32) {
-    let x0 = notch.shape().rect.x;
+const SETTINGS_W: f32 = 744.0;
+const SETTINGS_H: f32 = 348.0;
+
+/// Popup geometry in pill-logical coordinates; None while fully hidden.
+fn settings_panel(notch: &Notch) -> Option<Rect> {
+    let p = notch.settings_progress();
+    if p < 0.01 && !notch.settings_is_open() {
+        return None;
+    }
+    let s = notch.shape().rect;
+    let centre = s.x + s.w / 2.0;
+    let p = p.clamp(0.0, 1.04);
+    let w = SETTINGS_W * (0.75 + 0.25 * p.min(1.0));
+    Some(Rect { x: centre - w / 2.0, y: s.h + 10.0, w, h: SETTINGS_H * p })
+}
+
+/// Settings controls placed in the popup (page-style coordinates shifted below the pill).
+fn settings_buttons(notch: &Notch) -> Vec<(Button, Rect)> {
+    let s = notch.shape().rect;
+    let x0 = s.x + s.w / 2.0 - SETTINGS_W / 2.0;
+    let oy = s.h + 10.0 - 36.0;
+    let mut v = settings_buttons_raw(x0);
+    let s = notch.settings();
+    let (nf, shown) = (s.app_folders.len(), s.app_folders.len().min(2));
+    let _ = nf;
+    for i in 0..shown {
+        v.push((Button::FolderRemove(i), rect(x0 + 36.0 + 260.0, 298.0 + i as f32 * 26.0, 40.0, 24.0)));
+    }
+    v.push((Button::FolderAdd, rect(x0 + 36.0, 352.0, 300.0, 26.0)));
+    v.into_iter().map(|(b, mut r)| {
+        r.y += oy;
+        (b, r)
+    }).collect()
+}
+
+fn gear(cx: &mut Ctx, x: f32, y: f32, c: [u8; 4]) {
+    if let Some(p) = PathBuilder::from_circle(x, y, 5.0) {
+        cx.stroke(&p, c, 2.0);
+    }
+    for k in 0..6 {
+        let ang = k as f32 * std::f32::consts::FRAC_PI_3;
+        cx.circle(x + 8.2 * ang.cos(), y + 8.2 * ang.sin(), 1.6, c);
+    }
+}
+
+fn draw_settings_panel(cx: &mut Ctx, notch: &Notch) {
+    let Some(panel) = settings_panel(notch) else { return };
+    let p = notch.settings_progress().clamp(0.0, 1.0);
+    let ca = ((p - 0.5) / 0.5).clamp(0.0, 1.0);
+    for (grow, alpha) in [(12.0, 0.06), (4.0, 0.12)] {
+        cx.rrect(rect(panel.x - grow, panel.y - grow * 0.4, panel.w + 2.0 * grow, panel.h + 2.0 * grow), 30.0 + grow, color([0, 0, 0], alpha * p));
+    }
+    cx.rrect(panel, 28.0, color([0, 0, 0], p));
+    if let Some(path) = rrect(panel.x, panel.y, panel.w, panel.h, 28.0) {
+        cx.stroke(&path, color(WHITE, 0.09 * p), 1.0);
+    }
+    if ca <= 0.0 {
+        return;
+    }
+    let s = notch.shape().rect;
+    let x0 = s.x + s.w / 2.0 - SETTINGS_W / 2.0;
+    cx.oy = (s.h + 10.0 - 36.0) * cx.scale;
+    draw_settings(cx, notch, x0, ca);
+    cx.oy = 0.0;
+}
+
+fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
     let s = notch.settings();
     let autostart = visus_platform::autostart_enabled();
     let toggles = [("Minimal notch", s.minimal), ("Idle eye", s.mascot), ("Hide in full screen", s.hide_in_fullscreen), ("Start at login", autostart)];
@@ -1347,6 +1447,73 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, a: f32) {
     cx.t(&fitted, rc.x + 65.0, rc.y + 18.0, 13.0, color([0, 0, 0], a), Align::Center);
     let st = cx.fit(&format!("v{} {}", env!("CARGO_PKG_VERSION"), status), 12.0, 180.0);
     cx.t(&st, x0 + 176.0, 232.0, 12.0, color(GRAY, a), Align::Left);
+
+    // Close button.
+    let (kx, ky) = (x0 + SETTINGS_W - 38.0, 54.0);
+    let mut pb = PathBuilder::new();
+    pb.move_to(kx - 5.0, ky - 5.0);
+    pb.line_to(kx + 5.0, ky + 5.0);
+    pb.move_to(kx + 5.0, ky - 5.0);
+    pb.line_to(kx - 5.0, ky + 5.0);
+    if let Some(p) = pb.finish() {
+        cx.stroke(&p, color(GRAY, a), 1.8);
+    }
+
+    // Eye delay.
+    cx.t("Eye appears after", x0 + 36.0, 269.0, 17.0, color(WHITE, a), Align::Left);
+    for (dx, plus) in [(190.0, false), (276.0, true)] {
+        let rc = rect(x0 + dx, 250.0, 30.0, 26.0);
+        cx.rrect(rc, 13.0, color(WHITE, 0.12 * a));
+        let (mx, my) = (rc.x + 15.0, rc.y + 13.0);
+        cx.rrect(rect(mx - 5.0, my - 1.0, 10.0, 2.0), 1.0, color(WHITE, a));
+        if plus {
+            cx.rrect(rect(mx - 1.0, my - 5.0, 2.0, 10.0), 1.0, color(WHITE, a));
+        }
+    }
+    let secs = s.idle_secs;
+    let value = if secs >= 60 { format!("{} min", secs / 60) } else { format!("{secs} s") };
+    cx.t(&value, x0 + 248.0, 269.0, 16.0, color(WHITE, a), Align::Center);
+
+    // Drives and folders the launcher searches besides the Start Menu.
+    cx.t("Search drives for apps", x0 + 380.0, 262.0, 14.0, color(GRAY, a), Align::Left);
+    for (i, d) in visus_platform::list_drives().iter().take(7).enumerate() {
+        let on = s.app_folders.iter().any(|f| f == d);
+        let rc = rect(x0 + 380.0 + i as f32 * 52.0, 270.0, 46.0, 26.0);
+        cx.rrect(rc, 13.0, if on { color(GREEN, 0.9 * a) } else { color(WHITE, 0.12 * a) });
+        cx.t(d.trim_end_matches('\\'), rc.x + 23.0, rc.y + 18.0, 14.0, if on { color([0, 0, 0], a) } else { color(WHITE, a) }, Align::Center);
+    }
+    cx.t("Scans up to 3 folders deep", x0 + 380.0, 316.0, 12.0, color(GRAY, 0.8 * a), Align::Left);
+    cx.t("Extra app folders", x0 + 36.0, 292.0, 14.0, color(GRAY, a), Align::Left);
+    for (i, f) in s.app_folders.iter().take(2).enumerate() {
+        let y = 298.0 + i as f32 * 26.0;
+        let txt = cx.fit(f, 14.0, 240.0);
+        cx.t(&txt, x0 + 36.0, y + 17.0, 14.0, color(WHITE, a), Align::Left);
+        let (dx, dy) = (x0 + 36.0 + 280.0, y + 12.0);
+        let mut pb = PathBuilder::new();
+        pb.move_to(dx - 4.0, dy - 4.0);
+        pb.line_to(dx + 4.0, dy + 4.0);
+        pb.move_to(dx + 4.0, dy - 4.0);
+        pb.line_to(dx - 4.0, dy + 4.0);
+        if let Some(p) = pb.finish() {
+            cx.stroke(&p, color(GRAY, 0.8 * a), 1.6);
+        }
+    }
+    let field = rect(x0 + 36.0, 352.0, 300.0, 26.0);
+    match notch.folder_input() {
+        Some(input) => {
+            cx.rrect(field, 13.0, color(WHITE, 0.14 * a));
+            let (txt, ink) = if input.is_empty() { ("Folder path, then Enter", GRAY) } else { (input, WHITE) };
+            let mut shown = txt;
+            while shown.chars().count() > 1 && cx.text_width(shown, 14.0) > field.w - 30.0 {
+                shown = &shown[shown.chars().next().map_or(1, char::len_utf8)..];
+            }
+            cx.t(shown, field.x + 14.0, field.y + 18.0, 14.0, color(ink, a), Align::Left);
+        }
+        None => {
+            cx.rrect(field, 13.0, color(WHITE, 0.07 * a));
+            cx.t("+  Add folder", field.x + 14.0, field.y + 18.0, 14.0, color(GRAY, a), Align::Left);
+        }
+    }
 }
 
 fn kind_tint(kind: AppKind, name: &str) -> [u8; 3] {

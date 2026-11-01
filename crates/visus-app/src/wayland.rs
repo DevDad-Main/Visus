@@ -40,7 +40,7 @@ use visus_core::{Event, Notch, Outcome};
 use crate::{actions, events, lyrics, weather, stats, store, text::Text, ui};
 
 const WIN_W: u32 = 960;
-const WIN_H: u32 = 500;
+const WIN_H: u32 = 520;
 const FRAME: Duration = Duration::from_millis(16);
 const BTN_LEFT: u32 = 0x110;
 const SCROLL_STEP: f64 = 12.0;
@@ -244,7 +244,8 @@ impl State {
     }
 
     fn run_outcome(&mut self, outcome: Outcome) {
-        if actions::run(outcome, self.emit.as_ref()) {
+        let folders = self.notch.settings().app_folders.clone();
+        if actions::run(outcome, self.emit.as_ref(), &folders) {
             self.exit = true;
         }
     }

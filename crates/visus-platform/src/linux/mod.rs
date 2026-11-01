@@ -38,5 +38,15 @@ pub fn cursor_pos() -> Option<(i32, i32)> {
     None
 }
 
+/// Rebuilds the app list (after the user changes search folders) and reports it.
+pub fn rescan_apps(emit: crate::Emit) {
+    std::thread::spawn(move || emit(visus_core::Event::Apps(std::sync::Arc::new(apps::list()))));
+}
+
+/// Drive roots offered as search locations (Windows only).
+pub fn list_drives() -> Vec<String> {
+    Vec::new()
+}
+
 /// Windows-only: lets the notch take keyboard focus while the launcher is open.
 pub fn set_focusable(_hwnd: isize, _on: bool) {}

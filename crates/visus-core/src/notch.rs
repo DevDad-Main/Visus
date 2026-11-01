@@ -10,12 +10,10 @@ pub enum Page {
     Todo,
     Calendar,
     Weather,
-    Settings,
 }
 
 impl Page {
-    pub const ALL: [Page; 8] =
-        [Page::Music, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Calendar, Page::Weather, Page::Settings];
+    pub const ALL: [Page; 7] = [Page::Music, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Calendar, Page::Weather];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,6 +109,9 @@ pub struct Notch {
     palette: Palette,
     palette_open: bool,
     palette_anim: Spring,
+    settings_open: bool,
+    settings_anim: Spring,
+    folder_input: Option<String>,
     dirty: bool,
     last_activity: Instant,
     look_x: Spring,
@@ -153,6 +154,9 @@ impl Notch {
             palette: Palette::default(),
             palette_open: false,
             palette_anim: Spring::new(0.0),
+            settings_open: false,
+            settings_anim: Spring::new(0.0),
+            folder_input: None,
             dirty: false,
             last_activity: Instant::now(),
             look_x: Spring::new(0.0),
@@ -228,7 +232,7 @@ impl Notch {
     }
 
     pub fn alert(&mut self, a: Alert) {
-        if self.hidden || self.mode == Mode::Open || self.palette_open {
+        if self.hidden || self.mode == Mode::Open || self.palette_open || self.settings_open {
             return;
         }
         self.touch();
@@ -367,6 +371,75 @@ impl Notch {
         self.lyrics_open = !self.lyrics_open;
     }
 
+    pub fn settings_is_open(&self) -> bool {
+        self.settings_open
+    }
+
+    /// 0.0 (hidden) ..= 1.0 (fully shown) for the settings popup.
+    pub fn settings_progress(&self) -> f32 {
+        self.settings_anim.value
+    }
+
+    pub fn open_settings(&mut self) {
+        if self.hidden {
+            return;
+        }
+        self.touch();
+        self.close_palette();
+        self.settings_open = true;
+        self.settings_anim.target = 1.0;
+        self.leave_left = None;
+        if self.mode != Mode::Closed {
+            self.mode = Mode::Closed;
+            self.retarget();
+        }
+    }
+
+    pub fn close_settings(&mut self) {
+        self.settings_open = false;
+        self.settings_anim.target = 0.0;
+        self.location_input = None;
+        self.folder_input = None;
+    }
+
+    pub fn folder_input(&self) -> Option<&str> {
+        self.folder_input.as_deref()
+    }
+
+    pub fn begin_folder_input(&mut self) {
+        self.touch();
+        self.folder_input = Some(String::new());
+    }
+
+    pub fn toggle_app_folder(&mut self, path: &str) {
+        self.update_settings(|s| match s.app_folders.iter().position(|f| f == path) {
+            Some(i) => {
+                s.app_folders.remove(i);
+            }
+            None => s.app_folders.push(path.to_string()),
+        });
+    }
+
+    pub fn remove_app_folder(&mut self, i: usize) {
+        if i < self.settings.app_folders.len() {
+            self.update_settings(|s| {
+                s.app_folders.remove(i);
+            });
+        }
+    }
+
+    /// Steps how long the eye waits before appearing.
+    pub fn adjust_eye_delay(&mut self, dir: i32) {
+        const STEPS: [u32; 10] = [5, 10, 15, 30, 45, 60, 90, 120, 300, 600];
+        let cur = self.settings.idle_secs;
+        let next = if dir > 0 {
+            STEPS.iter().copied().find(|s| *s > cur).unwrap_or(STEPS[9])
+        } else {
+            STEPS.iter().rev().copied().find(|s| *s < cur).unwrap_or(STEPS[0])
+        };
+        self.update_settings(|s| s.idle_secs = next);
+    }
+
     pub fn location_input(&self) -> Option<&str> {
         self.location_input.as_deref()
     }
@@ -498,13 +571,13 @@ impl Notch {
 
     /// True while typing goes to the launcher or the to-do field.
     pub fn keyboard_active(&self) -> bool {
-        self.palette_open || self.todo_input.is_some() || self.location_input.is_some()
+        self.palette_open || self.todo_input.is_some() || self.location_input.is_some() || self.folder_input.is_some()
     }
 
     pub fn key_text(&mut self, s: &str) {
         if self.palette_open {
             self.palette.type_text(s);
-        } else if let Some(i) = self.todo_input.as_mut().or(self.location_input.as_mut()) {
+        } else if let Some(i) = self.todo_input.as_mut().or(self.location_input.as_mut()).or(self.folder_input.as_mut()) {
             i.extend(s.chars().filter(|c| !c.is_control()));
         }
     }
@@ -512,7 +585,7 @@ impl Notch {
     pub fn key_backspace(&mut self) {
         if self.palette_open {
             self.palette.backspace();
-        } else if let Some(i) = self.todo_input.as_mut().or(self.location_input.as_mut()) {
+        } else if let Some(i) = self.todo_input.as_mut().or(self.location_input.as_mut()).or(self.folder_input.as_mut()) {
             i.pop();
         }
     }
@@ -526,14 +599,24 @@ impl Notch {
     pub fn key_escape(&mut self) {
         if self.palette_open {
             self.close_palette();
-        } else if self.todo_input.take().is_some() || self.location_input.take().is_some() {
+        } else if self.todo_input.take().is_some() || self.location_input.take().is_some() || self.folder_input.take().is_some() {
             self.leave_left = Some(HOVER_CLOSE_DELAY);
+        } else if self.settings_open {
+            self.close_settings();
         }
     }
 
     pub fn key_enter(&mut self) -> Outcome {
         if self.palette_open {
             return self.palette_activate();
+        }
+        if let Some(path) = self.folder_input.take() {
+            let path = path.trim().trim_matches('"').to_string();
+            if !path.is_empty() && !self.settings.app_folders.contains(&path) {
+                self.update_settings(|s| s.app_folders.push(path));
+                return Outcome::Rescan;
+            }
+            return Outcome::None;
         }
         if let Some(q) = self.location_input.take() {
             self.leave_left = Some(HOVER_CLOSE_DELAY);
@@ -577,6 +660,7 @@ impl Notch {
         if self.hidden {
             return;
         }
+        self.close_settings();
         self.touch();
         self.palette.clear();
         self.palette_open = true;
@@ -627,9 +711,13 @@ impl Notch {
                     self.show_page(p);
                     Outcome::None
                 }
+                Command::OpenSettings => {
+                    self.open_settings();
+                    Outcome::None
+                }
                 Command::Screenshot => Outcome::Screenshot,
                 Command::CheckUpdates => {
-                    self.show_page(Page::Settings);
+                    self.open_settings();
                     self.update = UpdateStatus::Checking;
                     Outcome::CheckUpdates
                 }
@@ -676,7 +764,7 @@ impl Notch {
     }
 
     pub fn eye_state(&self) -> EyeState {
-        if !self.settings.mascot || self.hidden || self.palette_open || self.mode != Mode::Closed || self.settings.minimal {
+        if !self.settings.mascot || self.hidden || self.palette_open || self.settings_open || self.mode != Mode::Closed || self.settings.minimal {
             return EyeState::Hidden;
         }
         let idle = self.idle_for();
@@ -759,7 +847,7 @@ impl Notch {
 
     /// When the eye next needs a redraw (blink, glance, cursor follow or state change).
     fn eye_wake(&self) -> Option<Duration> {
-        if !self.settings.mascot || self.hidden || self.palette_open || self.mode != Mode::Closed || self.settings.minimal {
+        if !self.settings.mascot || self.hidden || self.palette_open || self.settings_open || self.mode != Mode::Closed || self.settings.minimal {
             return None;
         }
         let idle = self.idle_for();
@@ -795,7 +883,7 @@ impl Notch {
     }
 
     pub fn hover(&mut self, inside: bool) {
-        if self.hidden || self.palette_open || self.todo_input.is_some() || self.location_input.is_some() {
+        if self.hidden || self.palette_open || self.settings_open || self.todo_input.is_some() || self.location_input.is_some() || self.folder_input.is_some() {
             return;
         }
         if inside {
@@ -834,6 +922,7 @@ impl Notch {
         !(self.w.is_settled() && self.h.is_settled() && self.r.is_settled())
             || !(self.look_x.is_settled() && self.look_y.is_settled())
             || !self.palette_anim.is_settled()
+            || !self.settings_anim.is_settled()
             || self.peek_left > Duration::ZERO
             || self.leave_left.is_some()
     }
@@ -867,6 +956,7 @@ impl Notch {
         self.look_x.step(s);
         self.look_y.step(s);
         self.palette_anim.step(s);
+        self.settings_anim.step(s);
     }
 
     fn retarget(&mut self) {
@@ -954,7 +1044,7 @@ mod tests {
     fn pages_wrap() {
         let mut n = Notch::new(800.0);
         n.next_page(-1);
-        assert_eq!(n.page, Page::Settings);
+        assert_eq!(n.page, Page::Weather);
     }
 
     #[test]

@@ -31,7 +31,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId, WindowLevel};
 
 const WIN_W: f32 = 960.0;
-const WIN_H: f32 = 500.0;
+const WIN_H: f32 = 520.0;
 const FRAME: Duration = Duration::from_millis(16);
 
 /// A user-facing setting changed from the tray (or later, a settings window).
@@ -194,7 +194,8 @@ impl App {
     }
 
     fn run_outcome(&mut self, el: &ActiveEventLoop, outcome: Outcome) {
-        if actions::run(outcome, self.emit.as_ref()) {
+        let folders = self.notch.settings().app_folders.clone();
+        if actions::run(outcome, self.emit.as_ref(), &folders) {
             el.exit();
         }
     }
@@ -450,6 +451,12 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         notch.begin_todo_input();
         notch.key_text("Buy milk @18:00");
     }
+    if page == "settings" {
+        notch.open_settings();
+        for _ in 0..200 {
+            notch.tick(Duration::from_millis(16));
+        }
+    }
     if page == "palette" {
         notch.open_palette();
         notch.palette_type(query.unwrap_or(""));
@@ -464,7 +471,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             notch.tick(Duration::from_millis(16));
         }
     }
-    let idx = ["music", "timer", "stats", "shelf", "todo", "calendar", "weather", "settings"].iter().position(|p| *p == page).unwrap_or(0);
+    let idx = ["music", "timer", "stats", "shelf", "todo", "calendar", "weather"].iter().position(|p| *p == page).unwrap_or(0);
     notch.next_page(idx as i32);
     if let Some(mut s) = stats::Sampler::new() {
         s.sample();

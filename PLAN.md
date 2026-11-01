@@ -69,7 +69,8 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 - Pages (wheel/arrow keys): Music (art, progress, transport, synced lyrics via LRCLIB), Timer (presets,
   steppers, shrinking ring), Stats (CPU/RAM/network), Shelf (drop files onto the pill; click to open),
   To-do (`@14:30` suffix = reminder, saved to `todos.json`), Calendar (month grid), Weather (Open-Meteo,
-  needs `weather_lat`/`weather_lon` in settings), Settings (toggles, size, eye colour/style, update check).
+  search a city). Settings is a popup under the pill (gear button): toggles, size, eye colour/style/delay,
+  location, launcher drives/folders, update check. 
 - Quick launcher / command palette beneath the pill: apps, Visus commands, arithmetic, URLs, web search,
   "Take screenshot", "Check for updates". Open via the magnifier in the open pill, **Alt+Space** (Windows),
   or on Linux bind a key to `visus-app --toggle-palette`.

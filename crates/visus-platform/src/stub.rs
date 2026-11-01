@@ -44,3 +44,9 @@ pub fn request_icon(app: visus_core::App, emit: crate::Emit) {
 pub fn already_running() -> bool {
     false
 }
+
+pub fn rescan_apps(_emit: crate::Emit) {}
+
+pub fn list_drives() -> Vec<String> {
+    Vec::new()
+}

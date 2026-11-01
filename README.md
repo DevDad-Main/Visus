@@ -12,7 +12,8 @@ out of the way. Native Rust, no web engine, near-zero CPU when idle.
   with icons, runs Visus commands, does maths, opens URLs, searches the web, takes screenshots.
 - **Alerts**: charger, Caps Lock, volume, keyboard language, Wi-Fi, reminders.
 - **Idle eye** that blinks, looks around and follows your cursor. Classic or Sauron style, any colour.
-- **Settings page** in the pill (size, eye, toggles, location) and a manual **update check**.
+- **Settings popup** (gear in the open pill): size, eye colour/style/delay, location, drives and folders the launcher
+  searches, start at login, and a manual **update check**.
 
 ## Install
 
