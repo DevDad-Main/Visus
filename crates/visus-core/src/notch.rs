@@ -59,9 +59,8 @@ enum Mode {
     Open,
 }
 
-const CLOSED: (f32, f32) = (266.0, 52.0);
 const MINIMAL: (f32, f32) = (190.0, 6.0);
-const PEEK: (f32, f32) = (550.0, 106.0);
+const PEEK: (f32, f32) = (500.0, 92.0);
 const OPEN: (f32, f32) = (744.0, 248.0);
 const PEEK_TIME: Duration = Duration::from_millis(2800);
 const HOVER_CLOSE_DELAY: Duration = Duration::from_millis(250);
@@ -99,9 +98,9 @@ impl Notch {
             window_w,
             mode: Mode::Closed,
             page: Page::Music,
-            w: Spring::new(CLOSED.0),
-            h: Spring::new(CLOSED.1),
-            r: Spring::new(22.0),
+            w: Spring::new(Settings::default().closed_width),
+            h: Spring::new(Settings::default().closed_height),
+            r: Spring::new(16.0),
             peek_left: Duration::ZERO,
             leave_left: None,
             media: MediaInfo::default(),
@@ -213,7 +212,7 @@ impl Notch {
     }
 
     pub fn set_settings(&mut self, s: Settings) {
-        self.settings = s;
+        self.settings = s.clamped();
         if self.hidden && !self.settings.hide_in_fullscreen {
             self.hidden = false;
         }
@@ -405,8 +404,8 @@ impl Notch {
     fn retarget(&mut self) {
         let ((w, h), r) = match self.mode {
             Mode::Closed if self.settings.minimal => (MINIMAL, 3.0),
-            Mode::Closed => (CLOSED, 22.0),
-            Mode::Peek(_) => (PEEK, 30.0),
+            Mode::Closed => ((self.settings.closed_width, self.settings.closed_height), self.settings.closed_height * 0.42),
+            Mode::Peek(_) => (PEEK, 26.0),
             Mode::Open => (OPEN, 44.0),
         };
         self.w.target = w;
@@ -433,7 +432,7 @@ mod tests {
         assert_eq!(n.shape().rect.w, OPEN.0);
         n.hover(false);
         settle(&mut n);
-        assert_eq!(n.shape().rect.w, CLOSED.0);
+        assert_eq!(n.shape().rect.w, n.settings().closed_width);
         assert!(!n.is_animating());
     }
 

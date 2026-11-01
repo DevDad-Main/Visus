@@ -100,9 +100,15 @@ struct Ctx<'a> {
     pm: &'a mut Pixmap,
     text: &'a Text,
     scale: f32,
+    /// Physical-pixel x offset so scaling happens around the pill's centre line.
+    ox: f32,
 }
 
 impl Ctx<'_> {
+    fn xf(&self) -> Transform {
+        Transform::from_row(self.scale, 0.0, 0.0, self.scale, self.ox, 0.0)
+    }
+
     fn paint(c: [u8; 4]) -> Paint<'static> {
         let mut p = Paint::default();
         p.set_color(Color::from_rgba8(c[0], c[1], c[2], c[3]));
@@ -111,12 +117,12 @@ impl Ctx<'_> {
     }
 
     fn fill(&mut self, path: &Path, c: [u8; 4]) {
-        let t = Transform::from_scale(self.scale, self.scale);
+        let t = self.xf();
         self.pm.fill_path(path, &Self::paint(c), FillRule::Winding, t, None);
     }
 
     fn stroke(&mut self, path: &Path, c: [u8; 4], width: f32) {
-        let t = Transform::from_scale(self.scale, self.scale);
+        let t = self.xf();
         let s = Stroke { width, line_cap: LineCap::Round, ..Default::default() };
         self.pm.stroke_path(path, &Self::paint(c), &s, t, None);
     }
@@ -155,7 +161,7 @@ impl Ctx<'_> {
 
     fn t(&mut self, s: &str, x: f32, y: f32, px: f32, c: [u8; 4], align: Align) {
         let k = self.scale;
-        self.text.draw(self.pm, s, x * k, y * k, px * k, c, align);
+        self.text.draw(self.pm, s, x * k + self.ox, y * k, px * k, c, align);
     }
 
     fn fit(&self, s: &str, px: f32, max: f32) -> String {
@@ -193,15 +199,18 @@ fn hash(s: &str) -> u32 {
 
 pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     let shape = notch.shape();
-    let mut cx = Ctx { pm, text, scale };
+    let user = notch.settings().scale;
+    let centre = shape.rect.x + shape.rect.w / 2.0;
+    let mut cx = Ctx { pm, text, scale: scale * user, ox: centre * (1.0 - user) * scale };
 
     if let Some(path) = pill_path(&shape) {
         cx.fill(&path, [0, 0, 0, 255]);
     }
 
     let r = shape.rect;
-    let closed_a = (1.0 - (r.h - 52.0) / 24.0).clamp(0.0, 1.0);
-    let peek_a = ((r.h - 60.0) / 30.0).clamp(0.0, 1.0) * (1.0 - ((r.h - 110.0) / 60.0).clamp(0.0, 1.0));
+    let ch = notch.settings().closed_height;
+    let closed_a = (1.0 - (r.h - ch) / 20.0).clamp(0.0, 1.0);
+    let peek_a = ((r.h - (ch + 12.0)) / 24.0).clamp(0.0, 1.0) * (1.0 - ((r.h - 100.0) / 60.0).clamp(0.0, 1.0));
     let open_a = ((r.h - 150.0) / 70.0).clamp(0.0, 1.0);
 
     if closed_a > 0.0 {
@@ -220,21 +229,21 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     let mid = r.y + r.h / 2.0;
     let timer = notch.timer();
     let progress = if timer.is_running() { 1.0 - timer.progress() } else { 1.0 };
-    cx.ring(r.x + 34.0, mid, 10.0, 3.0, progress, GREEN, a);
+    cx.ring(r.x + 28.0, mid, 8.0, 2.5, progress, GREEN, a);
     let clock = chrono::Local::now().format("%H:%M").to_string();
-    cx.t(&clock, r.x + r.w / 2.0, mid + 8.0, 24.0, color(WHITE, a), Align::Center);
+    cx.t(&clock, r.x + r.w / 2.0, mid + 7.0, 20.0, color(WHITE, a), Align::Center);
     // Equalizer glyph; flat when nothing plays.
-    let heights: [f32; 4] = if notch.media().playing { [10.0, 18.0, 13.0, 8.0] } else { [6.0, 6.0, 6.0, 6.0] };
+    let heights: [f32; 4] = if notch.media().playing { [8.0, 14.0, 10.0, 6.0] } else { [5.0, 5.0, 5.0, 5.0] };
     for (i, h) in heights.iter().enumerate() {
-        let x = r.x + r.w - 46.0 + i as f32 * 7.0;
-        cx.rrect(rect(x, mid - h / 2.0, 3.0, *h), 1.5, color(WHITE, a));
+        let x = r.x + r.w - 38.0 + i as f32 * 6.0;
+        cx.rrect(rect(x, mid - h / 2.0, 2.5, *h), 1.25, color(WHITE, a));
     }
 }
 
 fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, a: f32) {
     let r = shape.rect;
     let mid = r.h / 2.0;
-    let (ix, rx) = (r.x + 52.0, r.x + r.w - 40.0);
+    let (ix, rx) = (r.x + 46.0, r.x + r.w - 36.0);
     let (title, sub, accent, ring, value): (&str, String, [u8; 3], f32, Option<String>) = match alert {
         Alert::Charging { percent } => ("Charging", "Charger connected".into(), GREEN, percent as f32 / 100.0, Some(format!("{percent}%"))),
         Alert::Unplugged { percent } => ("On battery", "Charger disconnected".into(), ORANGE, percent as f32 / 100.0, Some(format!("{percent}%"))),
@@ -246,11 +255,11 @@ fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, a: f32) {
         }
         Alert::TimerDone => ("Focus complete", "Time for a break".into(), GREEN, 1.0, None),
     };
-    cx.ring(ix, mid, 18.0, 4.0, ring, accent, a);
-    cx.t(title, r.x + 100.0, mid - 2.0, 26.0, color(WHITE, a), Align::Left);
-    cx.t(&sub, r.x + 100.0, mid + 27.0, 19.0, color(GRAY, a), Align::Left);
+    cx.ring(ix, mid, 16.0, 3.5, ring, accent, a);
+    cx.t(title, r.x + 88.0, mid - 2.0, 23.0, color(WHITE, a), Align::Left);
+    cx.t(&sub, r.x + 88.0, mid + 22.0, 17.0, color(GRAY, a), Align::Left);
     if let Some(v) = value {
-        cx.t(&v, rx, mid + 14.0, 40.0, color(WHITE, a), Align::Right);
+        cx.t(&v, rx, mid + 13.0, 34.0, color(WHITE, a), Align::Right);
     }
 }
 
@@ -301,8 +310,8 @@ fn draw_music(cx: &mut Ctx, notch: &Notch, a: f32) {
     let (c1, c2) = (hue_rgb(h), hue_rgb((h + 0.12) % 1.0));
     if let Some(path) = rrect(art.x, art.y, art.w, art.h, 18.0) {
         let grad = LinearGradient::new(
-            Point::from_xy(art.x * cx.scale, art.y * cx.scale),
-            Point::from_xy((art.x + art.w) * cx.scale, (art.y + art.h) * cx.scale),
+            Point::from_xy(art.x * cx.scale + cx.ox, art.y * cx.scale),
+            Point::from_xy((art.x + art.w) * cx.scale + cx.ox, (art.y + art.h) * cx.scale),
             vec![
                 GradientStop::new(0.0, Color::from_rgba8(c1[0], c1[1], c1[2], (a * 255.0) as u8)),
                 GradientStop::new(1.0, Color::from_rgba8(c2[0], c2[1], c2[2], (a * 255.0) as u8)),
@@ -314,7 +323,7 @@ fn draw_music(cx: &mut Ctx, notch: &Notch, a: f32) {
             let mut p = Paint::default();
             p.shader = shader;
             p.anti_alias = true;
-            let t = Transform::from_scale(cx.scale, cx.scale);
+            let t = cx.xf();
             cx.pm.fill_path(&path, &p, FillRule::Winding, t, None);
         }
     }
@@ -417,4 +426,22 @@ pub fn idle_wake(notch: &Notch) -> Option<std::time::Duration> {
         wake = Some(wake.map_or(minute, |w| w.min(minute)));
     }
     wake
+}
+
+/// Window-logical position -> pill-logical position (undoes the user size scale).
+pub fn to_logical(notch: &Notch, x: f32, y: f32) -> (f32, f32) {
+    let sh = notch.shape().rect;
+    let centre = sh.x + sh.w / 2.0;
+    let k = notch.settings().scale;
+    (centre + (x - centre) / k, y / k)
+}
+
+/// Area the pill (including flares) covers on screen, in window-logical pixels.
+pub fn hit_rect(notch: &Notch) -> Rect {
+    let s = notch.shape();
+    let f = flare(&s);
+    let k = notch.settings().scale;
+    let centre = s.rect.x + s.rect.w / 2.0;
+    let half = s.rect.w / 2.0 + f;
+    Rect { x: centre - half * k, y: 0.0, w: half * 2.0 * k, h: s.rect.h * k }
 }

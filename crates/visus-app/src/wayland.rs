@@ -33,10 +33,10 @@ use smithay_client_toolkit::{
 use tiny_skia::Pixmap;
 use visus_core::Notch;
 
-use crate::{text::Text, ui};
+use crate::{store, text::Text, ui};
 
-const WIN_W: u32 = 800;
-const WIN_H: u32 = 280;
+const WIN_W: u32 = 960;
+const WIN_H: u32 = 330;
 const FRAME: Duration = Duration::from_millis(16);
 const BTN_LEFT: u32 = 0x110;
 const SCROLL_STEP: f64 = 12.0;
@@ -83,6 +83,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = SlotPool::new((WIN_W * WIN_H * 4 * 2) as usize, &shm)?;
 
+    let mut notch = Notch::new(WIN_W as f32);
+    store::load_into(&mut notch);
+
     let mut state = State {
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &qh),
@@ -92,7 +95,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         pool,
         layer,
         pointer: None,
-        notch: Notch::new(WIN_W as f32),
+        notch,
         text: Text::new(),
         scale: 1,
         cursor: (-1.0, -1.0),
@@ -124,6 +127,7 @@ impl State {
         let dt = now - self.last_tick;
         self.last_tick = now;
         self.notch.tick(dt.min(Duration::from_millis(50)));
+        store::sync(&mut self.notch);
 
         let animating = self.notch.is_animating();
         let wake_due = self.next_wake.is_some_and(|t| now >= t);
@@ -162,10 +166,9 @@ impl State {
         surface.damage_buffer(0, 0, w, h);
 
         // Only the pill takes input; everything around it is click-through.
-        let r = self.notch.shape().rect;
+        let r = ui::hit_rect(&self.notch);
         if let Ok(region) = Region::new(&self.compositor) {
-            let f = ui::flare(&self.notch.shape());
-            region.add((r.x - f).floor() as i32, 0, (r.w + 2.0 * f).ceil() as i32, r.h.ceil() as i32);
+            region.add(r.x.floor() as i32, 0, r.w.ceil() as i32, r.h.ceil() as i32);
             self.layer.set_input_region(Some(region.wl_region()));
         }
 
@@ -175,7 +178,7 @@ impl State {
     }
 
     fn pointer_moved(&mut self, pos: (f64, f64)) {
-        self.cursor = (pos.0 as f32, pos.1 as f32);
+        self.cursor = ui::to_logical(&self.notch, pos.0 as f32, pos.1 as f32);
         let inside = self.notch.shape().rect.contains(self.cursor.0, self.cursor.1);
         self.notch.hover(inside);
         self.needs_draw = true;

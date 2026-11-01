@@ -1,3 +1,4 @@
+mod store;
 mod text;
 #[cfg(target_os = "linux")]
 mod wayland;
@@ -21,8 +22,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId, WindowLevel};
 
-const WIN_W: f32 = 800.0;
-const WIN_H: f32 = 280.0;
+const WIN_W: f32 = 960.0;
+const WIN_H: f32 = 330.0;
 const FRAME: Duration = Duration::from_millis(16);
 
 #[derive(Debug)]
@@ -77,15 +78,15 @@ impl App {
         buf.present().unwrap();
 
         if self.hwnd != 0 {
-            let s = self.notch.shape();
-            let f = ui::flare(&s);
+            let r = ui::hit_rect(&self.notch);
+            let radius = self.notch.shape().bottom_radius * self.notch.settings().scale;
             platform::set_window_region(
                 self.hwnd,
-                ((s.rect.x - f) * scale).floor() as i32,
+                (r.x * scale).floor() as i32,
                 0,
-                ((s.rect.w + 2.0 * f) * scale).ceil() as i32,
-                (s.rect.h * scale).ceil() as i32,
-                (s.bottom_radius * scale) as i32,
+                (r.w * scale).ceil() as i32,
+                (r.h * scale).ceil() as i32,
+                (radius * scale) as i32,
             );
         }
     }
@@ -102,7 +103,7 @@ impl App {
 
     fn cursor_moved(&mut self, x: f32, y: f32) {
         let s = self.scale();
-        self.cursor = (x / s, y / s);
+        self.cursor = ui::to_logical(&self.notch, x / s, y / s);
         let inside = self.notch.shape().rect.contains(self.cursor.0, self.cursor.1);
         self.notch.hover(inside);
     }
@@ -238,6 +239,7 @@ impl ApplicationHandler<UserEvent> for App {
         let dt = now - self.last_tick;
         self.last_tick = now;
         self.notch.tick(dt.min(Duration::from_millis(50)));
+        store::sync(&mut self.notch);
 
         if self.notch.is_animating() {
             el.set_control_flow(ControlFlow::WaitUntil(now + FRAME));
@@ -271,12 +273,14 @@ fn main() {
         }
     }
     let el = EventLoop::<UserEvent>::with_user_event().build().expect("event loop");
+    let mut notch = Notch::new(WIN_W);
+    store::load_into(&mut notch);
     let mut app = App {
         proxy: el.create_proxy(),
         window: None,
         surface: None,
         hwnd: 0,
-        notch: Notch::new(WIN_W),
+        notch,
         text: text::Text::new(),
         cursor: (-1.0, -1.0),
         shown: true,

@@ -11,6 +11,24 @@ pub struct Settings {
     pub idle_secs: u32,
     pub water_goal_ml: u32,
     pub water_cup_ml: u32,
+    /// Overall size multiplier for the pill and its content.
+    pub scale: f32,
+    /// Closed pill size in logical pixels, before `scale`.
+    pub closed_width: f32,
+    pub closed_height: f32,
+}
+
+impl Settings {
+    pub const SCALE_RANGE: (f32, f32) = (0.6, 1.25);
+
+    /// Keeps hand-edited values inside what the layout can render.
+    pub fn clamped(mut self) -> Self {
+        self.scale = self.scale.clamp(Self::SCALE_RANGE.0, Self::SCALE_RANGE.1);
+        self.closed_width = self.closed_width.clamp(140.0, 400.0);
+        self.closed_height = self.closed_height.clamp(24.0, 80.0);
+        self.idle_secs = self.idle_secs.clamp(5, 3600);
+        self
+    }
 }
 
 impl Default for Settings {
@@ -22,6 +40,9 @@ impl Default for Settings {
             idle_secs: 45,
             water_goal_ml: 1500,
             water_cup_ml: 250,
+            scale: 1.0,
+            closed_width: 228.0,
+            closed_height: 38.0,
         }
     }
 }
