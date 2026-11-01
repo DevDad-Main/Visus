@@ -68,6 +68,10 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 - Pages (wheel/arrow keys): Music (title/artist/progress/transport, lyrics toggle), Timer (Pomodoro),
   Stats (CPU, memory, network). Shelf and To-do are "Coming soon".
 - Synced lyrics from LRCLIB shown in a split pane (current line highlighted).
+- Quick launcher / command palette: a panel that drops down beneath the pill. Searches installed apps
+  (Start Menu shortcuts / .desktop files), Visus commands, arithmetic (`12*7+3`), URLs, and falls back to a
+  web search. Open it with the search button in the open pill, **Alt+Space** (Windows), or on Linux bind a
+  key to `visus-app --toggle-palette` (Hyprland: `bind = SUPER, space, exec, visus-app --toggle-palette`).
 - Album art from SMTC thumbnails (Windows) and MPRIS `artUrl` (Linux); gradient placeholder otherwise.
 - Alert peeks: charger plugged/unplugged, Caps Lock, volume (Windows), timer done.
 - Idle eye: almond eye with iris, blinks (irregular, sometimes double), glances around, follows the
@@ -94,9 +98,10 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 ## Roadmap
 
 1. Windows hands-on fixes from real-machine testing.
-2. Keyboard-input subsystem (focusable on demand: Windows drops `WS_EX_NOACTIVATE` while typing,
-   Wayland layer-shell `OnDemand` + wl_keyboard) -> enables To-do with reminders and the quick
-   launcher / command palette (not started; needs this first). Then File shelf (drag & drop).
+2. Keyboard input is in (Windows drops `WS_EX_NOACTIVATE` while typing; Wayland grabs the keyboard
+   exclusively while the launcher is open) -> To-do with reminders can reuse it; the quick
+   launcher is done; To-do and File shelf (drag & drop) still to do. Launcher follow-ups: Store/UWP apps
+   on Windows, app icons, clipboard history, configurable hotkey, plugin-provided results.
 3. Settings window (sizes, colours, pages, eye style) replacing hand-editing, with an **auto-updater**:
    "Check for updates" queries the GitHub Releases API (`/repos/DevDad-Main/Visus/releases/latest`),
    compares semver with the running version, downloads `Visus-windows-x64.zip`, verifies the published
