@@ -108,13 +108,19 @@ h2 { font-size: clamp(32px, 5vw, 56px); margin-bottom: 22px; }
 
 /* looks */
 .looks { text-align: center; }
-.clocks { display: flex; gap: 22px; justify-content: center; flex-wrap: wrap; margin: 54px 0 34px; }
-.eyes { display: flex; gap: 22px; justify-content: center; flex-wrap: wrap; }
-.looks figure { margin: 0; display: grid; gap: 14px; justify-items: center; }
-.looks figcaption { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--mute); }
-.looks .shot { border-radius: 20px; background: #000; border: 1px solid rgba(255,255,255,.09); box-shadow: 0 24px 60px rgba(0,0,0,.55); padding: 6px 14px; overflow: hidden; }
-.clk .shot img { display: block; width: 330px; max-width: 80vw; height: auto; }
-.eyes .shot img { display: block; width: 200px; height: auto; }
+.clocks { display: flex; gap: 26px; justify-content: center; flex-wrap: wrap; margin: 54px 0 40px; }
+.looks figure, .rgrid figure { margin: 0; display: grid; gap: 12px; justify-items: center; }
+.looks figcaption, .rgrid figcaption { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--mute); }
+.clocks .shot { padding: 26px 30px 22px; border-radius: 20px; background: radial-gradient(70% 90% at 50% 0%, rgba(123,107,255,.25), transparent 70%), #0a0a10; border: 1px solid var(--line); }
+.clocks .shot img { display: block; width: 260px; height: auto; }
+.eyes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px 26px; max-width: 1000px; margin: 0 auto; }
+.eyes img { display: block; width: 100%; max-width: 480px; height: auto; border-radius: 18px; border: 1px solid var(--line); }
+@media (min-width: 900px) { .eyes { grid-template-columns: repeat(4, 1fr); } }
+
+.reactions { padding: 130px 0; text-align: center; }
+.rgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 34px 28px; margin: 60px auto 0; max-width: 1000px; }
+.rgrid img { display: block; width: 100%; height: auto; border-radius: 18px; border: 1px solid var(--line); }
+@media (max-width: 760px) { .rgrid { grid-template-columns: 1fr; } }
 
 /* download */
 .download { padding: 140px 0 120px; position: relative; }

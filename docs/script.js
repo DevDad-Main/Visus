@@ -40,7 +40,7 @@
   document.querySelector(".tabs")?.addEventListener("click", () => clearInterval(auto));
 
   // Scroll reveal.
-  const targets = document.querySelectorAll(".split > *, .states figure, .scene, .frame, .grid article, .looks figure, .download .wrap > *, .features .wrap > p, .features h2");
+  const targets = document.querySelectorAll(".split > *, .states figure, .scene, .frame, .grid article, .looks figure, .rgrid figure, .download .wrap > *, .features .wrap > p, .features h2");
   targets.forEach((el, i) => {
     el.classList.add("rv");
     el.style.transitionDelay = `${(i % 3) * 90}ms`;
@@ -50,6 +50,7 @@
     { threshold: 0.12 }
   );
   targets.forEach((el) => io.observe(el));
+  if (location.search.includes("static")) targets.forEach((el) => el.classList.add("in"));
 
   // Resolve the newest release and pick the right file for this machine.
   const pick = (assets) => {
