@@ -710,13 +710,13 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
                 let t = anim_secs();
                 let open = notch.is_open();
                 let (base, amp) = if open { (r.h * 0.80, 11.0) } else { (r.h * 0.64, 3.0) };
-                for (phase, speed, alpha, drop) in [(0.0f32, 0.8f32, 0.55f32, 0.0f32), (2.1, -0.55, 0.35, r.h * 0.06)] {
+                for (phase, speed, alpha, drop) in [(0.0f32, 0.96f32, 0.55f32, 0.0f32), (2.1, -0.96, 0.35, r.h * 0.06)] {
                     let (x_l, x_r, n) = (r.x - 24.0, r.x + r.w + 24.0, 56);
                     let mut pb = PathBuilder::new();
                     for i in 0..=n {
                         let u = i as f32 / n as f32;
                         let x = x_l + (x_r - x_l) * u;
-                        let y = base + drop + amp * ((u * std::f32::consts::TAU * 1.6 + t * speed + phase).sin() + 0.3 * (u * std::f32::consts::TAU * 2.4 - t * speed * 0.7).sin());
+                        let y = base + drop + amp * ((u * std::f32::consts::TAU * 1.6 + t * speed + phase).sin() + 0.3 * (u * std::f32::consts::TAU * 2.4 - t * speed).sin());
                         if i == 0 {
                             pb.move_to(x, y);
                         } else {
@@ -1267,6 +1267,11 @@ fn draw_clock(cx: &mut Ctx, notch: &Notch, xm: f32, ym: f32, size: f32, a: f32) 
 
 /// Seconds on a wrapping clock; small enough for f32 to keep sub-millisecond phase.
 fn anim_secs() -> f32 {
+    // Snapshots pin the clock so captured frames line up.
+    static FIXED: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    if let Some(t) = FIXED.get_or_init(|| std::env::var("VISUS_ANIM_T").ok().and_then(|v| v.parse().ok())) {
+        return *t;
+    }
     (chrono::Local::now().timestamp_millis().rem_euclid(3_600_000)) as f32 / 1000.0
 }
 

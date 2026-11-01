@@ -9,27 +9,36 @@
     return "other";
   })();
 
-  // Live clock in the hero pill and the sample styles.
+  // Live clock in the hero pill.
   const pad = (n) => String(n).padStart(2, "0");
   const tick = () => {
     const d = new Date();
-    const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    for (const id of ["clock", "c1", "led"]) {
-      const el = document.getElementById(id);
-      if (el) el.textContent = hm;
-    }
-    const flip = document.getElementById("flip");
-    if (flip) {
-      const digits = hm.replace(":", "");
-      const u = flip.querySelectorAll("u");
-      u.forEach((el, i) => (el.textContent = digits[i]));
-    }
+    const el = document.getElementById("clock");
+    if (el) el.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
   tick();
   setInterval(tick, 1000);
 
+  // Page tour tabs.
+  const img = document.getElementById("show-img");
+  const tabs = [...document.querySelectorAll(".tabs button")];
+  const show = (btn) => {
+    tabs.forEach((b) => b.classList.toggle("on", b === btn));
+    img.classList.add("swap");
+    setTimeout(() => {
+      img.src = `assets/shots/${btn.dataset.shot}.webp`;
+      img.width = btn.dataset.w;
+      img.height = btn.dataset.h;
+      img.alt = `Visus ${btn.textContent.toLowerCase()} page`;
+      img.onload = () => img.classList.remove("swap");
+    }, 220);
+  };
+  tabs.forEach((b) => b.addEventListener("click", () => show(b)));
+  let auto = setInterval(() => show(tabs[(tabs.findIndex((b) => b.classList.contains("on")) + 1) % tabs.length]), 4500);
+  document.querySelector(".tabs")?.addEventListener("click", () => clearInterval(auto));
+
   // Scroll reveal.
-  const targets = document.querySelectorAll(".split > *, .grid article, .clk, .e, .download .wrap > *, .features .wrap > p, .features h2");
+  const targets = document.querySelectorAll(".split > *, .frame, .grid article, .looks figure, .download .wrap > *, .features .wrap > p, .features h2");
   targets.forEach((el, i) => {
     el.classList.add("rv");
     el.style.transitionDelay = `${(i % 3) * 90}ms`;

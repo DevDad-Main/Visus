@@ -476,6 +476,30 @@ impl ApplicationHandler<UserEvent> for App {
     }
 }
 
+/// A synthwave sunset used as demo cover art for captures (`VISUS_ART=1,2,3`).
+fn synth_cover() -> Vec<u8> {
+    let n = 128usize;
+    let mut out = Vec::with_capacity(n * n * 4);
+    for y in 0..n {
+        for x in 0..n {
+            let (fx, fy) = (x as f32 / n as f32, y as f32 / n as f32);
+            let mix = |a: [f32; 3], b: [f32; 3], t: f32| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+            let mut c = mix([22.0, 8.0, 60.0], [255.0, 80.0, 120.0], (fy / 0.62).min(1.0).powf(1.4));
+            let (dx, dy) = (fx - 0.5, fy - 0.46);
+            if (dx * dx + dy * dy).sqrt() < 0.24 && !(fy > 0.5 && ((fy * 60.0) as i32 % 4 == 0)) {
+                c = mix([255.0, 214.0, 90.0], [255.0, 60.0, 140.0], ((fy - 0.22) / 0.48).clamp(0.0, 1.0));
+            }
+            if fy > 0.62 {
+                let g = ((fx - 0.5) / (fy - 0.6) * 0.5).fract().abs();
+                let line = (fy * 40.0).fract() < 0.08 || g < 0.04 || g > 0.96;
+                c = if line { [255.0, 70.0, 200.0] } else { [14.0, 6.0, 36.0] };
+            }
+            out.extend_from_slice(&[c[0] as u8, c[1] as u8, c[2] as u8, 255]);
+        }
+    }
+    out
+}
+
 /// `visus-app --snapshot <music|timer|stats|shelf|todo> <out.png>`: renders the open pill headlessly.
 fn snapshot(page: &str, out: &str, query: Option<&str>) {
     let mut notch = Notch::new(WIN_W);
@@ -493,7 +517,8 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
     });
     let fetcher = lyrics::Fetcher::new(emit.clone());
     platform::start(emit.clone());
-    let deadline = std::time::Instant::now() + Duration::from_secs(6);
+    let wait = if std::env::var_os("VISUS_ART").is_some() { 400 } else { 6000 };
+    let deadline = std::time::Instant::now() + Duration::from_millis(wait);
     let mut got_apps = false;
     while std::time::Instant::now() < deadline {
         if let Ok(ev) = rx.recv_timeout(Duration::from_millis(200)) {
@@ -518,7 +543,8 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
     }
     if let Some(c) = std::env::var("VISUS_ART").ok().and_then(|s| s.split(',').map(|v| v.trim().parse::<u8>().ok()).collect::<Option<Vec<_>>>()).filter(|v| v.len() == 3) {
         let rgba: Vec<u8> = (0..64 * 64).flat_map(|i| { let f = 0.6 + 0.4 * ((i / 64) as f32 / 63.0); [(c[0] as f32 * f) as u8, (c[1] as f32 * f) as u8, (c[2] as f32 * f) as u8, 255] }).collect();
-        notch.handle(Event::Media(visus_core::MediaInfo { has_session: true, title: "Midnight City".into(), artist: "M83".into(), playing: true, position: Duration::from_secs(80), duration: Duration::from_secs(244), art: Some(Arc::new(visus_core::Art { size: 64, rgba, id: 77 })) }));
+        let rgba = if c == [1, 2, 3] { synth_cover() } else { rgba };
+        notch.handle(Event::Media(visus_core::MediaInfo { has_session: true, title: "Midnight City".into(), artist: "M83".into(), playing: true, position: Duration::from_secs(80), duration: Duration::from_secs(244), art: Some(Arc::new(visus_core::Art { size: if c == [1, 2, 3] { 128 } else { 64 }, rgba, id: 77 })) }));
         for _ in 0..200 {
             notch.tick(Duration::from_millis(16));
         }
@@ -642,6 +668,9 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         s.sample();
         std::thread::sleep(Duration::from_millis(400));
         notch.set_stats(s.sample());
+    }
+    for _ in 0..std::env::var("VISUS_TICKS").ok().and_then(|v| v.parse().ok()).unwrap_or(0) {
+        notch.tick(Duration::from_millis(16));
     }
     let mut pm = Pixmap::new(WIN_W as u32 * 2, WIN_H as u32 * 2).expect("pixmap");
     ui::draw(&mut pm, &text::Text::new(), &notch, 2.0);
