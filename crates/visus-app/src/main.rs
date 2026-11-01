@@ -91,6 +91,21 @@ impl App {
         }
     }
 
+    /// Points the idle eye at the global cursor where the OS exposes it.
+    fn feed_eye(&mut self) {
+        if self.notch.eye_state() != visus_core::EyeState::Awake {
+            return;
+        }
+        let (Some(w), Some((cx, cy))) = (&self.window, platform::cursor_pos()) else { return };
+        let Ok(origin) = w.outer_position() else { return };
+        self.notch.set_cursor_tracking(true);
+        let k = w.scale_factor() as f32;
+        let r = self.notch.shape().rect;
+        let px = origin.x as f32 + (r.x + r.w / 2.0) * k;
+        let py = origin.y as f32 + (r.h / 2.0) * k;
+        self.notch.set_eye_target((cx as f32 - px) / (500.0 * k), (cy as f32 - py) / (300.0 * k));
+    }
+
     fn sync_visibility(&mut self) {
         let want = !self.notch.is_hidden();
         if want != self.shown {
@@ -238,6 +253,7 @@ impl ApplicationHandler<UserEvent> for App {
         let now = Instant::now();
         let dt = now - self.last_tick;
         self.last_tick = now;
+        self.feed_eye();
         self.notch.tick(dt.min(Duration::from_millis(50)));
         store::sync(&mut self.notch);
 

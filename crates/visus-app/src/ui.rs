@@ -1,8 +1,9 @@
 use tiny_skia::{
-    Color, FillRule, GradientStop, LinearGradient, Paint, Path, PathBuilder, Pixmap, Point, SpreadMode,
+    Color, FillRule, GradientStop, LinearGradient, Paint, Path, PathBuilder, Pixmap, Point, RadialGradient,
+    SpreadMode,
     Stroke, Transform, LineCap,
 };
-use visus_core::{Alert, Notch, Page, Rect, Shape};
+use visus_core::{Alert, EyeState, Notch, Page, Rect, Shape};
 
 use crate::text::{Align, Text};
 
@@ -214,13 +215,54 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     let open_a = ((r.h - 150.0) / 70.0).clamp(0.0, 1.0);
 
     if closed_a > 0.0 {
-        draw_closed(&mut cx, notch, closed_a);
+        if notch.eye_state() == EyeState::Hidden {
+            draw_closed(&mut cx, notch, closed_a);
+        } else {
+            draw_eye(&mut cx, notch, closed_a);
+        }
     }
     if let (Some(alert), true) = (notch.alert_kind(), peek_a > 0.0) {
         draw_alert(&mut cx, &shape, alert, peek_a);
     }
     if open_a > 0.0 {
         draw_open(&mut cx, notch, open_a);
+    }
+}
+
+/// One glowing eye that looks around, blinks, and dozes off when idle long enough.
+fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
+    let r = notch.shape().rect;
+    let fade = notch.eye_fade() * a;
+    let asleep = notch.eye_state() == EyeState::Asleep;
+    let (lx, ly) = notch.eye_look();
+    let (x, y) = (r.x + r.w / 2.0 + lx * 20.0, r.h / 2.0 + ly * 3.0);
+    let half_h = (r.h * 0.29).max(4.0);
+    let ry = (half_h * notch.eye_openness()).max(1.2);
+    let rx = (half_h * 0.62).max(3.0);
+
+    // Glow stays inside the pill so it never spills onto the desktop.
+    let glow_r = r.h * 0.46;
+    let glow = RadialGradient::new(
+        Point::from_xy(x, y),
+        Point::from_xy(x, y),
+        glow_r,
+        vec![
+            GradientStop::new(0.0, Color::from_rgba8(80, 170, 255, (fade * if asleep { 40.0 } else { 120.0 }) as u8)),
+            GradientStop::new(1.0, Color::from_rgba8(80, 170, 255, 0)),
+        ],
+        SpreadMode::Pad,
+        cx.xf(),
+    );
+    if let (Some(shader), Some(path)) = (glow, PathBuilder::from_circle(x, y, glow_r)) {
+        let mut p = Paint::default();
+        p.shader = shader;
+        p.anti_alias = true;
+        let t = cx.xf();
+        cx.pm.fill_path(&path, &p, FillRule::Winding, t, None);
+    }
+
+    if let Some(oval) = tiny_skia::Rect::from_xywh(x - rx, y - ry, rx * 2.0, ry * 2.0).and_then(PathBuilder::from_oval) {
+        cx.fill(&oval, color(WHITE, fade * if asleep { 0.5 } else { 1.0 }));
     }
 }
 

@@ -1,7 +1,7 @@
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 fn hwnd(h: isize) -> HWND {
@@ -26,4 +26,11 @@ pub fn set_window_region(h: isize, x: i32, y: i32, w: i32, height: i32, radius: 
         // The system owns the region after a successful call.
         SetWindowRgn(hwnd(h), Some(rgn), true);
     }
+}
+
+/// Global cursor position in screen pixels.
+pub fn cursor_pos() -> Option<(i32, i32)> {
+    let mut p = POINT::default();
+    unsafe { GetCursorPos(&mut p) }.ok()?;
+    Some((p.x, p.y))
 }

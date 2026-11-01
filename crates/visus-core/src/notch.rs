@@ -66,9 +66,8 @@ const PEEK_TIME: Duration = Duration::from_millis(2800);
 const HOVER_CLOSE_DELAY: Duration = Duration::from_millis(250);
 const PROGRESS_REFRESH: Duration = Duration::from_millis(500);
 const EYE_FOLLOW: Duration = Duration::from_millis(50);
-const BLINK_EVERY: f32 = 4.6;
-const BLINK_AT: f32 = 4.4;
-const BLINK_LEN: f32 = 0.2;
+const EYE_FADE_IN: f32 = 0.35;
+const WANDER_EVERY: f32 = 2.4;
 
 pub struct Notch {
     window_w: f32,
@@ -90,6 +89,7 @@ pub struct Notch {
     last_activity: Instant,
     look_x: Spring,
     look_y: Spring,
+    tracking: bool,
 }
 
 impl Notch {
@@ -114,6 +114,7 @@ impl Notch {
             last_activity: Instant::now(),
             look_x: Spring::new(0.0),
             look_y: Spring::new(0.0),
+            tracking: false,
         };
         n.retarget();
         n
@@ -287,28 +288,50 @@ impl Notch {
         self.look_y.target = dy.clamp(-1.0, 1.0);
     }
 
-    /// 1.0 = fully open. Awake eyes blink periodically; sleeping eyes are a slit.
+    /// 1.0 = fully open. Awake eyes blink at irregular intervals (sometimes twice); sleeping eyes are a slit.
     pub fn eye_openness(&self) -> f32 {
         match self.eye_state() {
             EyeState::Hidden => 0.0,
             EyeState::Asleep => 0.12,
-            EyeState::Awake => {
-                let t = self.blink_phase();
-                if t >= BLINK_AT && t < BLINK_AT + BLINK_LEN {
-                    let b = (t - BLINK_AT) / BLINK_LEN;
-                    ((2.0 * b - 1.0).abs()).max(0.08)
-                } else {
-                    1.0
-                }
-            }
+            EyeState::Awake => blink_at(self.awake_secs()).0,
         }
     }
 
-    fn blink_phase(&self) -> f32 {
-        (self.idle_for().as_secs_f32()) % BLINK_EVERY
+    /// 0..=1 fade used when the eye first appears.
+    pub fn eye_fade(&self) -> f32 {
+        match self.eye_state() {
+            EyeState::Hidden => 0.0,
+            EyeState::Asleep => 1.0,
+            EyeState::Awake => (self.awake_secs() / EYE_FADE_IN).clamp(0.0, 1.0),
+        }
     }
 
-    /// When the eye next needs a redraw (blink, cursor follow or state change).
+    /// Hosts that can read the global cursor set this and feed `set_eye_target`; otherwise the eye wanders.
+    pub fn set_cursor_tracking(&mut self, on: bool) {
+        self.tracking = on;
+    }
+
+    pub fn tracks_cursor(&self) -> bool {
+        self.tracking
+    }
+
+    fn awake_secs(&self) -> f32 {
+        let wake = self.settings.idle_secs as f32;
+        (self.idle_for().as_secs_f32() - wake).max(0.0)
+    }
+
+    /// Picks a new glance direction every couple of seconds when the cursor is unknown.
+    fn wander(&mut self) {
+        if self.tracking || self.eye_state() != EyeState::Awake {
+            return;
+        }
+        let h = hash((self.awake_secs() / WANDER_EVERY) as u32 + 1000);
+        let dx = ((h % 200) as f32 / 100.0 - 1.0) * 0.9;
+        let dy = (((h >> 8) % 200) as f32 / 100.0 - 1.0) * 0.5;
+        self.set_eye_target(dx, dy);
+    }
+
+    /// When the eye next needs a redraw (blink, glance, cursor follow or state change).
     fn eye_wake(&self) -> Option<Duration> {
         if !self.settings.mascot || self.hidden || self.mode != Mode::Closed || self.settings.minimal {
             return None;
@@ -318,12 +341,19 @@ impl Notch {
         match self.eye_state() {
             EyeState::Hidden => Some(wake.saturating_sub(idle) + Duration::from_millis(20)),
             EyeState::Awake => {
-                let t = self.blink_phase();
-                let in_blink = t >= BLINK_AT && t < BLINK_AT + BLINK_LEN;
-                let to_blink = if t < BLINK_AT { BLINK_AT - t } else { BLINK_EVERY - t + BLINK_AT };
+                let t = self.awake_secs();
+                let mut next = blink_at(t).1;
+                if self.tracking {
+                    next = next.min(EYE_FOLLOW.as_secs_f32());
+                } else {
+                    next = next.min(WANDER_EVERY - t % WANDER_EVERY);
+                }
+                // Fade-in needs frames too.
+                if t < EYE_FADE_IN {
+                    next = next.min(0.016);
+                }
                 let to_sleep = (wake * 4).saturating_sub(idle);
-                let next = if in_blink { 0.03 } else { to_blink.min(EYE_FOLLOW.as_secs_f32()) };
-                Some(Duration::from_secs_f32(next).min(to_sleep + Duration::from_millis(20)))
+                Some(Duration::from_secs_f32(next.max(0.005)).min(to_sleep + Duration::from_millis(20)))
             }
             EyeState::Asleep => None,
         }
@@ -373,6 +403,7 @@ impl Notch {
     }
 
     pub fn tick(&mut self, dt: Duration) {
+        self.wander();
         if self.timer.poll_finished() {
             self.alert(Alert::TimerDone);
         }
@@ -412,6 +443,43 @@ impl Notch {
         self.h.target = h;
         self.r.target = r;
     }
+}
+
+fn hash(k: u32) -> u32 {
+    let mut x = k.wrapping_mul(0x9E37_79B1) ^ 0x85EB_CA6B;
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2C1B_3C6D);
+    x ^ (x >> 12)
+}
+
+/// Eyelid openness `t` seconds into the awake period, and seconds until it next needs a redraw.
+/// Intervals between blinks vary from 2.6 to 5.5 s; one in four is a double blink.
+fn blink_at(t: f32) -> (f32, f32) {
+    let mut start = 0.0;
+    for k in 0u32.. {
+        let h = hash(k);
+        let period = 2.6 + (h % 30) as f32 / 10.0;
+        if t < start + period {
+            let local = t - start;
+            let windows: &[(f32, f32)] = if h % 4 == 0 {
+                &[(period - 0.5, 0.17), (period - 0.2, 0.2)]
+            } else {
+                &[(period - 0.2, 0.2)]
+            };
+            for &(begin, len) in windows {
+                if local < begin {
+                    return (1.0, begin - local);
+                }
+                if local < begin + len {
+                    let b = (local - begin) / len;
+                    return ((1.0 - (std::f32::consts::PI * b).sin()).max(0.06), 0.016);
+                }
+            }
+            return (1.0, (period - local).max(0.016));
+        }
+        start += period;
+    }
+    (1.0, 1.0)
 }
 
 #[cfg(test)]
@@ -468,5 +536,18 @@ mod tests {
         n.alert(Alert::Headphones);
         assert!(n.alert_kind().is_none());
         assert!(n.is_hidden());
+    }
+
+    #[test]
+    fn blink_closes_then_reopens() {
+        // Sample a long stretch: the lid must close at some point and always end open between blinks.
+        let mut min = 1.0f32;
+        let mut t = 0.0;
+        while t < 30.0 {
+            min = min.min(blink_at(t).0);
+            t += 0.01;
+        }
+        assert!(min < 0.1);
+        assert_eq!(blink_at(0.5).0, 1.0);
     }
 }

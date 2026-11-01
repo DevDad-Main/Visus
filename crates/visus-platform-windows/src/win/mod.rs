@@ -8,7 +8,7 @@ mod window;
 
 pub use autostart::{autostart_enabled, set_autostart};
 pub use media::media_command;
-pub use window::{prepare_window, set_window_region};
+pub use window::{cursor_pos, prepare_window, set_window_region};
 
 use crate::Emit;
 

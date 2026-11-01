@@ -16,3 +16,8 @@ pub fn autostart_enabled() -> bool {
 pub fn set_autostart(_enabled: bool) -> std::io::Result<()> {
     Ok(())
 }
+
+/// Global cursor position in screen pixels; unavailable off Windows.
+pub fn cursor_pos() -> Option<(i32, i32)> {
+    None
+}
