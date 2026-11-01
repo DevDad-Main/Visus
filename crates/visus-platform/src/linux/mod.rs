@@ -1,10 +1,14 @@
 //! Linux integration over D-Bus: MPRIS for media, UPower for the charger.
 
+mod apps;
 mod autostart;
+mod ipc;
 mod mpris;
 mod power;
 
 pub use autostart::{autostart_enabled, set_autostart};
+pub use apps::{launch, open_url};
+pub use ipc::send_toggle;
 pub use mpris::media_command;
 
 use crate::Emit;
@@ -12,7 +16,9 @@ use crate::Emit;
 /// Starts all background event sources. Call once.
 pub fn start(emit: Emit) {
     mpris::start(emit.clone());
-    power::start(emit);
+    power::start(emit.clone());
+    ipc::listen(emit.clone());
+    std::thread::spawn(move || emit(visus_core::Event::Apps(std::sync::Arc::new(apps::list()))));
 }
 
 pub fn prepare_window(_hwnd: isize) {}
@@ -23,3 +29,6 @@ pub fn set_window_region(_hwnd: isize, _x: i32, _y: i32, _w: i32, _h: i32, _radi
 pub fn cursor_pos() -> Option<(i32, i32)> {
     None
 }
+
+/// Windows-only: lets the notch take keyboard focus while the launcher is open.
+pub fn set_focusable(_hwnd: isize, _on: bool) {}

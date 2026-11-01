@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::LyricLine;
+use crate::{App, LyricLine};
 
 /// Square album art, straight-alpha RGBA, already scaled down for display.
 #[derive(Clone, Debug)]
@@ -42,6 +42,10 @@ pub enum Event {
     Media(MediaInfo),
     Hud(Hud),
     Fullscreen(bool),
+    /// Installed applications the launcher can start.
+    Apps(Arc<Vec<App>>),
+    /// Global hotkey pressed.
+    TogglePalette,
     /// Result of a lyrics lookup for a track; `None` means nothing was found.
     Lyrics { title: String, artist: String, lines: Option<Arc<Vec<LyricLine>>> },
 }

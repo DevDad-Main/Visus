@@ -1,7 +1,7 @@
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, SetForegroundWindow, SetWindowLongPtrW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 fn hwnd(h: isize) -> HWND {
@@ -33,4 +33,16 @@ pub fn cursor_pos() -> Option<(i32, i32)> {
     let mut p = POINT::default();
     unsafe { GetCursorPos(&mut p) }.ok()?;
     Some((p.x, p.y))
+}
+
+/// Lets the notch take keyboard focus while the launcher is open; restores click-through focus rules after.
+pub fn set_focusable(h: isize, on: bool) {
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd(h), GWL_EXSTYLE);
+        let noactivate = WS_EX_NOACTIVATE.0 as isize;
+        SetWindowLongPtrW(hwnd(h), GWL_EXSTYLE, if on { ex & !noactivate } else { ex | noactivate });
+        if on {
+            let _ = SetForegroundWindow(hwnd(h));
+        }
+    }
 }

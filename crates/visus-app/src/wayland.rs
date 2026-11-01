@@ -15,13 +15,14 @@ use smithay_client_toolkit::{
         client::{
             Connection, QueueHandle,
             globals::registry_queue_init,
-            protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+            protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
         },
     },
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
         Capability, SeatHandler, SeatState,
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
         pointer::{PointerEvent, PointerEventKind, PointerHandler},
     },
     shell::{
@@ -34,12 +35,12 @@ use smithay_client_toolkit::{
     shm::{Shm, ShmHandler, slot::SlotPool},
 };
 use tiny_skia::Pixmap;
-use visus_core::{Event, Notch};
+use visus_core::{Event, Notch, Outcome};
 
 use crate::{events, lyrics, stats, store, text::Text, ui};
 
 const WIN_W: u32 = 960;
-const WIN_H: u32 = 330;
+const WIN_H: u32 = 500;
 const FRAME: Duration = Duration::from_millis(16);
 const BTN_LEFT: u32 = 0x110;
 const SCROLL_STEP: f64 = 12.0;
@@ -53,6 +54,8 @@ struct State {
     pool: SlotPool,
     layer: LayerSurface,
     pointer: Option<wl_pointer::WlPointer>,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
+    keyboard_grabbed: bool,
 
     notch: Notch,
     text: Text,
@@ -103,6 +106,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         pool,
         layer,
         pointer: None,
+        keyboard: None,
+        keyboard_grabbed: false,
         notch,
         text: Text::new(),
         sampler: stats::Sampler::new(),
@@ -155,6 +160,7 @@ impl State {
         let now = Instant::now();
         let dt = now - self.last_tick;
         self.last_tick = now;
+        self.sync_keyboard();
         self.feed_eye();
         if self.notch.wants_stats() {
             if let Some(s) = &mut self.sampler {
@@ -201,6 +207,51 @@ impl State {
         self.notch.set_cursor_tracking(true);
         let cy_pill = my + self.notch.settings().closed_height / 2.0;
         self.notch.set_eye_target((cx as f32 - mx) / 500.0, (cy as f32 - cy_pill) / 300.0);
+    }
+
+    /// Grabs the keyboard while the launcher is open so typing reaches it, and lets go afterwards.
+    fn sync_keyboard(&mut self) {
+        let want = self.notch.palette_is_open();
+        if want != self.keyboard_grabbed {
+            self.keyboard_grabbed = want;
+            self.layer.set_keyboard_interactivity(if want {
+                KeyboardInteractivity::Exclusive
+            } else {
+                KeyboardInteractivity::None
+            });
+            self.layer.commit();
+        }
+    }
+
+    fn run_outcome(&mut self, outcome: Outcome) {
+        match outcome {
+            Outcome::None => {}
+            Outcome::Launch(t) => visus_platform::launch(&t),
+            Outcome::OpenUrl(u) => visus_platform::open_url(&u),
+            Outcome::Quit => self.exit = true,
+        }
+    }
+
+    fn palette_key(&mut self, event: &KeyEvent) {
+        if !self.notch.palette_is_open() {
+            return;
+        }
+        match event.keysym {
+            Keysym::Escape => self.notch.close_palette(),
+            Keysym::Return | Keysym::KP_Enter => {
+                let out = self.notch.palette_activate();
+                self.run_outcome(out);
+            }
+            Keysym::BackSpace => self.notch.palette_backspace(),
+            Keysym::Down | Keysym::Tab => self.notch.palette_move(1),
+            Keysym::Up | Keysym::ISO_Left_Tab => self.notch.palette_move(-1),
+            _ => {
+                if let Some(t) = &event.utf8 {
+                    self.notch.palette_type(t);
+                }
+            }
+        }
+        self.needs_draw = true;
     }
 
     fn draw(&mut self) {
@@ -288,12 +339,20 @@ impl SeatHandler for State {
         if cap == Capability::Pointer && self.pointer.is_none() {
             self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
         }
+        if cap == Capability::Keyboard && self.keyboard.is_none() {
+            self.keyboard = self.seat_state.get_keyboard(qh, &seat, None).ok();
+        }
     }
 
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, cap: Capability) {
         if cap == Capability::Pointer {
             if let Some(p) = self.pointer.take() {
                 p.release();
+            }
+        }
+        if cap == Capability::Keyboard {
+            if let Some(k) = self.keyboard.take() {
+                k.release();
             }
         }
     }
@@ -315,7 +374,8 @@ impl PointerHandler for State {
                 }
                 PointerEventKind::Press { button, .. } if button == BTN_LEFT => {
                     self.pointer_moved(ev.position);
-                    ui::click(&mut self.notch, self.cursor.0, self.cursor.1);
+                    let out = ui::click(&mut self.notch, self.cursor.0, self.cursor.1);
+                    self.run_outcome(out);
                     self.needs_draw = true;
                 }
                 PointerEventKind::Axis { vertical, .. } if self.notch.is_open() => {
@@ -330,6 +390,24 @@ impl PointerHandler for State {
             }
         }
     }
+}
+
+impl KeyboardHandler for State {
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[Keysym]) {}
+
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {}
+
+    fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, event: KeyEvent) {
+        self.palette_key(&event);
+    }
+
+    fn repeat_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, event: KeyEvent) {
+        self.palette_key(&event);
+    }
+
+    fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
+
+    fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: Modifiers, _: RawModifiers, _: u32) {}
 }
 
 impl ShmHandler for State {

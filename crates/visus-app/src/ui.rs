@@ -3,7 +3,7 @@ use tiny_skia::{
     SpreadMode,
     Stroke, Transform, LineCap,
 };
-use visus_core::{Alert, EyeState, Lyrics, Notch, Page, Rect, Shape, current_index};
+use visus_core::{Alert, EyeState, Kind, Lyrics, Notch, Outcome, Page, Rect, Shape, current_index};
 
 use crate::text::{Align, Text};
 
@@ -19,6 +19,7 @@ pub enum Button {
     PlayPause,
     Next,
     Lyrics,
+    Palette,
     TimerToggle,
     TimerReset,
 }
@@ -34,6 +35,12 @@ pub fn buttons(notch: &Notch) -> Vec<(Button, Rect)> {
         return Vec::new();
     }
     let (x0, cx) = (s.rect.x, s.rect.x + s.rect.w / 2.0);
+    let mut btns = page_buttons(notch, x0, cx);
+    btns.push((Button::Palette, rect(x0 + s.rect.w - 76.0, 10.0, 44.0, 36.0)));
+    btns
+}
+
+fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
     match notch.page {
         Page::Music if notch.lyrics_open() => {
             let b = |dx: f32| rect(x0 + dx - 24.0, 188.0, 48.0, 40.0);
@@ -242,6 +249,7 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     if open_a > 0.0 {
         draw_open(&mut cx, notch, open_a);
     }
+    draw_palette(&mut cx, notch);
 }
 
 /// An almond-shaped eye with iris, pupil and highlight; blinks, looks around and dozes off.
@@ -386,6 +394,7 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
     let now = chrono::Local::now();
     let header = format!("{}  {}", now.format("%a %-d %b %Y"), now.format("%H:%M"));
     cx.t(&header, mid, 44.0, 22.0, color(WHITE, a), Align::Center);
+    magnifier(cx, r.x + r.w - 62.0, 25.0, color(WHITE, 0.85 * a));
 
     match notch.page {
         Page::Music => draw_music(cx, notch, a),
@@ -589,9 +598,16 @@ fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
     }
 }
 
-/// Handles a left click at window-logical coordinates; returns true if a button was hit.
-pub fn click(notch: &mut Notch, x: f32, y: f32) -> bool {
+/// Handles a left click at pill-logical coordinates; the host runs the returned outcome.
+pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
     use visus_core::MediaCommand;
+    if let Some(layout) = palette_layout(notch) {
+        if let Some(i) = layout.rows.iter().position(|r| r.contains(x, y)) {
+            notch.palette_select(i);
+            return notch.palette_activate();
+        }
+        return Outcome::None;
+    }
     for (b, r) in buttons(notch) {
         if r.contains(x, y) {
             match b {
@@ -599,13 +615,14 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> bool {
                 Button::PlayPause => visus_platform::media_command(MediaCommand::PlayPause),
                 Button::Next => visus_platform::media_command(MediaCommand::Next),
                 Button::Lyrics => notch.toggle_lyrics(),
+                Button::Palette => notch.open_palette(),
                 Button::TimerToggle => notch.toggle_timer(),
                 Button::TimerReset => notch.reset_timer(),
             }
-            return true;
+            break;
         }
     }
-    false
+    Outcome::None
 }
 
 /// How long the app may sleep while nothing animates: the next clock minute or content refresh.
@@ -635,7 +652,128 @@ pub fn hit_rect(notch: &Notch) -> Rect {
     let k = notch.settings().scale;
     let centre = s.rect.x + s.rect.w / 2.0;
     let half = s.rect.w / 2.0 + f;
-    Rect { x: centre - half * k, y: 0.0, w: half * 2.0 * k, h: s.rect.h * k }
+    let pill = Rect { x: centre - half * k, y: 0.0, w: half * 2.0 * k, h: s.rect.h * k };
+    // While the launcher is visible the panel is part of the interactive area too.
+    let Some(layout) = palette_layout(notch) else { return pill };
+    let p = layout.panel;
+    let (px, pw) = (centre + (p.x - centre) * k, p.w * k);
+    let (x, right) = (pill.x.min(px), (pill.x + pill.w).max(px + pw));
+    Rect { x, y: 0.0, w: right - x, h: (p.y + p.h) * k }
+}
+
+const PANEL_W: f32 = 520.0;
+const ROW_H: f32 = 48.0;
+const PANEL_TOP_PAD: f32 = 66.0;
+const PANEL_FOOTER: f32 = 40.0;
+
+pub struct PaletteLayout {
+    pub panel: Rect,
+    pub search: Rect,
+    pub rows: Vec<Rect>,
+    /// Full-height panel, used to place content while the panel is still growing.
+    pub full_h: f32,
+}
+
+/// Panel geometry in pill-logical coordinates; None while the launcher is fully hidden.
+pub fn palette_layout(notch: &Notch) -> Option<PaletteLayout> {
+    let p = notch.palette_progress();
+    if p < 0.01 && !notch.palette_is_open() {
+        return None;
+    }
+    let s = notch.shape().rect;
+    let centre = s.x + s.w / 2.0;
+    let n = notch.palette().results.len().max(1) as f32;
+    let full_h = PANEL_TOP_PAD + n * ROW_H + PANEL_FOOTER;
+    let p = p.clamp(0.0, 1.04);
+    let w = PANEL_W * (0.72 + 0.28 * p.min(1.0));
+    let panel = Rect { x: centre - w / 2.0, y: s.h + 10.0, w, h: full_h * p };
+    let search = Rect { x: panel.x + 16.0, y: panel.y + 14.0, w: w - 32.0, h: 40.0 };
+    let rows = (0..notch.palette().results.len())
+        .map(|i| Rect { x: panel.x + 10.0, y: panel.y + PANEL_TOP_PAD + i as f32 * ROW_H, w: w - 20.0, h: ROW_H - 4.0 })
+        .collect();
+    Some(PaletteLayout { panel, search, rows, full_h })
+}
+
+fn magnifier(cx: &mut Ctx, x: f32, y: f32, c: [u8; 4]) {
+    if let Some(p) = PathBuilder::from_circle(x, y, 6.5) {
+        cx.stroke(&p, c, 2.0);
+    }
+    let mut pb = PathBuilder::new();
+    pb.move_to(x + 5.2, y + 5.2);
+    pb.line_to(x + 10.5, y + 10.5);
+    if let Some(p) = pb.finish() {
+        cx.stroke(&p, c, 2.2);
+    }
+}
+
+fn draw_palette(cx: &mut Ctx, notch: &Notch) {
+    let Some(l) = palette_layout(notch) else { return };
+    let p = notch.palette_progress().clamp(0.0, 1.0);
+    let ca = ((p - 0.5) / 0.5).clamp(0.0, 1.0);
+    let pal = notch.palette();
+
+    // Soft shadow, then the body and a hairline edge so it reads as glass-black beneath the pill.
+    for (grow, alpha) in [(14.0, 0.05), (8.0, 0.08), (3.0, 0.12)] {
+        cx.rrect(rect(l.panel.x - grow, l.panel.y - grow * 0.4, l.panel.w + 2.0 * grow, l.panel.h + 2.0 * grow), 30.0 + grow, color([0, 0, 0], alpha * p));
+    }
+    cx.rrect(l.panel, 28.0, color([0, 0, 0], p));
+    if let Some(path) = rrect(l.panel.x, l.panel.y, l.panel.w, l.panel.h, 28.0) {
+        cx.stroke(&path, color(WHITE, 0.09 * p), 1.0);
+    }
+    if ca <= 0.0 {
+        return;
+    }
+
+    // Search field.
+    cx.rrect(l.search, 14.0, color(WHITE, 0.08 * ca));
+    magnifier(cx, l.search.x + 22.0, l.search.y + 18.0, color(GRAY, ca));
+    let tx = l.search.x + 44.0;
+    let base = l.search.y + 26.0;
+    let max = l.search.w - 64.0;
+    if pal.query.is_empty() {
+        cx.t("Search apps, commands, math\u{2026}", tx, base, 17.0, color(GRAY, 0.8 * ca), Align::Left);
+        cx.rrect(rect(tx - 2.0, l.search.y + 10.0, 1.6, 20.0), 0.8, color(WHITE, 0.9 * ca));
+    } else {
+        // Keep the tail of long queries visible.
+        let mut shown = pal.query.as_str();
+        while shown.chars().count() > 1 && cx.text_width(shown, 17.0) > max {
+            let skip = shown.chars().next().map_or(1, char::len_utf8);
+            shown = &shown[skip..];
+        }
+        cx.t(shown, tx, base, 17.0, color(WHITE, ca), Align::Left);
+        let caret_x = tx + cx.text_width(shown, 17.0) + 1.0;
+        cx.rrect(rect(caret_x, l.search.y + 10.0, 1.6, 20.0), 0.8, color(WHITE, 0.9 * ca));
+    }
+
+    // Results.
+    for (i, (item, row)) in pal.results.iter().zip(&l.rows).enumerate() {
+        let selected = i == pal.selected;
+        if selected {
+            cx.rrect(*row, 13.0, color(WHITE, 0.11 * ca));
+        }
+        let tile = rect(row.x + 10.0, row.y + 7.0, 30.0, 30.0);
+        let (tint, glyph) = match item.kind {
+            Kind::Visus => ([96, 120, 255], "V".to_string()),
+            Kind::Calc => (GREEN, "=".to_string()),
+            Kind::Web => (BLUE, "\u{2197}".to_string()),
+            Kind::App => (hue_rgb((hash(&item.title) % 360) as f32 / 360.0), item.title.chars().next().map_or("?".into(), |c| c.to_uppercase().to_string())),
+        };
+        cx.rrect(tile, 9.0, color(tint, ca));
+        cx.t(&glyph, tile.x + 15.0, tile.y + 21.0, 16.0, color(WHITE, ca), Align::Center);
+
+        let text_x = row.x + 54.0;
+        let room = row.w - 54.0 - 40.0;
+        let title = cx.fit(&item.title, 17.0, room);
+        let sub = cx.fit(&item.subtitle, 12.5, room);
+        cx.t(&title, text_x, row.y + 20.0, 17.0, color(WHITE, ca), Align::Left);
+        cx.t(&sub, text_x, row.y + 36.0, 12.5, color(GRAY, 0.9 * ca), Align::Left);
+        if selected && item.action.is_some() {
+            cx.t("\u{21b5}", row.x + row.w - 22.0, row.y + 27.0, 17.0, color(GRAY, ca), Align::Center);
+        }
+    }
+
+    let foot_y = l.panel.y + l.full_h - 14.0;
+    cx.t("\u{2191}\u{2193} navigate    \u{21b5} open    esc close", l.panel.x + l.panel.w / 2.0, foot_y, 12.0, color(GRAY, 0.65 * ca), Align::Center);
 }
 
 fn rate(bytes_per_sec: u64) -> String {

@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use softbuffer::{Context, Surface};
 use tiny_skia::Pixmap;
-use visus_core::{Alert, Event, Notch};
+use visus_core::{Alert, Event, Notch, Outcome};
 use visus_platform as platform;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
@@ -26,7 +26,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId, WindowLevel};
 
 const WIN_W: f32 = 960.0;
-const WIN_H: f32 = 330.0;
+const WIN_H: f32 = 500.0;
 const FRAME: Duration = Duration::from_millis(16);
 
 /// A user-facing setting changed from the tray (or later, a settings window).
@@ -72,6 +72,7 @@ struct App {
     fetcher: Option<lyrics::Fetcher>,
     cursor: (f32, f32),
     shown: bool,
+    focus_requested: bool,
     last_tick: Instant,
     #[cfg(windows)]
     tray: Option<tray::Tray>,
@@ -153,9 +154,57 @@ impl App {
         self.notch.hover(inside);
     }
 
-    fn click(&mut self) {
+    fn click(&mut self, el: &ActiveEventLoop) {
         let (x, y) = self.cursor;
-        ui::click(&mut self.notch, x, y);
+        let outcome = ui::click(&mut self.notch, x, y);
+        self.run_outcome(el, outcome);
+    }
+
+    fn run_outcome(&mut self, el: &ActiveEventLoop, outcome: Outcome) {
+        match outcome {
+            Outcome::None => {}
+            Outcome::Launch(t) => platform::launch(&t),
+            Outcome::OpenUrl(u) => platform::open_url(&u),
+            Outcome::Quit => el.exit(),
+        }
+    }
+
+    /// Takes keyboard focus while the launcher is open and gives it back afterwards.
+    fn sync_focus(&mut self) {
+        let want = self.notch.palette_is_open();
+        if want == self.focus_requested {
+            return;
+        }
+        self.focus_requested = want;
+        if self.hwnd != 0 {
+            platform::set_focusable(self.hwnd, want);
+        }
+        if let (true, Some(w)) = (want, &self.window) {
+            w.focus_window();
+        }
+    }
+
+    /// Returns true when the key was consumed by the launcher.
+    fn palette_key(&mut self, el: &ActiveEventLoop, ev: &winit::event::KeyEvent) -> bool {
+        if !self.notch.palette_is_open() {
+            return false;
+        }
+        match ev.logical_key.as_ref() {
+            Key::Named(NamedKey::Escape) => self.notch.close_palette(),
+            Key::Named(NamedKey::Enter) => {
+                let out = self.notch.palette_activate();
+                self.run_outcome(el, out);
+            }
+            Key::Named(NamedKey::Backspace) => self.notch.palette_backspace(),
+            Key::Named(NamedKey::ArrowDown | NamedKey::Tab) => self.notch.palette_move(1),
+            Key::Named(NamedKey::ArrowUp) => self.notch.palette_move(-1),
+            _ => {
+                if let Some(t) = &ev.text {
+                    self.notch.palette_type(t);
+                }
+            }
+        }
+        true
     }
 }
 
@@ -244,6 +293,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Quit => el.exit(),
         }
+        self.sync_focus();
         if let Some(w) = &self.window {
             w.request_redraw();
         }
@@ -258,8 +308,9 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::CursorLeft { .. } => self.notch.hover(false),
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                self.click()
+                self.click(el)
             }
+            WindowEvent::Focused(false) if self.notch.palette_is_open() => self.notch.close_palette(),
             WindowEvent::MouseWheel { delta, .. } if self.notch.is_open() => {
                 let y = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
@@ -268,6 +319,9 @@ impl ApplicationHandler<UserEvent> for App {
                 self.notch.next_page(if y < 0.0 { 1 } else { -1 });
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                if self.palette_key(el, &event) {
+                    // Consumed by the launcher.
+                } else {
                 match event.logical_key.as_ref() {
                     Key::Named(NamedKey::ArrowRight) => self.notch.next_page(1),
                     Key::Named(NamedKey::ArrowLeft) => self.notch.next_page(-1),
@@ -277,9 +331,11 @@ impl ApplicationHandler<UserEvent> for App {
                     Key::Character("h") => self.notch.alert(Alert::Headphones),
                     _ => {}
                 }
+                }
             }
             _ => {}
         }
+        self.sync_focus();
         if let Some(w) = &self.window {
             w.request_redraw();
         }
@@ -320,7 +376,7 @@ impl ApplicationHandler<UserEvent> for App {
 }
 
 /// `visus-app --snapshot <music|timer|stats|shelf|todo> <out.png>`: renders the open pill headlessly.
-fn snapshot(page: &str, out: &str) {
+fn snapshot(page: &str, out: &str, query: Option<&str>) {
     let mut notch = Notch::new(WIN_W);
     notch.hover(true);
     for _ in 0..200 {
@@ -337,9 +393,14 @@ fn snapshot(page: &str, out: &str) {
     let fetcher = lyrics::Fetcher::new(emit.clone());
     platform::start(emit);
     let deadline = std::time::Instant::now() + Duration::from_secs(6);
+    let mut got_apps = false;
     while std::time::Instant::now() < deadline {
         if let Ok(ev) = rx.recv_timeout(Duration::from_millis(200)) {
+            got_apps |= matches!(ev, Event::Apps(_));
             events::apply(&mut notch, Some(&fetcher), ev);
+        }
+        if page == "palette" && got_apps {
+            break;
         }
         if matches!(notch.lyrics(), visus_core::Lyrics::Ready(_) | visus_core::Lyrics::NotFound) {
             break;
@@ -347,6 +408,13 @@ fn snapshot(page: &str, out: &str) {
     }
     if page == "lyrics" {
         notch.toggle_lyrics();
+    }
+    if page == "palette" {
+        notch.open_palette();
+        notch.palette_type(query.unwrap_or(""));
+        for _ in 0..200 {
+            notch.tick(Duration::from_millis(16));
+        }
     }
     let idx = ["music", "timer", "stats", "shelf", "todo"].iter().position(|p| *p == page).unwrap_or(0);
     notch.next_page(idx as i32);
@@ -362,9 +430,12 @@ fn snapshot(page: &str, out: &str) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if let [_, flag, page, out] = &args[..] {
+    if args.get(1).map(String::as_str) == Some("--toggle-palette") {
+        std::process::exit(if platform::send_toggle() { 0 } else { 1 });
+    }
+    if let [_, flag, page, out, rest @ ..] = &args[..] {
         if flag == "--snapshot" {
-            snapshot(page, out);
+            snapshot(page, out, rest.first().map(String::as_str));
             return;
         }
     }
@@ -391,6 +462,7 @@ fn main() {
         fetcher: None,
         cursor: (-1.0, -1.0),
         shown: true,
+        focus_requested: false,
         last_tick: Instant::now(),
         #[cfg(windows)]
         tray: None,

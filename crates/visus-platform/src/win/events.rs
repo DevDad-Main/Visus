@@ -19,7 +19,8 @@ use windows::Win32::System::Power::{
 };
 use windows::Win32::UI::Accessibility::SetWinEventHook;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, VK_CAPITAL, VK_VOLUME_DOWN, VK_VOLUME_MUTE, VK_VOLUME_UP,
+    GetKeyState, MOD_ALT, MOD_NOREPEAT, RegisterHotKey, VK_CAPITAL, VK_SPACE, VK_VOLUME_DOWN, VK_VOLUME_MUTE,
+    VK_VOLUME_UP,
 };
 use windows::Win32::UI::Shell::{
     QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState,
@@ -28,7 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, EVENT_SYSTEM_FOREGROUND,
     EVENT_SYSTEM_MINIMIZEEND, GetMessageW, KBDLLHOOKSTRUCT, KillTimer, MSG, PostMessageW,
     RegisterClassW, SetTimer, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WINEVENT_OUTOFCONTEXT, WM_APP, WM_KEYDOWN, WM_POWERBROADCAST, WM_TIMER,
+    WINDOW_STYLE, WINEVENT_OUTOFCONTEXT, WM_APP, WM_HOTKEY, WM_KEYDOWN, WM_POWERBROADCAST, WM_TIMER,
     WNDCLASSW, DEVICE_NOTIFY_WINDOW_HANDLE, PBT_POWERSETTINGCHANGE,
 };
 
@@ -108,6 +109,8 @@ unsafe fn run() {
             SetWinEventHook(ev, ev, None, Some(foreground_hook), 0, 0, WINEVENT_OUTOFCONTEXT);
         }
         SetTimer(Some(hwnd), T_FULLSCREEN, FULLSCREEN_RECHECK_MS, None);
+        // Alt+Space opens the launcher; quietly skipped if another app owns the combination.
+        let _ = RegisterHotKey(Some(hwnd), 1, MOD_ALT | MOD_NOREPEAT, VK_SPACE.0 as u32);
 
         report_power(false);
         report_fullscreen();
@@ -126,6 +129,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_POWERBROADCAST if wp.0 as u32 == PBT_POWERSETTINGCHANGE => {
                 report_power(true);
                 LRESULT(1)
+            }
+            WM_HOTKEY => {
+                emit(Event::TogglePalette);
+                LRESULT(0)
             }
             WM_KEY_CAPS => {
                 SetTimer(Some(hwnd), T_CAPS, SETTLE_MS, None);

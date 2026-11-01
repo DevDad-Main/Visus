@@ -1,4 +1,4 @@
-use crate::{Event, FOCUS, Hud, Lyrics, MediaInfo, Settings, Spring, Stats, Timer};
+use crate::{Action, Command, Event, FOCUS, Hud, Lyrics, MediaInfo, Outcome, Palette, Settings, Spring, Stats, Timer};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,6 +88,9 @@ pub struct Notch {
     stats: Stats,
     lyrics: Lyrics,
     lyrics_open: bool,
+    palette: Palette,
+    palette_open: bool,
+    palette_anim: Spring,
     dirty: bool,
     last_activity: Instant,
     look_x: Spring,
@@ -115,6 +118,9 @@ impl Notch {
             stats: Stats::default(),
             lyrics: Lyrics::None,
             lyrics_open: false,
+            palette: Palette::default(),
+            palette_open: false,
+            palette_anim: Spring::new(0.0),
             dirty: false,
             last_activity: Instant::now(),
             look_x: Spring::new(0.0),
@@ -158,11 +164,13 @@ impl Notch {
             Event::Hud(Hud::CapsLock(on)) => self.alert(Alert::CapsLock(on)),
             Event::Hud(Hud::Volume { level, muted }) => self.alert(Alert::Volume { level, muted }),
             Event::Fullscreen(f) => self.hidden = f && self.settings.hide_in_fullscreen,
+            Event::Apps(apps) => self.palette.set_apps(apps),
+            Event::TogglePalette => self.toggle_palette(),
         }
     }
 
     pub fn alert(&mut self, a: Alert) {
-        if self.hidden || self.mode == Mode::Open {
+        if self.hidden || self.mode == Mode::Open || self.palette_open {
             return;
         }
         self.touch();
@@ -268,6 +276,105 @@ impl Notch {
         self.lyrics_open = !self.lyrics_open;
     }
 
+    pub fn palette(&self) -> &Palette {
+        &self.palette
+    }
+
+    pub fn palette_is_open(&self) -> bool {
+        self.palette_open
+    }
+
+    /// 0.0 (hidden) ..= 1.0 (fully shown); keeps drawing while it animates closed.
+    pub fn palette_progress(&self) -> f32 {
+        self.palette_anim.value
+    }
+
+    pub fn toggle_palette(&mut self) {
+        if self.palette_open {
+            self.close_palette();
+        } else {
+            self.open_palette();
+        }
+    }
+
+    pub fn open_palette(&mut self) {
+        if self.hidden {
+            return;
+        }
+        self.touch();
+        self.palette.clear();
+        self.palette_open = true;
+        self.palette_anim.target = 1.0;
+        // The pill returns to its small shape so the panel reads as a drop-down beneath it.
+        self.leave_left = None;
+        if self.mode != Mode::Closed {
+            self.mode = Mode::Closed;
+            self.retarget();
+        }
+    }
+
+    pub fn close_palette(&mut self) {
+        self.palette_open = false;
+        self.palette_anim.target = 0.0;
+    }
+
+    pub fn palette_type(&mut self, s: &str) {
+        self.palette.type_text(s);
+    }
+
+    pub fn palette_backspace(&mut self) {
+        self.palette.backspace();
+    }
+
+    pub fn palette_select(&mut self, i: usize) {
+        if i < self.palette.results.len() {
+            self.palette.selected = i;
+        }
+    }
+
+    pub fn palette_move(&mut self, delta: i32) {
+        self.palette.move_selection(delta);
+    }
+
+    /// Runs the selected result. Commands that affect the notch apply here; the host handles the rest.
+    pub fn palette_activate(&mut self) -> Outcome {
+        let Some(action) = self.palette.selected_item().and_then(|i| i.action.clone()) else {
+            return Outcome::None;
+        };
+        self.close_palette();
+        match action {
+            Action::Launch(t) => Outcome::Launch(t),
+            Action::OpenUrl(u) => Outcome::OpenUrl(u),
+            Action::Command(c) => match c {
+                Command::Quit => Outcome::Quit,
+                Command::ShowPage(p) => {
+                    self.page = p;
+                    self.mode = Mode::Open;
+                    // Closes by itself unless the pointer arrives and takes over.
+                    self.leave_left = Some(Duration::from_secs(4));
+                    self.retarget();
+                    Outcome::None
+                }
+                Command::ToggleTimer => {
+                    self.toggle_timer();
+                    Outcome::None
+                }
+                Command::ResetTimer => {
+                    self.reset_timer();
+                    Outcome::None
+                }
+                Command::ToggleMinimal => {
+                    self.update_settings(|s| s.minimal = !s.minimal);
+                    Outcome::None
+                }
+                Command::ToggleEye => {
+                    self.update_settings(|s| s.mascot = !s.mascot);
+                    Outcome::None
+                }
+            },
+        }
+    }
+
     pub fn stats(&self) -> &Stats {
         &self.stats
     }
@@ -291,7 +398,7 @@ impl Notch {
     }
 
     pub fn eye_state(&self) -> EyeState {
-        if !self.settings.mascot || self.hidden || self.mode != Mode::Closed || self.settings.minimal {
+        if !self.settings.mascot || self.hidden || self.palette_open || self.mode != Mode::Closed || self.settings.minimal {
             return EyeState::Hidden;
         }
         let idle = self.idle_for();
@@ -360,7 +467,7 @@ impl Notch {
 
     /// When the eye next needs a redraw (blink, glance, cursor follow or state change).
     fn eye_wake(&self) -> Option<Duration> {
-        if !self.settings.mascot || self.hidden || self.mode != Mode::Closed || self.settings.minimal {
+        if !self.settings.mascot || self.hidden || self.palette_open || self.mode != Mode::Closed || self.settings.minimal {
             return None;
         }
         let idle = self.idle_for();
@@ -387,7 +494,7 @@ impl Notch {
     }
 
     pub fn hover(&mut self, inside: bool) {
-        if self.hidden {
+        if self.hidden || self.palette_open {
             return;
         }
         if inside {
@@ -425,6 +532,7 @@ impl Notch {
     pub fn is_animating(&self) -> bool {
         !(self.w.is_settled() && self.h.is_settled() && self.r.is_settled())
             || !(self.look_x.is_settled() && self.look_y.is_settled())
+            || !self.palette_anim.is_settled()
             || self.peek_left > Duration::ZERO
             || self.leave_left.is_some()
     }
@@ -457,6 +565,7 @@ impl Notch {
         self.r.step(s);
         self.look_x.step(s);
         self.look_y.step(s);
+        self.palette_anim.step(s);
     }
 
     fn retarget(&mut self) {

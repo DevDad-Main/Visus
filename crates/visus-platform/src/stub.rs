@@ -21,3 +21,14 @@ pub fn set_autostart(_enabled: bool) -> std::io::Result<()> {
 pub fn cursor_pos() -> Option<(i32, i32)> {
     None
 }
+
+pub fn launch(_target: &str) {}
+
+pub fn open_url(_url: &str) {}
+
+pub fn set_focusable(_hwnd: isize, _on: bool) {}
+
+/// Linux-only: asks a running instance to toggle the launcher.
+pub fn send_toggle() -> bool {
+    false
+}
