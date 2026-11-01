@@ -1,7 +1,8 @@
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, SetForegroundWindow, SetWindowLongPtrW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW,
 };
 
 fn hwnd(h: isize) -> HWND {
@@ -25,6 +26,13 @@ pub fn set_window_region(h: isize, x: i32, y: i32, w: i32, height: i32, radius: 
         let rgn = CreateRoundRectRgn(x, y - radius * 2, x + w, y + height, radius * 2, radius * 2);
         // The system owns the region after a successful call.
         SetWindowRgn(hwnd(h), Some(rgn), true);
+    }
+}
+
+/// Puts the notch back on top of the topmost band, e.g. above a game that took the screen.
+pub fn raise_window(h: isize) {
+    unsafe {
+        let _ = SetWindowPos(hwnd(h), Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 }
 

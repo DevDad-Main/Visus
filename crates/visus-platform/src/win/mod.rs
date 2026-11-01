@@ -21,7 +21,7 @@ pub fn request_icon(app: visus_core::App, emit: crate::Emit) {
 }
 pub use autostart::{autostart_enabled, set_autostart};
 pub use media::media_command;
-pub use window::{cursor_pos, prepare_window, set_focusable, set_window_region};
+pub use window::{cursor_pos, prepare_window, raise_window, set_focusable, set_window_region};
 
 use crate::Emit;
 

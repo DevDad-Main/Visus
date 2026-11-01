@@ -180,6 +180,15 @@ impl App {
     }
 
     fn sync_visibility(&mut self) {
+        // A game can cover the pill; keep re-asserting it while the HUD is meant to be showing.
+        static LAST_RAISE: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+        if self.notch.game_active() && self.hwnd != 0 {
+            let mut last = LAST_RAISE.lock().unwrap();
+            if last.is_none_or(|t| t.elapsed() > Duration::from_millis(1500)) {
+                *last = Some(Instant::now());
+                platform::raise_window(self.hwnd);
+            }
+        }
         let want = !self.notch.is_hidden();
         if want != self.shown {
             self.shown = want;

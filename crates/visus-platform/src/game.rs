@@ -2,21 +2,16 @@
 
 /// Programs that go fullscreen without being games.
 const NOT_GAMES: &[&str] = &[
-    "chrome", "firefox", "msedge", "brave", "opera", "vivaldi", "iexplore", "vlc", "mpv", "potplayer", "wmplayer", "mpc-hc", "powerpnt",
-    "explorer", "code", "slack", "teams", "zoom", "obs64", "obs", "mstsc", "vmware", "virtualbox", "citrix",
+    "chrome", "firefox", "msedge", "msedgewebview2", "brave", "opera", "vivaldi", "iexplore", "vlc", "mpv", "potplayer", "wmplayer", "mpc-hc",
+    "powerpnt", "explorer", "code", "slack", "teams", "zoom", "obs64", "obs", "mstsc", "vmware", "virtualbox", "citrix", "visus", "visus-app",
+    "applicationframehost", "lockapp", "searchhost", "startmenuexperiencehost", "shellexperiencehost", "taskmgr",
 ];
 
-/// Install folders used by the common game launchers.
-const GAME_DIRS: &[&str] = &["steamapps", "epic games", "gog galaxy", "riot games", "battle.net", "ubisoft", "origin games", "rockstar games", "xboxgames"];
-
-/// `path` is the foreground executable; `exclusive` means Windows reported a Direct3D fullscreen app.
-pub fn is_game_path(path: &str, exclusive: bool) -> bool {
+/// `path` is the foreground executable while something covers the whole screen.
+pub fn is_game_path(path: &str) -> bool {
     let p = path.to_lowercase().replace('\\', "/");
     let stem = p.rsplit('/').next().unwrap_or("").trim_end_matches(".exe");
-    if NOT_GAMES.contains(&stem) {
-        return false;
-    }
-    exclusive || GAME_DIRS.iter().any(|d| p.contains(d))
+    !NOT_GAMES.contains(&stem)
 }
 
 /// Window classes (Hyprland) that belong to games or game runtimes.
@@ -51,10 +46,10 @@ mod tests {
 
     #[test]
     fn detects_games_not_browsers() {
-        assert!(is_game_path(r"C:\Program Files (x86)\Steam\steamapps\common\Hades\Hades.exe", false));
-        assert!(is_game_path(r"D:\Games\thing.exe", true));
-        assert!(!is_game_path(r"C:\Program Files\Google\Chrome\chrome.exe", true));
-        assert!(!is_game_path(r"D:\Tools\notes.exe", false));
+        assert!(is_game_path(r"C:\Program Files (x86)\Steam\steamapps\common\Hades\Hades.exe"));
+        assert!(is_game_path(r"D:\Games\thing.exe"));
+        assert!(!is_game_path(r"C:\Program Files\Google\Chrome\chrome.exe"));
+        assert!(!is_game_path(r"C:\Windows\explorer.exe"));
         assert!(is_game_class("steam_app_1245620"));
         assert!(!is_game_class("firefox"));
     }

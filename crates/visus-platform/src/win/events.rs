@@ -278,10 +278,34 @@ fn report_fullscreen() {
     if FULLSCREEN.swap(full, Ordering::Relaxed) != full {
         emit(Event::Fullscreen(full));
     }
-    let exclusive = matches!(state, Ok(s) if s == QUNS_RUNNING_D3D_FULL_SCREEN);
-    let game = full && foreground_exe().is_some_and(|p| crate::is_game_path(&p, exclusive));
+    // Borderless-windowed games report no fullscreen state, so also check that the foreground window fills the screen.
+    let game = (full || foreground_fills_screen()) && foreground_exe().is_some_and(|p| crate::is_game_path(&p));
     if GAME.swap(game, Ordering::Relaxed) != game {
         emit(Event::Game(game));
+    }
+}
+
+/// True when the foreground window is a caption-less window covering its whole monitor.
+fn foreground_fills_screen() -> bool {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow};
+    use windows::Win32::UI::WindowsAndMessaging::{GWL_STYLE, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, WS_CAPTION};
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        let mut r = RECT::default();
+        if GetWindowRect(hwnd, &mut r).is_err() {
+            return false;
+        }
+        let caption = WS_CAPTION.0 as isize;
+        if GetWindowLongPtrW(hwnd, GWL_STYLE) & caption == caption {
+            return false;
+        }
+        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool() {
+            return false;
+        }
+        let m = mi.rcMonitor;
+        r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
     }
 }
 
