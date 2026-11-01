@@ -21,23 +21,25 @@
     if (cap) cap.textContent = pills[cur].dataset.cap;
   }, 3400);
 
-  // Page tour tabs.
-  const img = document.getElementById("show-img");
-  const tabs = [...document.querySelectorAll(".tabs button")];
-  const show = (btn) => {
-    tabs.forEach((b) => b.classList.toggle("on", b === btn));
-    img.classList.add("swap");
-    setTimeout(() => {
-      img.src = `assets/shots/${btn.dataset.shot}.webp`;
-      img.width = btn.dataset.w;
-      img.height = btn.dataset.h;
-      img.alt = `Visus ${btn.textContent.toLowerCase()} page`;
-      img.onload = () => img.classList.remove("swap");
-    }, 220);
-  };
-  tabs.forEach((b) => b.addEventListener("click", () => show(b)));
-  let auto = setInterval(() => show(tabs[(tabs.findIndex((b) => b.classList.contains("on")) + 1) % tabs.length]), 4500);
-  document.querySelector(".tabs")?.addEventListener("click", () => clearInterval(auto));
+  // Tabbed showcases (page tour, clock styles).
+  document.querySelectorAll(".showcase").forEach((box) => {
+    const img = box.querySelector(".show img");
+    const tabs = [...box.querySelectorAll(".tabs button")];
+    const show = (btn) => {
+      tabs.forEach((b) => b.classList.toggle("on", b === btn));
+      img.classList.add("swap");
+      setTimeout(() => {
+        img.src = `assets/shots/${btn.dataset.shot}.webp`;
+        img.width = btn.dataset.w;
+        img.height = btn.dataset.h;
+        img.alt = `Visus ${btn.textContent.toLowerCase()}`;
+        img.onload = () => img.classList.remove("swap");
+      }, 220);
+    };
+    tabs.forEach((b) => b.addEventListener("click", () => show(b)));
+    const auto = setInterval(() => show(tabs[(tabs.findIndex((b) => b.classList.contains("on")) + 1) % tabs.length]), 4500);
+    box.querySelector(".tabs").addEventListener("click", () => clearInterval(auto));
+  });
 
   // Scroll reveal.
   const targets = document.querySelectorAll(".split > *, .states figure, .scene, .frame, .grid article, .looks figure, .rgrid figure, .download .wrap > *, .features .wrap > p, .features h2");
