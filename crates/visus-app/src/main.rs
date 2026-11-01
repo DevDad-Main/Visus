@@ -78,11 +78,12 @@ impl App {
 
         if self.hwnd != 0 {
             let s = self.notch.shape();
+            let f = ui::flare(&s);
             platform::set_window_region(
                 self.hwnd,
-                (s.rect.x * scale).floor() as i32,
+                ((s.rect.x - f) * scale).floor() as i32,
                 0,
-                (s.rect.w * scale).ceil() as i32,
+                ((s.rect.w + 2.0 * f) * scale).ceil() as i32,
                 (s.rect.h * scale).ceil() as i32,
                 (s.bottom_radius * scale) as i32,
             );

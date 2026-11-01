@@ -164,7 +164,8 @@ impl State {
         // Only the pill takes input; everything around it is click-through.
         let r = self.notch.shape().rect;
         if let Ok(region) = Region::new(&self.compositor) {
-            region.add(r.x.floor() as i32, 0, r.w.ceil() as i32, r.h.ceil() as i32);
+            let f = ui::flare(&self.notch.shape());
+            region.add((r.x - f).floor() as i32, 0, (r.w + 2.0 * f).ceil() as i32, r.h.ceil() as i32);
             self.layer.set_input_region(Some(region.wl_region()));
         }
 

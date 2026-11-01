@@ -46,17 +46,30 @@ pub fn buttons(notch: &Notch) -> Vec<(Button, Rect)> {
     }
 }
 
+/// Radius of the concave fillets where the pill melts into the top edge of the screen.
+const FLARE: f32 = 14.0;
+
+/// Horizontal overhang of the flares on each side; used to size the input region.
+pub fn flare(s: &Shape) -> f32 {
+    let r = s.bottom_radius.min(s.rect.w / 2.0).min(s.rect.h);
+    FLARE.min((s.rect.h - r).max(0.0))
+}
+
 pub fn pill_path(s: &Shape) -> Option<Path> {
     const K: f32 = 0.5523;
     let r = s.bottom_radius.min(s.rect.w / 2.0).min(s.rect.h);
+    let f = flare(s);
     let (x, y, w, h) = (s.rect.x, s.rect.y, s.rect.w, s.rect.h);
     let mut p = PathBuilder::new();
-    p.move_to(x, y);
-    p.line_to(x + w, y);
+    p.move_to(x - f, y);
+    p.line_to(x + w + f, y);
+    p.cubic_to(x + w + f - f * K, y, x + w, y + f - f * K, x + w, y + f);
     p.line_to(x + w, y + h - r);
     p.cubic_to(x + w, y + h - r + r * K, x + w - r + r * K, y + h, x + w - r, y + h);
     p.line_to(x + r, y + h);
     p.cubic_to(x + r - r * K, y + h, x, y + h - r + r * K, x, y + h - r);
+    p.line_to(x, y + f);
+    p.cubic_to(x, y + f - f * K, x - f + f * K, y, x - f, y);
     p.close();
     p.finish()
 }
