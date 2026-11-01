@@ -65,6 +65,7 @@ const OPEN: (f32, f32) = (744.0, 248.0);
 const PEEK_TIME: Duration = Duration::from_millis(2800);
 const HOVER_CLOSE_DELAY: Duration = Duration::from_millis(250);
 const PROGRESS_REFRESH: Duration = Duration::from_millis(500);
+const STATS_REFRESH: Duration = Duration::from_secs(1);
 const LYRIC_REFRESH: Duration = Duration::from_millis(250);
 const EYE_FOLLOW: Duration = Duration::from_millis(50);
 const EYE_FADE_IN: f32 = 0.35;
@@ -211,8 +212,12 @@ impl Notch {
         let synced = media && self.lyrics_open && matches!(self.lyrics, Lyrics::Ready(_));
         let base = if synced {
             Some(LYRIC_REFRESH)
+        } else if media || self.timer.is_running() {
+            Some(PROGRESS_REFRESH)
+        } else if self.wants_stats() {
+            Some(STATS_REFRESH)
         } else {
-            (media || self.timer.is_running() || self.wants_stats()).then_some(PROGRESS_REFRESH)
+            None
         };
         match (base, self.eye_wake()) {
             (Some(a), Some(b)) => Some(a.min(b)),

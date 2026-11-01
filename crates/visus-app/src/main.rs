@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod events;
 mod lyrics;
 mod stats;
@@ -73,6 +75,7 @@ struct App {
     cursor: (f32, f32),
     shown: bool,
     focus_requested: bool,
+    last_region: Option<(i32, i32, i32, i32)>,
     last_tick: Instant,
     #[cfg(windows)]
     tray: Option<tray::Tray>,
@@ -111,14 +114,17 @@ impl App {
         if self.hwnd != 0 {
             let r = ui::hit_rect(&self.notch);
             let radius = self.notch.shape().bottom_radius * self.notch.settings().scale;
-            platform::set_window_region(
-                self.hwnd,
+            let region = (
                 (r.x * scale).floor() as i32,
-                0,
                 (r.w * scale).ceil() as i32,
                 (r.h * scale).ceil() as i32,
                 (radius * scale) as i32,
             );
+            // SetWindowRgn repaints the window, so repeating it every frame makes it flicker.
+            if self.last_region != Some(region) {
+                self.last_region = Some(region);
+                platform::set_window_region(self.hwnd, region.0, 0, region.1, region.2, region.3);
+            }
         }
     }
 
@@ -463,6 +469,7 @@ fn main() {
         cursor: (-1.0, -1.0),
         shown: true,
         focus_requested: false,
+        last_region: None,
         last_tick: Instant::now(),
         #[cfg(windows)]
         tray: None,
