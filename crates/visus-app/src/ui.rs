@@ -3,7 +3,7 @@ use tiny_skia::{
     SpreadMode, FilterQuality, Pattern,
     Stroke, Transform, LineCap,
 };
-use visus_core::{Alert, AppKind, Radio, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, current_index, weather_label};
+use visus_core::{Alert, AppKind, Radio, EyeMood, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, current_index, weather_label};
 
 use crate::text::{Align, Text};
 
@@ -575,6 +575,9 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
     let [gr, gg, gb] = if sauron { [255, 95, 20] } else { iris_rgb.0 };
 
     let t = notch.awake_time();
+    let (mood, mood_ph) = notch.eye_mood();
+    let mood_e = (mood_ph * std::f32::consts::PI).sin();
+    let pulse = notch.eye_pulse();
     let flick = if sauron { 0.8 + 0.2 * (t * 11.0).sin().abs() * (t * 5.3).cos().abs().max(0.4) } else { 1.0 };
 
     // Sauron's gaze: a soft beam sweeping across the inside of the pill like a searchlight.
@@ -623,6 +626,10 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
         cx.pm.fill_path(&path, &p, FillRule::Winding, t, None);
     }
 
+    if sauron && !asleep {
+        sauron_fire(cx, x, y, ex, ey, open, t, fade, mood == EyeMood::Surprised);
+    }
+
     // A closed lid is a downward arc; a cubic with both controls at h peaks at 0.75h.
     if asleep || open < 0.12 {
         let mut pb = PathBuilder::new();
@@ -634,8 +641,13 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
             cx.stroke(&lid, color(tint, fade * if asleep { 0.6 } else { 1.0 }), 2.4);
         }
         if asleep {
-            cx.t("z", x + ex + 8.0, y - 3.0, 11.0, color(WHITE, fade * 0.5), Align::Left);
-            cx.t("z", x + ex + 16.0, y - 10.0, 8.0, color(WHITE, fade * 0.35), Align::Left);
+            // Three z's drift up and fade out in turn.
+            for i in 0..3 {
+                let ph = (t / 3.6 + i as f32 / 3.0) % 1.0;
+                let zx = x + ex + 3.0 + ph * 14.0 + (ph * 9.0 + i as f32).sin() * 1.5;
+                let zy = y + 1.0 - ph * r.h * 0.38;
+                cx.t("z", zx, zy, 6.0 + ph * 6.0, color(WHITE, fade * (ph * std::f32::consts::PI).sin() * 0.85), Align::Left);
+            }
         }
         return;
     }
@@ -679,7 +691,16 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
         // Vertical slit pupil that follows the gaze.
         let (px, ry) = (x + lx * ex * 0.7, h * 0.62);
         let py = y + ly * h * 0.2;
-        if let Some(oval) = tiny_skia::Rect::from_xywh(px - ey * 0.06, py - ry, ey * 0.12, ry * 2.0).and_then(PathBuilder::from_oval) {
+        let slit = ey * 0.06 * (1.0 + 1.6 * pulse + 1.2 * if mood == EyeMood::Surprised { mood_e } else { 0.0 });
+        // A hot rim around the slit makes it read as a burning gap rather than a hole.
+        if let Some(rim) = tiny_skia::Rect::from_xywh(px - slit * 2.4, py - ry * 1.05, slit * 4.8, ry * 2.1).and_then(PathBuilder::from_oval) {
+            let mut glow = Paint::default();
+            glow.anti_alias = true;
+            glow.set_color(Color::from_rgba8(255, 200, 70, (fade * 200.0) as u8));
+            let t = cx.xf();
+            cx.pm.fill_path(&rim, &glow, FillRule::Winding, t, Some(&mask));
+        }
+        if let Some(oval) = tiny_skia::Rect::from_xywh(px - slit, py - ry, slit * 2.0, ry * 2.0).and_then(PathBuilder::from_oval) {
             let mut ink = Paint::default();
             ink.anti_alias = true;
             ink.set_color(Color::from_rgba8(0, 0, 0, (fade * 255.0) as u8));
@@ -689,8 +710,25 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
         return;
     }
     let light = iris_rgb.lighten(0.55);
-    let ir = ey * 0.95;
+    let ir = ey * 0.95 * if mood == EyeMood::Surprised { 1.0 - 0.18 * mood_e } else { 1.0 };
     let (ix, iy) = (x + lx * (ex - ir) * 0.9, y + ly * ey * 0.25);
+    if mood == EyeMood::Heart {
+        // A beating heart takes the place of the iris.
+        let s = ir * 1.25 * (1.0 + 0.12 * (mood_ph * std::f32::consts::TAU * 4.0).sin()) * (0.4 + 0.6 * mood_e.sqrt());
+        let mut pb = PathBuilder::new();
+        pb.move_to(ix, iy + s * 0.9);
+        pb.cubic_to(ix - s * 1.3, iy - s * 0.1, ix - s * 0.7, iy - s * 0.95, ix, iy - s * 0.35);
+        pb.cubic_to(ix + s * 0.7, iy - s * 0.95, ix + s * 1.3, iy - s * 0.1, ix, iy + s * 0.9);
+        pb.close();
+        if let Some(heart) = pb.finish() {
+            let mut p = Paint::default();
+            p.anti_alias = true;
+            p.set_color(Color::from_rgba8(255, 70, 110, (fade * 255.0) as u8));
+            let t = cx.xf();
+            cx.pm.fill_path(&heart, &p, FillRule::Winding, t, Some(&mask));
+        }
+        return;
+    }
     let iris = RadialGradient::new(
         Point::from_xy(ix, iy),
         Point::from_xy(ix, iy),
@@ -712,12 +750,79 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
     let mut ink = Paint::default();
     ink.anti_alias = true;
     ink.set_color(Color::from_rgba8(0, 0, 0, (fade * 255.0) as u8));
-    if let Some(c) = PathBuilder::from_circle(ix, iy, ir * 0.45) {
+    if let Some(c) = PathBuilder::from_circle(ix, iy, ir * 0.45 * (1.0 + 0.5 * pulse)) {
         cx.pm.fill_path(&c, &ink, FillRule::Winding, t, Some(&mask));
     }
     ink.set_color(Color::from_rgba8(255, 255, 255, (fade * 230.0) as u8));
     if let Some(c) = PathBuilder::from_circle(ix - ir * 0.3, iy - ir * 0.35, ir * 0.17) {
         cx.pm.fill_path(&c, &ink, FillRule::Winding, t, Some(&mask));
+    }
+}
+
+/// Licking flames along both lids, a pulsing red halo and rising embers around the Eye of Sauron.
+fn sauron_fire(cx: &mut Ctx, x: f32, y: f32, ex: f32, ey: f32, open: f32, t: f32, fade: f32, rage: bool) {
+    // Slow breathing halo.
+    let halo = ex * (1.5 + 0.12 * (t * 2.2).sin()) * if rage { 1.25 } else { 1.0 };
+    if let (Some(shader), Some(c)) = (
+        RadialGradient::new(
+            Point::from_xy(x, y),
+            Point::from_xy(x, y),
+            halo,
+            vec![
+                GradientStop::new(0.0, Color::from_rgba8(255, 90, 10, (fade * 110.0) as u8)),
+                GradientStop::new(0.6, Color::from_rgba8(200, 30, 0, (fade * 50.0) as u8)),
+                GradientStop::new(1.0, Color::from_rgba8(120, 10, 0, 0)),
+            ],
+            SpreadMode::Pad,
+            Transform::identity(),
+        ),
+        PathBuilder::from_circle(x, y, halo),
+    ) {
+        let mut p = Paint::default();
+        p.shader = shader;
+        p.anti_alias = true;
+        let xf = cx.xf();
+        cx.pm.fill_path(&c, &p, FillRule::Winding, xf, None);
+    }
+
+    // Flame tongues rooted on the lids; each sways and flares on its own rhythm.
+    let lid = ey * (0.35 + 0.65 * open.min(1.0));
+    let n = 11;
+    for i in 0..n {
+        let f = i as f32;
+        let u = f / (n - 1) as f32 * 2.0 - 1.0;
+        let bx = x + u * ex * 0.92;
+        // Lid height follows the almond: tallest in the middle.
+        let base = lid * (1.0 - u * u) * 0.78;
+        for dir in [-1.0f32, 1.0] {
+            let seed = f * 1.7 + if dir > 0.0 { 40.0 } else { 0.0 };
+            let flare = 0.5 + 0.5 * (t * 7.0 + seed).sin() * (t * 3.1 + seed * 0.7).cos().abs();
+            let len = (2.5 + 6.5 * flare) * (0.55 + 0.45 * (1.0 - u * u)) * if rage { 1.4 } else { 1.0 };
+            let sway = (t * 4.0 + seed).sin() * 1.6;
+            let by = y + dir * base;
+            let tip = (bx + sway + u * 1.2, by + dir * len);
+            for (scale, col, al) in [(1.0, [200, 25, 0], 0.55), (0.72, [255, 110, 10], 0.75), (0.42, [255, 215, 90], 0.9)] {
+                let w = 2.2 * scale + 0.6;
+                let mut pb = PathBuilder::new();
+                pb.move_to(bx - w, by);
+                pb.quad_to(bx - w * 0.6 + sway * 0.3, by + dir * len * 0.55 * scale, tip.0, by + dir * len * scale);
+                pb.quad_to(bx + w * 0.6 + sway * 0.3, by + dir * len * 0.55 * scale, bx + w, by);
+                pb.close();
+                if let Some(path) = pb.finish() {
+                    cx.fill(&path, color(col, fade * al));
+                }
+            }
+        }
+    }
+
+    // Embers drifting up and fading.
+    for i in 0..7 {
+        let f = i as f32;
+        let ph = (t * 0.55 + f / 7.0) % 1.0;
+        let ex_off = (f * 2.37).sin() * ex * 0.8 + (ph * 6.0 + f).sin() * 2.0;
+        let ey_off = -ey * 0.8 - ph * ey * 2.6;
+        let al = (ph * std::f32::consts::PI).sin() * 0.9;
+        cx.circle(x + ex_off, y + ey_off, 0.9 + (1.0 - ph) * 0.6, color([255, 190, 60], fade * al));
     }
 }
 

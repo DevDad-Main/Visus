@@ -17,12 +17,20 @@ impl Page {
     pub const ALL: [Page; 8] = [Page::Music, Page::Control, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Calendar, Page::Weather];
 }
 
+/// Short-lived expressions the awake eye cycles through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EyeMood {
+    None,
+    Scan,
+    Surprised,
+    Squint,
+    Heart,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EyeState {
     Hidden,
     Awake,
-    /// Reserved: the eye no longer dozes off on its own.
-    #[allow(dead_code)]
     Asleep,
 }
 
@@ -71,6 +79,9 @@ enum Mode {
 const MINIMAL: (f32, f32) = (190.0, 6.0);
 /// Extra closed-pill width while the music visualizer is shown.
 const VISUALIZER_EXTRA: f32 = 76.0;
+const MOOD_PERIOD: f32 = 16.0;
+const MOOD_START: f32 = 11.0;
+const MOOD_LEN: f32 = 3.2;
 pub const VIZ_BARS: usize = 9;
 const EYE_PILL_W: f32 = 104.0;
 const CONTROLS_REFRESH: Duration = Duration::from_millis(400);
@@ -933,15 +944,62 @@ impl Notch {
         let wake = Duration::from_secs(self.settings.idle_secs as u64);
         if idle < wake {
             EyeState::Hidden
-        } else {
-            // The eye keeps blinking for as long as the pill stays idle; it never dozes off into a closed lid.
+        } else if idle < wake * 4 || self.last_motion.elapsed() < wake * 2 {
+            // Someone is still moving the mouse, so the eye keeps watching instead of dozing off.
             EyeState::Awake
+        } else {
+            EyeState::Asleep
         }
     }
 
     /// Direction the eye looks, each axis in -1..=1.
     pub fn eye_look(&self) -> (f32, f32) {
+        if let (EyeMood::Scan, ph) = self.eye_mood() {
+            // Quick left-right glance, like checking both sides.
+            return ((ph * std::f32::consts::TAU * 1.5).sin() * 0.95 * (ph * std::f32::consts::PI).sin().sqrt(), 0.0);
+        }
         (self.look_x.value, self.look_y.value)
+    }
+
+    /// Current expression and how far through it the eye is (0..1).
+    pub fn eye_mood(&self) -> (EyeMood, f32) {
+        if self.eye_state() != EyeState::Awake {
+            return (EyeMood::None, 0.0);
+        }
+        let t = self.awake_secs();
+        let (slot, within) = ((t / MOOD_PERIOD) as u32, t % MOOD_PERIOD);
+        let phase = (within - MOOD_START) / MOOD_LEN;
+        if !(0.0..1.0).contains(&phase) {
+            return (EyeMood::None, 0.0);
+        }
+        let sauron = self.settings.eye_style == crate::EyeStyle::Sauron;
+        let mood = match hash(slot + 77) % 6 {
+            1 => EyeMood::Scan,
+            2 => EyeMood::Surprised,
+            3 => EyeMood::Squint,
+            4 if sauron => EyeMood::Surprised,
+            4 => EyeMood::Heart,
+            _ => EyeMood::None,
+        };
+        (mood, phase)
+    }
+
+    /// 0..1 drowsiness over the last seconds before the eye falls asleep.
+    pub fn eye_drowsy(&self) -> f32 {
+        if self.eye_state() != EyeState::Awake {
+            return 0.0;
+        }
+        let wake = Duration::from_secs(self.settings.idle_secs as u64);
+        let to_sleep = (wake * 4).saturating_sub(self.idle_for()).max((wake * 2).saturating_sub(self.last_motion.elapsed()));
+        1.0 - (to_sleep.as_secs_f32() / 25.0).min(1.0)
+    }
+
+    /// Pupil pulse 0..1: follows the music while something plays.
+    pub fn eye_pulse(&self) -> f32 {
+        if !self.visualizer_active() {
+            return 0.0;
+        }
+        if self.viz_live { self.viz_level } else { 0.5 + 0.5 * (self.viz_phase * 9.0).sin() }
     }
 
     pub fn set_eye_target(&mut self, dx: f32, dy: f32) {
@@ -954,7 +1012,17 @@ impl Notch {
         match self.eye_state() {
             EyeState::Hidden => 0.0,
             EyeState::Asleep => 0.12,
-            EyeState::Awake => blink_at(self.awake_secs()).0,
+            EyeState::Awake => {
+                let mut o = blink_at(self.awake_secs()).0;
+                let (mood, ph) = self.eye_mood();
+                let e = (ph * std::f32::consts::PI).sin();
+                match mood {
+                    EyeMood::Squint => o = o.min(1.0 - 0.5 * e),
+                    EyeMood::Surprised => o *= 1.0 + 0.22 * e,
+                    _ => {}
+                }
+                o.min(1.0 - 0.55 * self.eye_drowsy()).max(0.0)
+            }
         }
     }
 
@@ -974,6 +1042,12 @@ impl Notch {
             self.touch();
         }
         self.last_motion = Instant::now();
+    }
+
+    /// Pretends the last activity happened `by` earlier (previews and tests of the idle eye).
+    pub fn rewind_activity(&mut self, by: Duration) {
+        self.last_activity -= by;
+        self.last_motion -= by;
     }
 
     pub fn set_cursor_tracking(&mut self, on: bool) {
@@ -1030,10 +1104,26 @@ impl Notch {
                 if t < EYE_FADE_IN {
                     next = next.min(0.016);
                 }
-                Some(Duration::from_secs_f32(next.max(0.005)))
+                // Expressions animate, and the next one starts at a known time.
+                let within = t % MOOD_PERIOD;
+                if self.eye_mood().0 != EyeMood::None {
+                    next = next.min(0.033);
+                } else if within < MOOD_START {
+                    next = next.min(MOOD_START - within + 0.02);
+                }
+                if self.eye_drowsy() > 0.0 {
+                    next = next.min(0.2);
+                }
+                let to_sleep = (wake * 4).saturating_sub(idle).max((wake * 2).saturating_sub(self.last_motion.elapsed()));
+                let mut d = Duration::from_secs_f32(next.max(0.005));
+                if !to_sleep.is_zero() {
+                    d = d.min(to_sleep + Duration::from_millis(20));
+                }
+                Some(d)
             }
             // A sleeping eye only needs a slow look at the cursor to notice you coming back.
-            EyeState::Asleep => self.tracking.then_some(Duration::from_millis(500)),
+            // Floating z's drift continuously while asleep.
+            EyeState::Asleep => Some(Duration::from_millis(66)),
         }
     }
 
@@ -1275,5 +1365,18 @@ mod tests {
         assert!(n.visualizer_active());
         n.update_settings(|s| s.visualizer = false);
         assert!(!n.visualizer_active());
+    }
+
+    #[test]
+    fn eye_cycles_through_moods() {
+        let mut seen = std::collections::HashSet::new();
+        for slot in 0..30u32 {
+            let mut n = Notch::new(800.0);
+            let wake = n.settings().idle_secs as f32;
+            n.rewind_activity(Duration::from_secs_f32(wake + slot as f32 * MOOD_PERIOD + MOOD_START + MOOD_LEN / 2.0));
+            let (m, _) = n.eye_mood();
+            seen.insert(format!("{m:?}"));
+        }
+        assert!(seen.len() >= 4, "{seen:?}");
     }
 }

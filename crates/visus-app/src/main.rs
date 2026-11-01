@@ -492,6 +492,21 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             notch.tick(Duration::from_millis(16));
         }
     }
+    if page == "eye" || page == "sauron" {
+        if page == "sauron" {
+            notch.update_settings(|s| s.eye_style = visus_core::EyeStyle::Sauron);
+        }
+        notch.hover(false);
+        for _ in 0..300 {
+            notch.tick(Duration::from_millis(16));
+        }
+        notch.touch();
+        notch.rewind_activity(Duration::from_secs_f32(query.and_then(|q| q.parse().ok()).unwrap_or(60.0)));
+        let mut pm = Pixmap::new(WIN_W as u32 * 2, 160).expect("pixmap");
+        ui::draw(&mut pm, &text::Text::new(), &notch, 2.0);
+        pm.save_png(out).expect("write png");
+        return;
+    }
     let idx = ["music", "control", "timer", "stats", "shelf", "todo", "calendar", "weather"].iter().position(|p| *p == page).unwrap_or(0);
     notch.next_page(idx as i32);
     if let Some(mut s) = stats::Sampler::new() {
