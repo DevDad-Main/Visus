@@ -1917,3 +1917,105 @@ fn draw_location_row(cx: &mut Ctx, notch: &Notch, rc: Rect, a: f32) {
         }
     }
 }
+
+/// Design mock of the widget tray: cards spring out from under the pill. `t` runs 0..1 over the animation.
+pub fn draw_widgets_mock(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32, t: f32) {
+    // Stand-in wallpaper so the glass cards read against something.
+    let (w, h) = (pm.width() as f32, pm.height() as f32);
+    if let Some(shader) = LinearGradient::new(
+        Point::from_xy(0.0, 0.0),
+        Point::from_xy(w, h),
+        vec![GradientStop::new(0.0, Color::from_rgba8(58, 40, 120, 255)), GradientStop::new(1.0, Color::from_rgba8(20, 90, 140, 255))],
+        SpreadMode::Pad,
+        Transform::identity(),
+    ) {
+        let mut p = Paint::default();
+        p.shader = shader;
+        if let Some(r) = tiny_skia::Rect::from_xywh(0.0, 0.0, w, h) {
+            pm.fill_rect(r, &p, Transform::identity(), None);
+        }
+    }
+    draw(pm, text, notch, scale);
+
+    let s = notch.shape().rect;
+    let pill_cx = s.x + s.w / 2.0;
+    let (cw, gap, top) = (150.0, 14.0, s.h + 16.0);
+    let total = 4.0 * cw + 3.0 * gap;
+    for i in 0..4 {
+        let local = ((t - i as f32 * 0.1) / 0.55).clamp(0.0, 1.0);
+        if local <= 0.0 {
+            continue;
+        }
+        // Ease-out-back: overshoots a little, then settles.
+        let k = 1.70158f32;
+        let e = 1.0 + (k + 1.0) * (local - 1.0).powi(3) + k * (local - 1.0).powi(2);
+        let (fx, fy) = (pill_cx - total / 2.0 + i as f32 * (cw + gap) + cw / 2.0, top + cw / 2.0);
+        let (cur_x, cur_y) = (pill_cx + (fx - pill_cx) * e, s.h + (fy - s.h) * e);
+        let sc = (0.15 + 0.85 * e).max(0.01);
+        let a = local.min(1.0);
+        let mut cx = Ctx {
+            pm,
+            text,
+            scale: scale * sc,
+            ox: (cur_x - fx * sc) * scale,
+            oy: (cur_y - fy * sc) * scale,
+        };
+        let r = rect(fx - cw / 2.0, fy - cw / 2.0, cw, cw);
+        for (grow, al) in [(14.0, 0.07), (6.0, 0.12)] {
+            cx.rrect(rect(r.x - grow, r.y - grow * 0.3, r.w + 2.0 * grow, r.h + 2.0 * grow), 30.0 + grow, color([0, 0, 0], al * a));
+        }
+        cx.rrect(r, 30.0, color([14, 14, 18], a));
+        if let Some(edge) = rrect(r.x + 0.5, r.y + 0.5, r.w - 1.0, r.h - 1.0, 30.0) {
+            cx.stroke(&edge, color(WHITE, 0.10 * a), 1.0);
+        }
+        widget_body(&mut cx, notch, i, r, a);
+    }
+}
+
+fn widget_body(cx: &mut Ctx, notch: &Notch, i: usize, r: Rect, a: f32) {
+    let (x, y) = (r.x, r.y);
+    match i {
+        0 => {
+            let m = notch.media();
+            let tint = notch.accent();
+            cx.rrect(r, 30.0, color(tint, 0.22 * a));
+            let tile = rect(x + 16.0, y + 16.0, 56.0, 56.0);
+            match &m.art {
+                Some(art) => draw_image(cx, tile, 12.0, art, a),
+                None => cx.rrect(tile, 12.0, color(tint, 0.8 * a)),
+            }
+            let title = cx.fit(if m.title.is_empty() { "Nothing playing" } else { &m.title }, 15.0, r.w - 32.0);
+            cx.t(&title, x + 16.0, y + 100.0, 15.0, color(WHITE, a), Align::Left);
+            let artist = cx.fit(if m.artist.is_empty() { "Play something" } else { &m.artist }, 12.0, r.w - 32.0);
+            cx.t(&artist, x + 16.0, y + 118.0, 12.0, color(GRAY, a), Align::Left);
+            cx.rrect(rect(x + 16.0, y + 130.0, r.w - 32.0, 4.0), 2.0, color(WHITE, 0.18 * a));
+            cx.rrect(rect(x + 16.0, y + 130.0, (r.w - 32.0) * 0.4, 4.0), 2.0, color(WHITE, 0.95 * a));
+        }
+        1 => {
+            let (temp, label) = match notch.weather() {
+                Some(w) => (format!("{:.0}\u{b0}", w.temp_c), weather_label(w.code).to_string()),
+                None => ("21\u{b0}".to_string(), "Partly cloudy".to_string()),
+            };
+            cx.circle(x + 30.0, y + 34.0, 11.0, color([255, 200, 60], a));
+            cx.circle(x + 40.0, y + 40.0, 11.0, color([235, 240, 250], 0.95 * a));
+            cx.t(&temp, x + 16.0, y + 106.0, 50.0, color(WHITE, a), Align::Left);
+            cx.t(&label, x + 16.0, y + 130.0, 13.0, color(GRAY, a), Align::Left);
+        }
+        2 => {
+            let (cxp, cyp) = (x + r.w / 2.0, y + 66.0);
+            let p = notch.timer().progress();
+            cx.ring(cxp, cyp, 38.0, 8.0, if p > 0.0 { 1.0 - p } else { 1.0 }, GREEN, a);
+            let mins = notch.timer().remaining().as_secs() / 60;
+            cx.t(&format!("{mins}"), cxp, cyp + 9.0, 28.0, color(WHITE, a), Align::Center);
+            cx.t("Focus", cxp, y + 136.0, 13.0, color(GRAY, a), Align::Center);
+        }
+        _ => {
+            let st = notch.stats();
+            let (cxp, cyp) = (x + r.w / 2.0, y + 66.0);
+            cx.ring(cxp, cyp, 40.0, 7.0, st.cpu.clamp(0.02, 1.0), GREEN, a);
+            cx.ring(cxp, cyp, 27.0, 7.0, st.ram.clamp(0.02, 1.0), BLUE, a);
+            cx.t(&format!("{:.0}%", st.cpu * 100.0), cxp, cyp + 5.0, 14.0, color(WHITE, a), Align::Center);
+            cx.t("CPU   RAM", cxp, y + 136.0, 12.0, color(GRAY, a), Align::Center);
+        }
+    }
+}
