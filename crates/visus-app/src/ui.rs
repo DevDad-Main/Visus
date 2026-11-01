@@ -375,9 +375,9 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
     match notch.page {
         Page::Music => draw_music(cx, notch, a),
         Page::Timer => draw_timer(cx, notch, a),
+        Page::Stats => draw_stats(cx, notch, a),
         p => {
             let name = match p {
-                Page::Water => "Water",
                 Page::Shelf => "Shelf",
                 _ => "To-do",
             };
@@ -544,4 +544,33 @@ pub fn hit_rect(notch: &Notch) -> Rect {
     let centre = s.rect.x + s.rect.w / 2.0;
     let half = s.rect.w / 2.0 + f;
     Rect { x: centre - half * k, y: 0.0, w: half * 2.0 * k, h: s.rect.h * k }
+}
+
+fn rate(bytes_per_sec: u64) -> String {
+    let b = bytes_per_sec as f64;
+    if b >= 1024.0 * 1024.0 {
+        format!("{:.1} MB/s", b / (1024.0 * 1024.0))
+    } else {
+        format!("{:.0} KB/s", b / 1024.0)
+    }
+}
+
+fn draw_stats(cx: &mut Ctx, notch: &Notch, a: f32) {
+    let x0 = notch.shape().rect.x;
+    let st = notch.stats();
+    let gauges = [
+        ("CPU", st.cpu, format!("{:.0}%", st.cpu * 100.0), GREEN, x0 + 130.0),
+        ("Memory", st.ram, format!("{:.0}%", st.ram * 100.0), BLUE, x0 + 300.0),
+    ];
+    for (label, v, text, rgb, x) in gauges {
+        cx.ring(x, 122.0, 42.0, 8.0, v, rgb, a);
+        cx.t(&text, x, 131.0, 26.0, color(WHITE, a), Align::Center);
+        cx.t(label, x, 198.0, 18.0, color(GRAY, a), Align::Center);
+    }
+    let detail = format!("{:.1} / {:.1} GB", st.ram_used_gb, st.ram_total_gb);
+    cx.t(&detail, x0 + 300.0, 218.0, 15.0, color(GRAY, 0.8 * a), Align::Center);
+
+    cx.t("Network", x0 + 480.0, 98.0, 18.0, color(GRAY, a), Align::Left);
+    cx.t(&format!("\u{2193} {}", rate(st.rx_bytes_per_sec)), x0 + 480.0, 138.0, 26.0, color(WHITE, a), Align::Left);
+    cx.t(&format!("\u{2191} {}", rate(st.tx_bytes_per_sec)), x0 + 480.0, 174.0, 26.0, color(WHITE, 0.75 * a), Align::Left);
 }

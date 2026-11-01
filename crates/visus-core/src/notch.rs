@@ -1,17 +1,17 @@
-use crate::{Event, FOCUS, Hud, MediaInfo, Settings, Spring, Timer, Water};
+use crate::{Event, FOCUS, Hud, MediaInfo, Settings, Spring, Stats, Timer};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Music,
     Timer,
-    Water,
+    Stats,
     Shelf,
     Todo,
 }
 
 impl Page {
-    pub const ALL: [Page; 5] = [Page::Music, Page::Timer, Page::Water, Page::Shelf, Page::Todo];
+    pub const ALL: [Page; 5] = [Page::Music, Page::Timer, Page::Stats, Page::Shelf, Page::Todo];
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,7 +84,7 @@ pub struct Notch {
     hidden: bool,
     timer: Timer,
     settings: Settings,
-    water: Water,
+    stats: Stats,
     dirty: bool,
     last_activity: Instant,
     look_x: Spring,
@@ -109,7 +109,7 @@ impl Notch {
             hidden: false,
             timer: Timer::new(FOCUS),
             settings: Settings::default(),
-            water: Water::default(),
+            stats: Stats::default(),
             dirty: false,
             last_activity: Instant::now(),
             look_x: Spring::new(0.0),
@@ -183,7 +183,7 @@ impl Notch {
     /// Redraw cadence needed while otherwise static, e.g. the progress bar.
     pub fn refresh_interval(&self) -> Option<Duration> {
         let media = self.is_open() && self.media.has_session && self.media.playing;
-        let base = (media || self.timer.is_running()).then_some(PROGRESS_REFRESH);
+        let base = (media || self.timer.is_running() || self.wants_stats()).then_some(PROGRESS_REFRESH);
         match (base, self.eye_wake()) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -227,31 +227,17 @@ impl Notch {
         self.set_settings(s);
     }
 
-    pub fn water(&self) -> &Water {
-        &self.water
+    pub fn stats(&self) -> &Stats {
+        &self.stats
     }
 
-    pub fn set_water(&mut self, w: Water) {
-        self.water = w;
+    pub fn set_stats(&mut self, s: Stats) {
+        self.stats = s;
     }
 
-    /// Call with the local date (any stable string) so the tally resets each day.
-    pub fn set_today(&mut self, today: &str) {
-        if self.water.roll_over(today) {
-            self.dirty = true;
-        }
-    }
-
-    pub fn drink(&mut self) {
-        self.touch();
-        self.water.ml += self.settings.water_cup_ml;
-        self.dirty = true;
-    }
-
-    pub fn undo_drink(&mut self) {
-        self.touch();
-        self.water.ml = self.water.ml.saturating_sub(self.settings.water_cup_ml);
-        self.dirty = true;
+    /// The host should sample system stats only while the page that shows them is open.
+    pub fn wants_stats(&self) -> bool {
+        self.is_open() && self.page == Page::Stats
     }
 
     /// True once after state worth saving changed.

@@ -1,3 +1,4 @@
+mod stats;
 mod store;
 mod text;
 #[cfg(target_os = "linux")]
@@ -65,6 +66,7 @@ struct App {
     hwnd: isize,
     notch: Notch,
     text: text::Text,
+    sampler: Option<stats::Sampler>,
     cursor: (f32, f32),
     shown: bool,
     last_tick: Instant,
@@ -283,6 +285,11 @@ impl ApplicationHandler<UserEvent> for App {
         let dt = now - self.last_tick;
         self.last_tick = now;
         self.feed_eye();
+        if self.notch.wants_stats() {
+            if let Some(s) = &mut self.sampler {
+                self.notch.set_stats(s.sample());
+            }
+        }
         self.notch.tick(dt.min(Duration::from_millis(50)));
         store::sync(&mut self.notch);
 
@@ -307,7 +314,33 @@ impl ApplicationHandler<UserEvent> for App {
     }
 }
 
+/// `visus-app --snapshot <music|timer|stats|shelf|todo> <out.png>`: renders the open pill headlessly.
+fn snapshot(page: &str, out: &str) {
+    let mut notch = Notch::new(WIN_W);
+    notch.hover(true);
+    for _ in 0..200 {
+        notch.tick(Duration::from_millis(16));
+    }
+    let idx = ["music", "timer", "stats", "shelf", "todo"].iter().position(|p| *p == page).unwrap_or(0);
+    notch.next_page(idx as i32);
+    if let Some(mut s) = stats::Sampler::new() {
+        s.sample();
+        std::thread::sleep(Duration::from_millis(400));
+        notch.set_stats(s.sample());
+    }
+    let mut pm = Pixmap::new(WIN_W as u32 * 2, WIN_H as u32 * 2).expect("pixmap");
+    ui::draw(&mut pm, &text::Text::new(), &notch, 2.0);
+    pm.save_png(out).expect("write png");
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if let [_, flag, page, out] = &args[..] {
+        if flag == "--snapshot" {
+            snapshot(page, out);
+            return;
+        }
+    }
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_some()
         && std::env::var("VISUS_BACKEND").map_or(true, |v| v != "winit")
@@ -327,6 +360,7 @@ fn main() {
         hwnd: 0,
         notch,
         text: text::Text::new(),
+        sampler: stats::Sampler::new(),
         cursor: (-1.0, -1.0),
         shown: true,
         last_tick: Instant::now(),

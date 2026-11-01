@@ -36,7 +36,7 @@ use smithay_client_toolkit::{
 use tiny_skia::Pixmap;
 use visus_core::Notch;
 
-use crate::{store, text::Text, ui};
+use crate::{stats, store, text::Text, ui};
 
 const WIN_W: u32 = 960;
 const WIN_H: u32 = 330;
@@ -56,6 +56,7 @@ struct State {
 
     notch: Notch,
     text: Text,
+    sampler: Option<stats::Sampler>,
     scale: i32,
     cursor: (f32, f32),
     scroll_accum: f64,
@@ -103,6 +104,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         pointer: None,
         notch,
         text: Text::new(),
+        sampler: stats::Sampler::new(),
         scale: 1,
         cursor: (-1.0, -1.0),
         scroll_accum: 0.0,
@@ -135,6 +137,11 @@ impl State {
         let dt = now - self.last_tick;
         self.last_tick = now;
         self.feed_eye();
+        if self.notch.wants_stats() {
+            if let Some(s) = &mut self.sampler {
+                self.notch.set_stats(s.sample());
+            }
+        }
         self.notch.tick(dt.min(Duration::from_millis(50)));
         store::sync(&mut self.notch);
 
