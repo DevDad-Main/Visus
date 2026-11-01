@@ -399,6 +399,34 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
     let sauron = notch.settings().eye_style == EyeStyle::Sauron;
     let [gr, gg, gb] = if sauron { [255, 95, 20] } else { iris_rgb.0 };
 
+    let t = notch.awake_time();
+    let flick = if sauron { 0.8 + 0.2 * (t * 11.0).sin().abs() * (t * 5.3).cos().abs().max(0.4) } else { 1.0 };
+
+    // Sauron's gaze: a soft beam sweeping across the inside of the pill like a searchlight.
+    if sauron && !asleep {
+        let bx = r.x + r.w / 2.0 + (t * 0.8).sin() * r.w * 0.34;
+        let beam = LinearGradient::new(
+            Point::from_xy(bx - 46.0, 0.0),
+            Point::from_xy(bx + 46.0, 0.0),
+            vec![
+                GradientStop::new(0.0, Color::from_rgba8(255, 120, 30, 0)),
+                GradientStop::new(0.5, Color::from_rgba8(255, 130, 40, (fade * 70.0) as u8)),
+                GradientStop::new(1.0, Color::from_rgba8(255, 120, 30, 0)),
+            ],
+            SpreadMode::Pad,
+            Transform::identity(),
+        );
+        if let (Some(shader), Some(pill), Some(mut mask)) = (beam, pill_path(&notch.shape()), tiny_skia::Mask::new(cx.pm.width(), cx.pm.height())) {
+            mask.fill_path(&pill, FillRule::Winding, true, cx.xf());
+            let mut p = Paint::default();
+            p.shader = shader;
+            if let Some(band) = tiny_skia::Rect::from_xywh(bx - 46.0, 0.0, 92.0, r.h) {
+                let t = cx.xf();
+                cx.pm.fill_rect(band, &p, t, Some(&mask));
+            }
+        }
+    }
+
     // Soft glow behind the eye, kept inside the pill.
     let glow_r = r.h * 0.5;
     let glow = RadialGradient::new(
@@ -406,7 +434,7 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
         Point::from_xy(x, y),
         glow_r,
         vec![
-            GradientStop::new(0.0, Color::from_rgba8(gr, gg, gb, (fade * if asleep { 40.0 } else { 130.0 }) as u8)),
+            GradientStop::new(0.0, Color::from_rgba8(gr, gg, gb, (fade * flick * if asleep { 40.0 } else { 130.0 }) as u8)),
             GradientStop::new(1.0, Color::from_rgba8(gr, gg, gb, 0)),
         ],
         SpreadMode::Pad,
@@ -426,7 +454,9 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
         pb.move_to(x - ex, y - 1.0);
         pb.cubic_to(x - ex * 0.45, y + ey * 0.9, x + ex * 0.45, y + ey * 0.9, x + ex, y - 1.0);
         if let Some(lid) = pb.finish() {
-            cx.stroke(&lid, color(WHITE, fade * if asleep { 0.55 } else { 0.9 }), 2.2);
+            // A closed Sauron lid glows ember-orange instead of going grey.
+            let tint = if sauron { [255, 110, 25] } else { WHITE };
+            cx.stroke(&lid, color(tint, fade * if asleep { 0.6 } else { 1.0 }), 2.4);
         }
         if asleep {
             cx.t("z", x + ex + 8.0, y - 3.0, 11.0, color(WHITE, fade * 0.5), Align::Left);
@@ -472,8 +502,8 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
     mask.fill_path(&almond, FillRule::Winding, true, cx.xf());
     if sauron {
         // Vertical slit pupil that follows the gaze.
-        let (px, ry) = (x + lx * ex * 0.35, h * 0.9);
-        if let Some(oval) = tiny_skia::Rect::from_xywh(px - ey * 0.16, y - ry, ey * 0.32, ry * 2.0).and_then(PathBuilder::from_oval) {
+        let (px, ry) = (x + lx * ex * 0.35, h * 0.78);
+        if let Some(oval) = tiny_skia::Rect::from_xywh(px - ey * 0.1, y - ry, ey * 0.2, ry * 2.0).and_then(PathBuilder::from_oval) {
             let mut ink = Paint::default();
             ink.anti_alias = true;
             ink.set_color(Color::from_rgba8(0, 0, 0, (fade * 255.0) as u8));

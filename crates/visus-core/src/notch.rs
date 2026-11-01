@@ -116,6 +116,7 @@ pub struct Notch {
     look_x: Spring,
     look_y: Spring,
     tracking: bool,
+    last_motion: Instant,
 }
 
 impl Notch {
@@ -157,6 +158,7 @@ impl Notch {
             look_x: Spring::new(0.0),
             look_y: Spring::new(0.0),
             tracking: false,
+            last_motion: Instant::now(),
         };
         n.retarget();
         n
@@ -681,7 +683,8 @@ impl Notch {
         let wake = Duration::from_secs(self.settings.idle_secs as u64);
         if idle < wake {
             EyeState::Hidden
-        } else if idle < wake * 4 {
+        } else if idle < wake * 4 || self.last_motion.elapsed() < wake * 2 {
+            // Someone is still moving the mouse, so the eye keeps watching instead of dozing off.
             EyeState::Awake
         } else {
             EyeState::Asleep
@@ -717,12 +720,25 @@ impl Notch {
     }
 
     /// Hosts that can read the global cursor set this and feed `set_eye_target`; otherwise the eye wanders.
+    /// The global cursor moved. Keeps the eye awake, and wakes a sleeping one (the clock returns).
+    pub fn note_motion(&mut self) {
+        if self.eye_state() == EyeState::Asleep {
+            self.touch();
+        }
+        self.last_motion = Instant::now();
+    }
+
     pub fn set_cursor_tracking(&mut self, on: bool) {
         self.tracking = on;
     }
 
     pub fn tracks_cursor(&self) -> bool {
         self.tracking
+    }
+
+    /// Seconds the eye has been awake; drives its flicker and sweeping gaze.
+    pub fn awake_time(&self) -> f32 {
+        self.awake_secs()
     }
 
     fn awake_secs(&self) -> f32 {
@@ -753,6 +769,10 @@ impl Notch {
             EyeState::Awake => {
                 let t = self.awake_secs();
                 let mut next = blink_at(t).1;
+                if self.settings.eye_style == crate::EyeStyle::Sauron {
+                    // Flames flicker and the gaze sweeps, so keep animating while it watches.
+                    next = next.min(0.05);
+                }
                 if self.tracking {
                     next = next.min(EYE_FOLLOW.as_secs_f32());
                 } else {
@@ -762,10 +782,15 @@ impl Notch {
                 if t < EYE_FADE_IN {
                     next = next.min(0.016);
                 }
-                let to_sleep = (wake * 4).saturating_sub(idle);
-                Some(Duration::from_secs_f32(next.max(0.005)).min(to_sleep + Duration::from_millis(20)))
+                let to_sleep = (wake * 4).saturating_sub(idle).max((wake * 2).saturating_sub(self.last_motion.elapsed()));
+                let mut d = Duration::from_secs_f32(next.max(0.005));
+                if !to_sleep.is_zero() {
+                    d = d.min(to_sleep + Duration::from_millis(20));
+                }
+                Some(d)
             }
-            EyeState::Asleep => None,
+            // A sleeping eye only needs a slow look at the cursor to notice you coming back.
+            EyeState::Asleep => self.tracking.then_some(Duration::from_millis(500)),
         }
     }
 

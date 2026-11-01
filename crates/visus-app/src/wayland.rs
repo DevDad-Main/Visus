@@ -56,6 +56,7 @@ struct State {
     pointer: Option<wl_pointer::WlPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     keyboard_grabbed: bool,
+    last_cursor: Option<(i32, i32)>,
 
     notch: Notch,
     text: Text,
@@ -110,6 +111,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         pointer: None,
         keyboard: None,
         keyboard_grabbed: false,
+        last_cursor: None,
         notch,
         text: Text::new(),
         sampler: stats::Sampler::new(),
@@ -196,7 +198,9 @@ impl State {
 
     /// Wayland hides the global cursor, so ask Hyprland for it while the eye is awake.
     fn feed_eye(&mut self) {
-        if self.notch.eye_state() != visus_core::EyeState::Awake {
+        use visus_core::EyeState;
+        let state = self.notch.eye_state();
+        if state != EyeState::Awake && state != EyeState::Asleep {
             return;
         }
         let Some(sock) = self.hypr.clone() else { return };
@@ -213,6 +217,14 @@ impl State {
         let (Some(((mx, my), _)), Some(cur)) = (self.monitor_top, hypr_json(&sock, "j/cursorpos")) else { return };
         let (Some(cx), Some(cy)) = (cur["x"].as_f64(), cur["y"].as_f64()) else { return };
         self.notch.set_cursor_tracking(true);
+        let here = (cx as i32, cy as i32);
+        if self.last_cursor.is_none_or(|(x, y)| (x - here.0).abs() + (y - here.1).abs() > 3) {
+            self.notch.note_motion();
+        }
+        self.last_cursor = Some(here);
+        if self.notch.eye_state() != EyeState::Awake {
+            return;
+        }
         let cy_pill = my + self.notch.settings().closed_height / 2.0;
         self.notch.set_eye_target((cx as f32 - mx) / 500.0, (cy as f32 - cy_pill) / 300.0);
     }

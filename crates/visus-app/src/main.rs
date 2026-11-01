@@ -81,6 +81,7 @@ struct App {
     shown: bool,
     focus_requested: bool,
     last_region: Option<(i32, i32, i32, i32)>,
+    last_cursor: Option<(i32, i32)>,
     last_tick: Instant,
     #[cfg(windows)]
     tray: Option<tray::Tray>,
@@ -145,10 +146,21 @@ impl App {
 
     /// Points the idle eye at the global cursor where the OS exposes it.
     fn feed_eye(&mut self) {
-        if self.notch.eye_state() != visus_core::EyeState::Awake {
+        use visus_core::EyeState;
+        let state = self.notch.eye_state();
+        if state != EyeState::Awake && state != EyeState::Asleep {
             return;
         }
         let (Some(w), Some((cx, cy))) = (&self.window, platform::cursor_pos()) else { return };
+        let moved = self.last_cursor.is_none_or(|(x, y)| (x - cx).abs() + (y - cy).abs() > 3);
+        self.last_cursor = Some((cx, cy));
+        if moved {
+            self.notch.note_motion();
+        }
+        if self.notch.eye_state() != EyeState::Awake {
+            self.notch.set_cursor_tracking(true);
+            return;
+        }
         let Ok(origin) = w.outer_position() else { return };
         self.notch.set_cursor_tracking(true);
         let k = w.scale_factor() as f32;
@@ -510,6 +522,7 @@ fn main() {
         shown: true,
         focus_requested: false,
         last_region: None,
+        last_cursor: None,
         last_tick: Instant::now(),
         #[cfg(windows)]
         tray: None,
