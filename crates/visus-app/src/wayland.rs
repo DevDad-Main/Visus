@@ -211,7 +211,7 @@ impl State {
 
     /// Grabs the keyboard while the launcher is open so typing reaches it, and lets go afterwards.
     fn sync_keyboard(&mut self) {
-        let want = self.notch.palette_is_open();
+        let want = self.notch.keyboard_active();
         if want != self.keyboard_grabbed {
             self.keyboard_grabbed = want;
             self.layer.set_keyboard_interactivity(if want {
@@ -233,21 +233,21 @@ impl State {
     }
 
     fn palette_key(&mut self, event: &KeyEvent) {
-        if !self.notch.palette_is_open() {
+        if !self.notch.keyboard_active() {
             return;
         }
         match event.keysym {
-            Keysym::Escape => self.notch.close_palette(),
+            Keysym::Escape => self.notch.key_escape(),
             Keysym::Return | Keysym::KP_Enter => {
-                let out = self.notch.palette_activate();
+                let out = self.notch.key_enter();
                 self.run_outcome(out);
             }
-            Keysym::BackSpace => self.notch.palette_backspace(),
-            Keysym::Down | Keysym::Tab => self.notch.palette_move(1),
-            Keysym::Up | Keysym::ISO_Left_Tab => self.notch.palette_move(-1),
+            Keysym::BackSpace => self.notch.key_backspace(),
+            Keysym::Down | Keysym::Tab => self.notch.key_move(1),
+            Keysym::Up | Keysym::ISO_Left_Tab => self.notch.key_move(-1),
             _ => {
                 if let Some(t) = &event.utf8 {
-                    self.notch.palette_type(t);
+                    self.notch.key_text(t);
                 }
             }
         }

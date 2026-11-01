@@ -66,7 +66,8 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 
 - Closed pill (default 228x38, flared into the screen edge), hover to open, springs between states.
 - Pages (wheel/arrow keys): Music (title/artist/progress/transport, lyrics toggle), Timer (Pomodoro),
-  Stats (CPU, memory, network). Shelf and To-do are "Coming soon".
+  Stats (CPU, memory, network), To-do (add/complete/delete; `@14:30` suffix sets a reminder peek,
+  saved to `todos.json`). Shelf is "Coming soon".
 - Synced lyrics from LRCLIB shown in a split pane (current line highlighted).
 - Quick launcher / command palette: a panel that drops down beneath the pill. Searches installed apps
   (Start Menu shortcuts / .desktop files), Visus commands, arithmetic (`12*7+3`), URLs, and falls back to a
@@ -91,7 +92,7 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 - Lyrics: no click-to-seek, no disk cache. Position is extrapolated between player updates.
 - No settings window yet (tray menu on Windows, hand-edit `settings.json` elsewhere). No tray on Linux.
 - Linux layer-shell uses integer scaling only; the eye only tracks the cursor under Hyprland.
-- Shelf (drag in/out) and To-do (needs keyboard input in a non-activating window) are not built.
+- Shelf (drag in/out) is not built. To-do has no snooze or editing yet.
 - Hyprland cursor warping via `hyprctl` does not reliably trigger hover, so test open states with
   `--snapshot`.
 

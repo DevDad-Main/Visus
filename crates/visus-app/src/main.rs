@@ -187,7 +187,7 @@ impl App {
 
     /// Takes keyboard focus while the launcher is open and gives it back afterwards.
     fn sync_focus(&mut self) {
-        let want = self.notch.palette_is_open();
+        let want = self.notch.keyboard_active();
         if want == self.focus_requested {
             return;
         }
@@ -202,21 +202,21 @@ impl App {
 
     /// Returns true when the key was consumed by the launcher.
     fn palette_key(&mut self, el: &ActiveEventLoop, ev: &winit::event::KeyEvent) -> bool {
-        if !self.notch.palette_is_open() {
+        if !self.notch.keyboard_active() {
             return false;
         }
         match ev.logical_key.as_ref() {
-            Key::Named(NamedKey::Escape) => self.notch.close_palette(),
+            Key::Named(NamedKey::Escape) => self.notch.key_escape(),
             Key::Named(NamedKey::Enter) => {
-                let out = self.notch.palette_activate();
+                let out = self.notch.key_enter();
                 self.run_outcome(el, out);
             }
-            Key::Named(NamedKey::Backspace) => self.notch.palette_backspace(),
-            Key::Named(NamedKey::ArrowDown | NamedKey::Tab) => self.notch.palette_move(1),
-            Key::Named(NamedKey::ArrowUp) => self.notch.palette_move(-1),
+            Key::Named(NamedKey::Backspace) => self.notch.key_backspace(),
+            Key::Named(NamedKey::ArrowDown | NamedKey::Tab) => self.notch.key_move(1),
+            Key::Named(NamedKey::ArrowUp) => self.notch.key_move(-1),
             _ => {
                 if let Some(t) = &ev.text {
-                    self.notch.palette_type(t);
+                    self.notch.key_text(t);
                 }
             }
         }
@@ -326,7 +326,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 self.click(el)
             }
-            WindowEvent::Focused(false) if self.notch.palette_is_open() => self.notch.close_palette(),
+            WindowEvent::Focused(false) if self.notch.keyboard_active() => self.notch.key_escape(),
             WindowEvent::MouseWheel { delta, .. } if self.notch.is_open() => {
                 let y = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
@@ -424,6 +424,12 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
     }
     if page == "lyrics" {
         notch.toggle_lyrics();
+    }
+    if page == "todo" {
+        let task = |t: &str, done: bool, due: Option<u16>| visus_core::Todo { text: t.into(), done, due };
+        notch.set_todos(vec![task("Review the release notes", false, Some(15 * 60)), task("Reply to Dina", false, None), task("Ship the alpha", true, None)]);
+        notch.begin_todo_input();
+        notch.key_text("Buy milk @18:00");
     }
     if page == "palette" {
         notch.open_palette();

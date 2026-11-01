@@ -25,6 +25,9 @@ pub enum Button {
     TimerPreset(u32),
     TimerMinus,
     TimerPlus,
+    TodoToggle(usize),
+    TodoDelete(usize),
+    TodoAdd,
 }
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -41,6 +44,100 @@ pub fn buttons(notch: &Notch) -> Vec<(Button, Rect)> {
     let mut btns = page_buttons(notch, x0, cx);
     btns.push((Button::Palette, rect(x0 + s.rect.w - 76.0, 10.0, 44.0, 36.0)));
     btns
+}
+
+const TODO_ROWS: usize = 4;
+const TODO_ROW_H: f32 = 34.0;
+const TODO_TOP: f32 = 60.0;
+
+/// Indices of the tasks shown, open tasks first.
+fn todo_order(notch: &Notch) -> Vec<usize> {
+    let t = notch.todos();
+    let mut idx: Vec<usize> = (0..t.len()).filter(|i| !t[*i].done).collect();
+    idx.extend((0..t.len()).filter(|i| t[*i].done));
+    idx.truncate(TODO_ROWS);
+    idx
+}
+
+fn todo_buttons(notch: &Notch, x0: f32) -> Vec<(Button, Rect)> {
+    let w = notch.shape().rect.w - 72.0;
+    let order = todo_order(notch);
+    let mut v = Vec::new();
+    for (slot, i) in order.iter().enumerate() {
+        let y = TODO_TOP + slot as f32 * TODO_ROW_H;
+        v.push((Button::TodoToggle(*i), rect(x0 + 36.0, y, w - 44.0, 30.0)));
+        v.push((Button::TodoDelete(*i), rect(x0 + 36.0 + w - 40.0, y, 40.0, 30.0)));
+    }
+    let y = TODO_TOP + TODO_ROWS as f32 * TODO_ROW_H + 2.0;
+    v.push((Button::TodoAdd, rect(x0 + 36.0, y, w, 30.0)));
+    v
+}
+
+fn draw_todo(cx: &mut Ctx, notch: &Notch, a: f32) {
+    let r = notch.shape().rect;
+    let (x0, w) = (r.x, r.w - 72.0);
+    let todos = notch.todos();
+    for (slot, i) in todo_order(notch).into_iter().enumerate() {
+        let t = &todos[i];
+        let y = TODO_TOP + slot as f32 * TODO_ROW_H;
+        let (bx, by) = (x0 + 52.0, y + 15.0);
+        if t.done {
+            cx.circle(bx, by, 9.0, color(GREEN, a));
+            let mut pb = PathBuilder::new();
+            pb.move_to(bx - 4.0, by);
+            pb.line_to(bx - 1.0, by + 3.5);
+            pb.line_to(bx + 4.5, by - 3.5);
+            if let Some(p) = pb.finish() {
+                cx.stroke(&p, color([0, 0, 0], a), 2.0);
+            }
+        } else if let Some(p) = PathBuilder::from_circle(bx, by, 8.5) {
+            cx.stroke(&p, color(WHITE, 0.55 * a), 1.8);
+        }
+        let room = w - 120.0;
+        let text = cx.fit(&t.text, 18.0, room);
+        let ink = if t.done { color(GRAY, 0.8 * a) } else { color(WHITE, a) };
+        cx.t(&text, x0 + 74.0, y + 21.0, 18.0, ink, Align::Left);
+        if t.done {
+            let tw = cx.text_width(&text, 18.0);
+            cx.rrect(rect(x0 + 74.0, y + 15.0, tw, 1.5), 0.7, color(GRAY, 0.8 * a));
+        }
+        if let Some(d) = t.due {
+            cx.t(&format!("{:02}:{:02}", d / 60, d % 60), x0 + 36.0 + w - 52.0, y + 20.0, 14.0, color(ORANGE, a), Align::Right);
+        }
+        let (dx, dy) = (x0 + 36.0 + w - 20.0, y + 15.0);
+        let mut pb = PathBuilder::new();
+        pb.move_to(dx - 4.0, dy - 4.0);
+        pb.line_to(dx + 4.0, dy + 4.0);
+        pb.move_to(dx + 4.0, dy - 4.0);
+        pb.line_to(dx - 4.0, dy + 4.0);
+        if let Some(p) = pb.finish() {
+            cx.stroke(&p, color(GRAY, 0.8 * a), 1.6);
+        }
+    }
+
+    let y = TODO_TOP + TODO_ROWS as f32 * TODO_ROW_H + 2.0;
+    let field = rect(x0 + 36.0, y, w, 30.0);
+    match notch.todo_input() {
+        Some(input) => {
+            cx.rrect(field, 12.0, color(WHITE, 0.12 * a));
+            if input.is_empty() {
+                cx.t("Type a task\u{2026}  add @14:30 for a reminder", field.x + 14.0, y + 20.0, 15.0, color(GRAY, 0.9 * a), Align::Left);
+                cx.rrect(rect(field.x + 12.0, y + 7.0, 1.6, 16.0), 0.8, color(WHITE, a));
+            } else {
+                let mut shown = input;
+                while shown.chars().count() > 1 && cx.text_width(shown, 16.0) > w - 40.0 {
+                    shown = &shown[shown.chars().next().map_or(1, char::len_utf8)..];
+                }
+                cx.t(shown, field.x + 14.0, y + 20.0, 16.0, color(WHITE, a), Align::Left);
+                let cxp = field.x + 14.0 + cx.text_width(shown, 16.0) + 1.0;
+                cx.rrect(rect(cxp, y + 7.0, 1.6, 16.0), 0.8, color(WHITE, a));
+            }
+        }
+        None => {
+            cx.rrect(field, 12.0, color(WHITE, 0.07 * a));
+            cx.t("+  Add task", field.x + 14.0, y + 20.0, 15.0, color(GRAY, a), Align::Left);
+        }
+    }
 }
 
 const TIMER_PRESETS: [u32; 6] = [5, 10, 15, 25, 45, 60];
@@ -76,6 +173,7 @@ fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
             (Button::Next, rect(cx + 84.0 - 24.0, 190.0, 48.0, 40.0)),
         ],
         Page::Timer => timer_buttons(x0),
+        Page::Todo => todo_buttons(notch, x0),
         _ => Vec::new(),
     }
 }
@@ -403,6 +501,7 @@ fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, a: f32) {
             ("Volume", if muted { "Muted".into() } else { format!("{pct}%") }, BLUE, if muted { 0.0 } else { level }, None)
         }
         Alert::TimerDone => ("Focus complete", "Time for a break".into(), GREEN, 1.0, None),
+        Alert::TodoDue => ("Time's up!", "A task is due".into(), ORANGE, 1.0, None),
     };
     cx.ring(ix, mid, 16.0, 3.5, ring, accent, a);
     cx.t(title, r.x + 88.0, mid - 2.0, 23.0, color(WHITE, a), Align::Left);
@@ -426,6 +525,7 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
         Page::Music => draw_music(cx, notch, a),
         Page::Timer => draw_timer(cx, notch, a),
         Page::Stats => draw_stats(cx, notch, a),
+        Page::Todo => draw_todo(cx, notch, a),
         p => {
             let name = match p {
                 Page::Shelf => "Shelf",
@@ -661,6 +761,9 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                 Button::TimerPreset(m) => notch.set_timer_minutes(m),
                 Button::TimerMinus => notch.adjust_timer(-1),
                 Button::TimerPlus => notch.adjust_timer(1),
+                Button::TodoToggle(i) => notch.todo_toggle(i),
+                Button::TodoDelete(i) => notch.todo_delete(i),
+                Button::TodoAdd => notch.begin_todo_input(),
             }
             break;
         }

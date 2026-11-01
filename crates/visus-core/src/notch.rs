@@ -1,4 +1,4 @@
-use crate::{Action, Command, Event, FOCUS, Hud, Lyrics, MediaInfo, Outcome, Palette, Settings, Spring, Stats, Timer};
+use crate::{Action, Command, Event, FOCUS, Hud, Lyrics, MediaInfo, Outcome, Palette, Settings, Spring, Stats, Timer, Todo, parse_task};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +29,7 @@ pub enum Alert {
     CapsLock(bool),
     Volume { level: f32, muted: bool },
     TimerDone,
+    TodoDue,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -90,6 +91,9 @@ pub struct Notch {
     stats: Stats,
     lyrics: Lyrics,
     lyrics_open: bool,
+    todos: Vec<Todo>,
+    todo_input: Option<String>,
+    todos_dirty: bool,
     palette: Palette,
     palette_open: bool,
     palette_anim: Spring,
@@ -121,6 +125,9 @@ impl Notch {
             stats: Stats::default(),
             lyrics: Lyrics::None,
             lyrics_open: false,
+            todos: Vec::new(),
+            todo_input: None,
+            todos_dirty: false,
             palette: Palette::default(),
             palette_open: false,
             palette_anim: Spring::new(0.0),
@@ -311,6 +318,107 @@ impl Notch {
     pub fn toggle_lyrics(&mut self) {
         self.touch();
         self.lyrics_open = !self.lyrics_open;
+    }
+
+    pub fn todos(&self) -> &[Todo] {
+        &self.todos
+    }
+
+    pub fn set_todos(&mut self, t: Vec<Todo>) {
+        self.todos = t;
+    }
+
+    pub fn take_todos_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.todos_dirty)
+    }
+
+    pub fn todo_input(&self) -> Option<&str> {
+        self.todo_input.as_deref()
+    }
+
+    pub fn begin_todo_input(&mut self) {
+        self.touch();
+        self.todo_input = Some(String::new());
+    }
+
+    pub fn todo_toggle(&mut self, i: usize) {
+        if let Some(t) = self.todos.get_mut(i) {
+            t.done = !t.done;
+            self.todos_dirty = true;
+        }
+        self.touch();
+    }
+
+    pub fn todo_delete(&mut self, i: usize) {
+        if i < self.todos.len() {
+            self.todos.remove(i);
+            self.todos_dirty = true;
+        }
+        self.touch();
+    }
+
+    /// Fires a peek for tasks whose reminder time has arrived; `minutes` is local time since midnight.
+    pub fn check_due(&mut self, minutes: u16) {
+        let mut fire = false;
+        for t in self.todos.iter_mut().filter(|t| !t.done) {
+            if t.due.is_some_and(|d| minutes >= d && minutes - d <= 1) {
+                t.due = None;
+                fire = true;
+                self.todos_dirty = true;
+            }
+        }
+        if fire {
+            self.alert(Alert::TodoDue);
+        }
+    }
+
+    /// True while typing goes to the launcher or the to-do field.
+    pub fn keyboard_active(&self) -> bool {
+        self.palette_open || self.todo_input.is_some()
+    }
+
+    pub fn key_text(&mut self, s: &str) {
+        if self.palette_open {
+            self.palette.type_text(s);
+        } else if let Some(i) = &mut self.todo_input {
+            i.extend(s.chars().filter(|c| !c.is_control()));
+        }
+    }
+
+    pub fn key_backspace(&mut self) {
+        if self.palette_open {
+            self.palette.backspace();
+        } else if let Some(i) = &mut self.todo_input {
+            i.pop();
+        }
+    }
+
+    pub fn key_move(&mut self, delta: i32) {
+        if self.palette_open {
+            self.palette.move_selection(delta);
+        }
+    }
+
+    pub fn key_escape(&mut self) {
+        if self.palette_open {
+            self.close_palette();
+        } else if self.todo_input.take().is_some() {
+            self.leave_left = Some(HOVER_CLOSE_DELAY);
+        }
+    }
+
+    pub fn key_enter(&mut self) -> Outcome {
+        if self.palette_open {
+            return self.palette_activate();
+        }
+        if let Some(input) = self.todo_input.take() {
+            if let Some(task) = parse_task(&input) {
+                self.todos.push(task);
+                self.todos_dirty = true;
+            }
+            self.leave_left = Some(HOVER_CLOSE_DELAY);
+        }
+        Outcome::None
     }
 
     pub fn palette(&self) -> &Palette {
@@ -531,7 +639,7 @@ impl Notch {
     }
 
     pub fn hover(&mut self, inside: bool) {
-        if self.hidden || self.palette_open {
+        if self.hidden || self.palette_open || self.todo_input.is_some() {
             return;
         }
         if inside {

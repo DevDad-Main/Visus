@@ -8,6 +8,7 @@ mod palette;
 mod settings;
 mod stats;
 mod timer;
+mod todo;
 
 pub use timer::{FOCUS, Timer};
 pub use anim::Spring;
@@ -17,3 +18,4 @@ pub use notch::{Alert, EyeState, Notch, Page, Rect, Shape};
 pub use settings::{Rgb, Settings};
 pub use palette::{Action, App, Command, Item, Kind, Outcome, Palette, MAX_RESULTS};
 pub use stats::Stats;
+pub use todo::{Todo, parse_task};
