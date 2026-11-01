@@ -3,7 +3,7 @@ use tiny_skia::{
     SpreadMode, FilterQuality, Pattern,
     Stroke, Transform, LineCap,
 };
-use visus_core::{Alert, AppKind, ClockStyle, Radio, EyeMood, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, current_index, weather_label};
+use visus_core::{Alert, AppKind, ClockStyle, Radio, EyeMood, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, WIN_GRID, current_index, weather_label};
 
 use crate::text::{Align, Text};
 
@@ -58,6 +58,8 @@ pub enum Button {
     Downloads,
     PagePrev,
     PageNext,
+    WinPrev,
+    WinNext,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -267,6 +269,17 @@ fn draw_list(cx: &mut Ctx, notch: &Notch, items: &[String], empty: (&str, &str, 
     }
 }
 
+/// Card slot `i` (0..6) of the 3x2 window grid.
+fn win_card(x0: f32, i: usize) -> Rect {
+    let (col, row) = ((i % 3) as f32, (i / 3) as f32);
+    rect(x0 + 36.0 + col * 228.0, 62.0 + row * 78.0, 216.0, 70.0)
+}
+
+/// Splits "document - Application" so the card can show both.
+fn split_title(title: &str) -> (&str, &str) {
+    title.rsplit_once(" - ").or_else(|| title.rsplit_once(" \u{2014} ")).map_or((title, ""), |(doc, app)| (doc, app))
+}
+
 fn draw_windows(cx: &mut Ctx, notch: &Notch, a: f32) {
     let r = notch.shape().rect;
     let (x0, mid) = (r.x, r.x + r.w / 2.0);
@@ -275,16 +288,32 @@ fn draw_windows(cx: &mut Ctx, notch: &Notch, a: f32) {
         cx.t("Looking for open windows\u{2026}", mid, 140.0, 20.0, color(GRAY, a), Align::Center);
         return;
     }
-    for (i, (_, title)) in wins.iter().take(LIST_ROWS).enumerate() {
-        let y = 62.0 + i as f32 * 38.0;
-        cx.rrect(rect(x0 + 36.0, y, 634.0, 34.0), 12.0, color(WHITE, 0.07 * a));
-        tile_letter(cx, rect(x0 + 44.0, y + 4.0, 26.0, 26.0), title, a);
-        let shown = cx.fit(title, 15.0, 560.0);
-        cx.t(&shown, x0 + 82.0, y + 22.0, 15.0, color(WHITE, a), Align::Left);
-        cx.t("Switch", x0 + 654.0, y + 21.0, 12.0, color(GRAY, 0.9 * a), Align::Right);
+    let first = notch.win_page() * WIN_GRID;
+    for (slot, (_, title)) in wins.iter().skip(first).take(WIN_GRID).enumerate() {
+        let rc = win_card(x0, slot);
+        let (doc, app) = split_title(title);
+        cx.rrect(rc, 16.0, color(WHITE, 0.07 * a));
+        tile_letter(cx, rect(rc.x + 12.0, rc.y + 12.0, 46.0, 46.0), if app.is_empty() { doc } else { app }, a);
+        let tw = rc.w - 76.0;
+        let top = cx.fit(doc, 14.0, tw);
+        cx.t(&top, rc.x + 68.0, rc.y + if app.is_empty() { 40.0 } else { 33.0 }, 14.0, color(WHITE, a), Align::Left);
+        if !app.is_empty() {
+            let sub = cx.fit(app, 12.0, tw);
+            cx.t(&sub, rc.x + 68.0, rc.y + 52.0, 12.0, color(GRAY, a), Align::Left);
+        }
     }
-    if wins.len() > LIST_ROWS {
-        cx.t(&format!("+{} more \u{b7} type a name in the launcher", wins.len() - LIST_ROWS), x0 + 670.0, 222.0, 12.0, color(GRAY, 0.8 * a), Align::Right);
+    if wins.len() > WIN_GRID {
+        let pages = wins.len().div_ceil(WIN_GRID);
+        for (dir, x) in [(-1.0f32, x0 + 640.0), (1.0, x0 + 706.0)] {
+            let mut pb = PathBuilder::new();
+            pb.move_to(x - 2.5 * dir, 224.0 - 4.5);
+            pb.line_to(x + 2.5 * dir, 224.0);
+            pb.line_to(x - 2.5 * dir, 224.0 + 4.5);
+            if let Some(p) = pb.finish() {
+                cx.stroke(&p, color(WHITE, 0.8 * a), 1.8);
+            }
+        }
+        cx.t(&format!("{} / {}", notch.win_page() + 1, pages), x0 + 673.0, 229.0, 12.0, color(GRAY, a), Align::Center);
     }
 }
 
@@ -507,7 +536,15 @@ fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
             }
             v
         }
-        Page::Windows => (0..notch.windows().len().min(LIST_ROWS)).map(|i| (Button::WindowFocus(i), rect(x0 + 36.0, 62.0 + i as f32 * 38.0, 634.0, 34.0))).collect(),
+        Page::Windows => {
+            let first = notch.win_page() * WIN_GRID;
+            let mut v: Vec<_> = (first..notch.windows().len().min(first + WIN_GRID)).map(|i| (Button::WindowFocus(i), win_card(x0, i - first))).collect();
+            if notch.windows().len() > WIN_GRID {
+                v.push((Button::WinPrev, rect(x0 + 624.0, 212.0, 32.0, 24.0)));
+                v.push((Button::WinNext, rect(x0 + 690.0, 212.0, 32.0, 24.0)));
+            }
+            v
+        }
         Page::Calendar => event_buttons(notch, x0),
         Page::Timer => timer_buttons(x0),
         Page::Todo => todo_buttons(notch, x0),
@@ -1886,6 +1923,8 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                     return Outcome::OpenUrl(url);
                 }
             }
+            Button::WinPrev => notch.win_step(-1),
+            Button::WinNext => notch.win_step(1),
             Button::PagePrev => notch.next_page(-1),
             Button::PageNext => notch.next_page(1),
             Button::NetUnit => notch.update_settings(|s| s.net_bits = !s.net_bits),

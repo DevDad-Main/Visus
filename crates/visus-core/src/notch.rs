@@ -36,6 +36,9 @@ impl Page {
     pub const ALL: [Page; 11] = [Page::Music, Page::Control, Page::Windows, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Notes, Page::Clipboard, Page::Calendar, Page::Weather];
 }
 
+/// Windows shown per page of the Windows grid.
+pub const WIN_GRID: usize = 6;
+
 /// Short-lived expressions the awake eye cycles through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EyeMood {
@@ -196,6 +199,7 @@ pub struct Notch {
     alert_text: Option<String>,
     windows: Vec<(isize, String)>,
     windows_asked: Instant,
+    win_page: usize,
     pointer: Option<(f32, f32)>,
     toast: Option<(String, Instant)>,
     drop_hover: bool,
@@ -273,6 +277,7 @@ impl Notch {
             alert_text: None,
             windows: Vec::new(),
             windows_asked: Instant::now() - Duration::from_secs(60),
+            win_page: 0,
             pointer: None,
             toast: None,
             drop_hover: false,
@@ -482,6 +487,16 @@ impl Notch {
     /// The event a meeting alert is about.
     pub fn windows(&self) -> &[(isize, String)] {
         &self.windows
+    }
+
+    /// Current page of the window grid, clamped to the number of windows.
+    pub fn win_page(&self) -> usize {
+        self.win_page.min(self.windows.len().saturating_sub(1) / WIN_GRID)
+    }
+
+    pub fn win_step(&mut self, delta: i32) {
+        let pages = self.windows.len().div_ceil(WIN_GRID).max(1) as i32;
+        self.win_page = (self.win_page() as i32 + delta).rem_euclid(pages) as usize;
     }
 
     /// True every couple of seconds while the Windows page is open, so the host refreshes the list.

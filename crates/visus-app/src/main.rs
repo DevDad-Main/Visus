@@ -550,7 +550,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         }
     }
     if page == "windows" {
-        notch.handle(Event::Windows(Arc::new(vec![(1, "Brave - New Tab".into()), (2, "visus - Visual Studio Code".into()), (3, "Spotify Premium".into()), (4, "Downloads - File Explorer".into())])));
+        notch.handle(Event::Windows(Arc::new(vec![(1, "New Tab - Brave".into()), (2, "visus - Visual Studio Code".into()), (3, "Spotify Premium".into()), (4, "Downloads - File Explorer".into()), (5, "Inbox (3) - Mail".into()), (6, "Terminal".into()), (7, "Roadmap.pdf - Document Viewer".into()), (8, "Lo-fi beats - YouTube - Brave".into())])));
     }
     if page == "shelf" {
         notch.set_shelf(vec!["/home/devdad/Projects/visus/Cargo.toml".into(), "/usr/bin/ls".into(), "/tmp/missing-report.pdf".into()]);
