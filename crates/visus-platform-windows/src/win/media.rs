@@ -6,9 +6,9 @@ use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession as Session,
     GlobalSystemMediaTransportControlsSessionManager as Manager,
-    GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
+    CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
 };
-use windows::core::IInspectable;
+
 
 use crate::Emit;
 
@@ -98,7 +98,7 @@ pub fn start(emit: Emit) {
             attach();
             let handler = {
                 let attach = Mutex::new(attach);
-                TypedEventHandler::<Manager, IInspectable>::new(move |_, _| {
+                TypedEventHandler::<Manager, CurrentSessionChangedEventArgs>::new(move |_, _| {
                     (attach.lock().unwrap())();
                     Ok(())
                 })
