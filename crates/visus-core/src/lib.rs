@@ -1,6 +1,7 @@
 //! Platform-independent notch state and animation.
 
 mod anim;
+mod calendar;
 mod controls;
 mod event;
 mod extras;
@@ -14,6 +15,7 @@ mod todo;
 
 pub use timer::{FOCUS, Timer};
 pub use anim::Spring;
+pub use calendar::CalEvent;
 pub use controls::{Controls, Radio};
 pub use lyrics::{LyricLine, Lyrics, current_index, parse_lrc};
 pub use event::{Art, Event, Hud, MediaCommand, MediaInfo};

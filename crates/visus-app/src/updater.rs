@@ -24,7 +24,7 @@ fn agent() -> ureq::Agent {
 }
 
 /// Downloads a URL; falls back to the system `curl` (which trusts the OS certificate store) if the built-in client fails.
-fn http_get(url: &str) -> Result<Vec<u8>, String> {
+pub fn http_get(url: &str) -> Result<Vec<u8>, String> {
     let first = agent().get(url).call().map_err(|e| e.to_string()).and_then(|mut r| r.body_mut().read_to_vec().map_err(|e| e.to_string()));
     let Err(err) = first else { return first };
     let mut cmd = std::process::Command::new("curl");

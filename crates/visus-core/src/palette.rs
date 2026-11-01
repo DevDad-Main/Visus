@@ -86,6 +86,9 @@ pub enum Action {
     Launch(String),
     Command(Command),
     OpenUrl(String),
+    AddNote(String),
+    SetCalendar(String),
+    FocusWindow(isize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,6 +97,8 @@ pub enum Kind {
     Visus,
     Calc,
     Web,
+    Window,
+    Note,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -120,6 +125,7 @@ pub enum Outcome {
     Screenshot,
     CheckUpdates,
     InstallUpdate,
+    FocusWindow(isize),
     Quit,
 }
 
@@ -129,6 +135,7 @@ pub struct Palette {
     pub selected: usize,
     pub results: Vec<Item>,
     apps: Arc<Vec<App>>,
+    windows: Vec<(isize, String)>,
     icons: HashMap<String, Option<Arc<crate::Art>>>,
     requested: HashSet<String>,
 }
@@ -138,6 +145,8 @@ fn visus_commands() -> Vec<(&'static str, &'static str, Command)> {
         ("Open Music", "Show the music page", Command::ShowPage(Page::Music)),
         ("Open Control Center", "Volume, Wi-Fi, Bluetooth, quiet mode", Command::ShowPage(Page::Control)),
         ("Open Timer", "Show the focus timer", Command::ShowPage(Page::Timer)),
+        ("Open Notes", "Quick notes: type note <text>", Command::ShowPage(Page::Notes)),
+        ("Open Clipboard", "Recent copied text", Command::ShowPage(Page::Clipboard)),
         ("Open Stats", "Show CPU, memory and network", Command::ShowPage(Page::Stats)),
         ("Open To-do", "Show your tasks", Command::ShowPage(Page::Todo)),
         ("Open Shelf", "Show shelved files", Command::ShowPage(Page::Shelf)),
@@ -176,6 +185,11 @@ impl Palette {
         out
     }
 
+    pub fn set_windows(&mut self, w: Vec<(isize, String)>) {
+        self.windows = w;
+        self.refresh();
+    }
+
     pub fn set_apps(&mut self, apps: Arc<Vec<App>>) {
         self.apps = apps;
         self.refresh();
@@ -208,7 +222,7 @@ impl Palette {
     }
 
     pub fn refresh(&mut self) {
-        self.results = search(&self.query, &self.apps);
+        self.results = search_with(&self.query, &self.apps, &self.windows);
         self.selected = 0;
     }
 }
@@ -238,7 +252,12 @@ fn score(name: &str, q: &str) -> Option<i32> {
     Some(200 - (last - first.unwrap_or(0)) as i32)
 }
 
+#[cfg(test)]
 pub fn search(query: &str, apps: &[App]) -> Vec<Item> {
+    search_with(query, apps, &[])
+}
+
+pub fn search_with(query: &str, apps: &[App], windows: &[(isize, String)]) -> Vec<Item> {
     let q = query.trim();
     let lower = q.to_lowercase();
     let mut out: Vec<Item> = Vec::new();
@@ -251,6 +270,13 @@ pub fn search(query: &str, apps: &[App]) -> Vec<Item> {
             .collect();
     }
 
+    // `note buy milk` saves a note; `cal <link>` sets the calendar feed.
+    if let Some(rest) = lower.strip_prefix("note ").map(|_| q[5..].trim()).filter(|r| !r.is_empty()) {
+        out.push(Item { title: "Save note".into(), subtitle: rest.chars().take(80).collect(), kind: Kind::Note, action: Some(Action::AddNote(rest.to_string())), app: None });
+    }
+    if let Some(rest) = lower.strip_prefix("cal ").map(|_| q[4..].trim()).filter(|r| !r.is_empty()) {
+        out.push(Item { title: "Use as calendar".into(), subtitle: rest.chars().take(80).collect(), kind: Kind::Visus, action: Some(Action::SetCalendar(rest.to_string())), app: None });
+    }
     if let Some(v) = eval_expression(q) {
         out.push(Item { title: format_number(v), subtitle: format!("{q} ="), kind: Kind::Calc, action: None, app: None });
     }
@@ -263,6 +289,13 @@ pub fn search(query: &str, apps: &[App]) -> Vec<Item> {
     for app in apps {
         if let Some(s) = score(&app.name.to_lowercase(), &lower) {
             scored.push((s, Item { title: app.name.clone(), subtitle: "Application".into(), kind: Kind::App, action: Some(Action::Launch(app.target.clone())), app: Some(app.clone()) }));
+        }
+    }
+    if lower.chars().count() >= 2 {
+        for (h, title) in windows {
+            if let Some(s) = score(&title.to_lowercase(), &lower) {
+                scored.push((s - 10, Item { title: title.clone(), subtitle: "Switch to window".into(), kind: Kind::Window, action: Some(Action::FocusWindow(*h)), app: None }));
+            }
         }
     }
     for (title, sub, cmd) in visus_commands() {
@@ -456,5 +489,15 @@ mod tests {
         p.refresh();
         p.move_selection(-1);
         assert_eq!(p.selected, p.results.len() - 1);
+    }
+
+    #[test]
+    fn note_and_window_queries() {
+        let r = search_with("note buy milk", &[], &[]);
+        assert!(matches!(&r[0].action, Some(Action::AddNote(t)) if t == "buy milk"));
+        let wins = vec![(7isize, "Quarterly report - Word".to_string())];
+        let r = search_with("quarterly", &[], &wins);
+        assert!(r.iter().any(|i| i.action == Some(Action::FocusWindow(7))));
+        assert!(search_with("q", &[], &wins).iter().all(|i| i.kind != Kind::Window));
     }
 }

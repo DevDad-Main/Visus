@@ -197,6 +197,11 @@ pub fn media_command(cmd: MediaCommand) {
             MediaCommand::PlayPause => "PlayPause",
             MediaCommand::Next => "Next",
             MediaCommand::Previous => "Previous",
+            MediaCommand::Seek { target, current } => {
+                let offset = target.as_micros() as i64 - current.as_micros() as i64;
+                let _ = p.call_method("Seek", &(offset,));
+                return;
+            }
         };
         let _ = p.call_method(method, &());
     });

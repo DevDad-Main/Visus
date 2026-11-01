@@ -35,6 +35,12 @@ pub fn send_toggle() -> bool {
 
 pub fn open_path(_path: &str) {}
 
+pub fn list_windows() -> Vec<(isize, String)> {
+    Vec::new()
+}
+
+pub fn focus_window(_h: isize) {}
+
 pub fn screenshot() {}
 
 pub fn request_icon(app: visus_core::App, emit: crate::Emit) {

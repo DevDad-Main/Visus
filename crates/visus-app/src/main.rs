@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod actions;
+mod calendar;
 mod events;
 mod lyrics;
 mod stats;
@@ -85,6 +86,7 @@ struct App {
     last_tick: Instant,
     next_frame: Instant,
     frame: Duration,
+    shift: bool,
     #[cfg(windows)]
     tray: Option<tray::Tray>,
 }
@@ -358,12 +360,22 @@ impl ApplicationHandler<UserEvent> for App {
                 self.notch.show_page(visus_core::Page::Shelf);
             }
             WindowEvent::Focused(false) if self.notch.keyboard_active() => self.notch.key_escape(),
+            WindowEvent::ModifiersChanged(mods) => self.shift = mods.state().shift_key(),
             WindowEvent::MouseWheel { delta, .. } if self.notch.is_open() => {
                 let y = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32,
                 };
-                self.notch.next_page(if y < 0.0 { 1 } else { -1 });
+                if self.shift {
+                    // Shift + wheel nudges the system volume.
+                    let c = self.notch.controls();
+                    let base = if c.has_volume { c.volume } else { platform::controls().volume };
+                    let v = (base + if y > 0.0 { 0.05 } else { -0.05 }).clamp(0.0, 1.0);
+                    self.notch.set_volume_local(v);
+                    platform::set_volume(v);
+                } else {
+                    self.notch.next_page(if y < 0.0 { 1 } else { -1 });
+                }
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 if self.palette_key(el, &event) {
@@ -466,6 +478,21 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         notch.begin_todo_input();
         notch.key_text("Buy milk @18:00");
     }
+    if page == "notes" {
+        notch.set_notes(vec!["Call the dentist about Thursday".into(), "Idea: genie close for the settings popup".into(), "https://github.com/DevDad-Main/Visus".into()]);
+    }
+    if page == "clipboard" {
+        for t in ["cargo build --release", "meeting-notes-final-v2.pdf", "The quick brown fox jumps over the lazy dog"] {
+            notch.handle(Event::Clipboard(t.into()));
+        }
+    }
+    if page == "calendar" {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        notch.handle(Event::Calendar(Arc::new(vec![
+            visus_core::CalEvent { start: now + 3000, end: now + 6600, title: "Design review".into(), all_day: false, url: Some("https://meet.google.com/abc".into()) },
+            visus_core::CalEvent { start: now + 90000, end: now + 93600, title: "Dentist".into(), all_day: false, url: None },
+        ])));
+    }
     if page == "settings" {
         notch.open_settings();
         for _ in 0..200 {
@@ -492,9 +519,15 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             notch.tick(Duration::from_millis(16));
         }
     }
-    if page == "eye" || page == "sauron" {
-        if page == "sauron" {
-            notch.update_settings(|s| s.eye_style = visus_core::EyeStyle::Sauron);
+    if matches!(page, "eye" | "sauron" | "cat" | "robot") {
+        let style = match page {
+            "sauron" => Some(visus_core::EyeStyle::Sauron),
+            "cat" => Some(visus_core::EyeStyle::Cat),
+            "robot" => Some(visus_core::EyeStyle::Robot),
+            _ => None,
+        };
+        if let Some(st) = style {
+            notch.update_settings(|s| s.eye_style = st);
         }
         notch.hover(false);
         for _ in 0..300 {
@@ -507,7 +540,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         pm.save_png(out).expect("write png");
         return;
     }
-    let idx = ["music", "control", "timer", "stats", "shelf", "todo", "calendar", "weather"].iter().position(|p| *p == page).unwrap_or(0);
+    let idx = ["music", "control", "timer", "stats", "shelf", "todo", "notes", "clipboard", "calendar", "weather"].iter().position(|p| *p == page).unwrap_or(0);
     notch.next_page(idx as i32);
     if let Some(mut s) = stats::Sampler::new() {
         s.sample();
@@ -581,6 +614,7 @@ fn main() {
         last_tick: Instant::now(),
         next_frame: Instant::now(),
         frame: FRAME,
+        shift: false,
         #[cfg(windows)]
         tray: None,
     };

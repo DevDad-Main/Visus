@@ -148,6 +148,7 @@ pub fn media_command(cmd: MediaCommand) {
             MediaCommand::PlayPause => session.TryTogglePlayPauseAsync().and_then(|o| o.join()),
             MediaCommand::Next => session.TrySkipNextAsync().and_then(|o| o.join()),
             MediaCommand::Previous => session.TrySkipPreviousAsync().and_then(|o| o.join()),
+            MediaCommand::Seek { target, .. } => session.TryChangePlaybackPositionAsync((target.as_secs_f64() * 10_000_000.0) as i64).and_then(|o| o.join()),
         };
     });
 }

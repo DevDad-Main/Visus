@@ -17,7 +17,15 @@ pub fn pump(notch: &mut visus_core::Notch, emit: Option<&Emit>) {
     use std::time::{Duration, Instant};
     static LAST_REFRESH: Mutex<Option<Instant>> = Mutex::new(None);
 
+    static START: std::sync::Once = std::sync::Once::new();
+    START.call_once(visus_platform::refresh_controls);
     request_icons(notch, emit);
+    notch.set_hour(chrono::Timelike::hour(&chrono::Local::now()) as u8);
+    if let (true, Some(e)) = (notch.take_window_request(), emit) {
+        let e = e.clone();
+        std::thread::spawn(move || e(visus_core::Event::Windows(std::sync::Arc::new(visus_platform::list_windows()))));
+    }
+    crate::calendar::tick(notch, emit);
     let audio = notch.wants_audio();
     visus_platform::set_audio_sampling(audio);
     if audio {
@@ -64,6 +72,7 @@ pub fn run(outcome: Outcome, emit: Option<&Emit>, folders: &[String]) -> bool {
                 visus_platform::rescan_apps(e.clone());
             }
         }
+        Outcome::FocusWindow(h) => visus_platform::focus_window(h),
         Outcome::Quit => return true,
     }
     false

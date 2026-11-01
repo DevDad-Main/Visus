@@ -45,6 +45,11 @@ pub enum Button {
     Volume,
     Brightness,
     Tile(u8),
+    NoteCopy(usize),
+    NoteDelete(usize),
+    ClipCopy(usize),
+    ClipDelete(usize),
+    Event(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +62,8 @@ pub enum Toggle {
     Clock24,
     Visualizer,
     Battery,
+    Clipboard,
+    EyeMoods,
 }
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -171,6 +178,62 @@ fn draw_todo(cx: &mut Ctx, notch: &Notch, a: f32) {
 }
 
 const TIMER_PRESETS: [u32; 6] = [5, 10, 15, 25, 45, 60];
+
+const LIST_ROWS: usize = 4;
+
+fn list_buttons(x0: f32, n: usize, copy: fn(usize) -> Button, del: fn(usize) -> Button) -> Vec<(Button, Rect)> {
+    let mut v = Vec::new();
+    for i in 0..n.min(LIST_ROWS) {
+        let y = 62.0 + i as f32 * 38.0;
+        v.push((copy(i), rect(x0 + 36.0, y, 590.0, 34.0)));
+        v.push((del(i), rect(x0 + 630.0, y, 40.0, 34.0)));
+    }
+    v
+}
+
+/// Rows of text that copy back to the clipboard when clicked; shared by Notes and Clipboard.
+fn draw_list(cx: &mut Ctx, notch: &Notch, items: &[String], empty: (&str, &str), a: f32) {
+    let r = notch.shape().rect;
+    let x0 = r.x;
+    if items.is_empty() {
+        cx.t(empty.0, r.x + r.w / 2.0, 130.0, 24.0, color(WHITE, a), Align::Center);
+        cx.t(empty.1, r.x + r.w / 2.0, 158.0, 15.0, color(GRAY, a), Align::Center);
+        return;
+    }
+    for (i, text) in items.iter().take(LIST_ROWS).enumerate() {
+        let y = 62.0 + i as f32 * 38.0;
+        cx.rrect(rect(x0 + 36.0, y, 634.0, 34.0), 12.0, color(WHITE, 0.07 * a));
+        let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let shown = cx.fit(&one_line, 15.0, 560.0);
+        cx.t(&shown, x0 + 50.0, y + 22.0, 15.0, color(WHITE, a), Align::Left);
+        let (dx, dy) = (x0 + 650.0, y + 17.0);
+        let mut pb = PathBuilder::new();
+        pb.move_to(dx - 4.0, dy - 4.0);
+        pb.line_to(dx + 4.0, dy + 4.0);
+        pb.move_to(dx + 4.0, dy - 4.0);
+        pb.line_to(dx - 4.0, dy + 4.0);
+        if let Some(p) = pb.finish() {
+            cx.stroke(&p, color(GRAY, 0.8 * a), 1.6);
+        }
+    }
+    if items.len() > LIST_ROWS {
+        cx.t(&format!("+{} more", items.len() - LIST_ROWS), x0 + 670.0, 222.0, 12.0, color(GRAY, 0.8 * a), Align::Right);
+    }
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+}
+
+/// Upcoming events (not yet finished), soonest first.
+fn upcoming(notch: &Notch, n: usize) -> Vec<&visus_core::CalEvent> {
+    let now = now_unix();
+    notch.events().iter().filter(|e| e.end >= now).take(n).collect()
+}
+
+fn event_buttons(notch: &Notch, x0: f32) -> Vec<(Button, Rect)> {
+    upcoming(notch, 2).iter().enumerate().filter(|(_, e)| e.url.is_some()).map(|(i, _)| (Button::Event(i), rect(x0 + 36.0, 204.0 + i as f32 * 20.0, 230.0, 20.0))).collect()
+}
 
 fn tile_rect(x0: f32, i: usize) -> Rect {
     rect(x0 + 36.0 + (i % 2) as f32 * 126.0, 66.0 + (i / 2) as f32 * 84.0, 116.0, 74.0)
@@ -362,6 +425,9 @@ fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
             (Button::Next, rect(cx + 84.0 - 24.0, 190.0, 48.0, 40.0)),
         ],
         Page::Control => control_buttons(notch, x0),
+        Page::Notes => list_buttons(x0, notch.notes().len(), Button::NoteCopy, Button::NoteDelete),
+        Page::Clipboard => list_buttons(x0, notch.clips().len(), Button::ClipCopy, Button::ClipDelete),
+        Page::Calendar => event_buttons(notch, x0),
         Page::Timer => timer_buttons(x0),
         Page::Todo => todo_buttons(notch, x0),
         Page::Shelf => shelf_buttons(notch, x0),
@@ -532,11 +598,37 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     let centre = shape.rect.x + shape.rect.w / 2.0;
     let mut cx = Ctx { pm, text, scale: scale * user, ox: centre * (1.0 - user) * scale, oy: 0.0 };
 
+    let r = shape.rect;
     if let Some(path) = pill_path(&shape) {
         cx.fill(&path, [0, 0, 0, 255]);
+        // Album-art ambience: the pill's lower edge picks up the cover colour and breathes with the music.
+        let m = notch.media();
+        if m.has_session && m.playing && m.art.is_some() {
+            let tint = notch.accent();
+            let level = notch.visualizer_level().unwrap_or(0.35);
+            let amt = if notch.is_open() && notch.page == Page::Music { 0.32 } else { 0.2 } + 0.12 * level;
+            let stop = |at: f32, al: f32| GradientStop::new(at, Color::from_rgba8(tint[0], tint[1], tint[2], (al.clamp(0.0, 1.0) * 255.0) as u8));
+            if let Some(shader) = LinearGradient::new(
+                Point::from_xy(centre, 0.0),
+                Point::from_xy(centre, r.h),
+                vec![stop(0.0, 0.0), stop(0.55, amt * 0.25), stop(1.0, amt)],
+                SpreadMode::Pad,
+                Transform::identity(),
+            ) {
+                let mut p = Paint::default();
+                p.shader = shader;
+                p.anti_alias = true;
+                let xf = cx.xf();
+                cx.pm.fill_path(&path, &p, FillRule::Winding, xf, None);
+            }
+        }
+        // Ripple: the rim flashes and fades when an alert lands.
+        if let Some(age) = notch.alert_age() {
+            let k = 1.0 - age / 0.9;
+            cx.stroke(&path, color(WHITE, 0.55 * k * k), 1.5 + age * 5.0);
+        }
     }
 
-    let r = shape.rect;
     let ch = notch.settings().closed_height;
     let closed_a = if notch.settings().minimal { 0.0 } else { (1.0 - (r.h - ch) / 20.0).clamp(0.0, 1.0) };
     let peek_a = ((r.h - (ch + 12.0)) / 24.0).clamp(0.0, 1.0) * (1.0 - ((r.h - 100.0) / 60.0).clamp(0.0, 1.0));
@@ -550,7 +642,7 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
         }
     }
     if let (Some(alert), true) = (notch.alert_kind(), peek_a > 0.0) {
-        draw_alert(&mut cx, &shape, alert, peek_a);
+        draw_alert(&mut cx, &shape, alert, notch.alert_event().map(|e| e.title.as_str()), peek_a);
     }
     if open_a > 0.0 {
         draw_open(&mut cx, notch, open_a);
@@ -569,15 +661,21 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
     let ex = ey * 1.9;
     let (x, y) = (r.x + r.w / 2.0 + lx * 5.0, r.h / 2.0 + ly * 1.5);
     let open = notch.eye_openness();
-    let iris_rgb = notch.settings().eye_iris;
+    let style = notch.settings().eye_style;
+    let (cat, robot) = (style == EyeStyle::Cat, style == EyeStyle::Robot);
+    let iris_rgb = if cat { Rgb([170, 210, 60]) } else { notch.settings().eye_iris };
     let sclera = notch.settings().eye_sclera.0;
     let sauron = notch.settings().eye_style == EyeStyle::Sauron;
     let [gr, gg, gb] = if sauron { [255, 95, 20] } else { iris_rgb.0 };
-
     let t = notch.awake_time();
+
     let (mood, mood_ph) = notch.eye_mood();
     let mood_e = (mood_ph * std::f32::consts::PI).sin();
     let pulse = notch.eye_pulse();
+    if robot {
+        draw_robot_eye(cx, x, y, ex, ey, open, t, fade, asleep, r.h, (mood, mood_e), pulse);
+        return;
+    }
     let flick = if sauron { 0.8 + 0.2 * (t * 11.0).sin().abs() * (t * 5.3).cos().abs().max(0.4) } else { 1.0 };
 
     // Sauron's gaze: a soft beam sweeping across the inside of the pill like a searchlight.
@@ -641,13 +739,7 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
             cx.stroke(&lid, color(tint, fade * if asleep { 0.6 } else { 1.0 }), 2.4);
         }
         if asleep {
-            // Three z's drift up and fade out in turn.
-            for i in 0..3 {
-                let ph = (t / 3.6 + i as f32 / 3.0) % 1.0;
-                let zx = x + ex + 3.0 + ph * 14.0 + (ph * 9.0 + i as f32).sin() * 1.5;
-                let zy = y + 1.0 - ph * r.h * 0.38;
-                cx.t("z", zx, zy, 6.0 + ph * 6.0, color(WHITE, fade * (ph * std::f32::consts::PI).sin() * 0.85), Align::Left);
-            }
+            draw_zs(cx, x, y, ex, r.h, t, fade);
         }
         return;
     }
@@ -750,12 +842,55 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
     let mut ink = Paint::default();
     ink.anti_alias = true;
     ink.set_color(Color::from_rgba8(0, 0, 0, (fade * 255.0) as u8));
-    if let Some(c) = PathBuilder::from_circle(ix, iy, ir * 0.45 * (1.0 + 0.5 * pulse)) {
+    let pupil = if cat {
+        let pw = ir * 0.17 * (1.0 + 0.9 * pulse);
+        tiny_skia::Rect::from_xywh(ix - pw, iy - ir * 0.95, pw * 2.0, ir * 1.9).and_then(PathBuilder::from_oval)
+    } else {
+        PathBuilder::from_circle(ix, iy, ir * 0.45 * (1.0 + 0.5 * pulse))
+    };
+    if let Some(c) = pupil {
         cx.pm.fill_path(&c, &ink, FillRule::Winding, t, Some(&mask));
     }
     ink.set_color(Color::from_rgba8(255, 255, 255, (fade * 230.0) as u8));
     if let Some(c) = PathBuilder::from_circle(ix - ir * 0.3, iy - ir * 0.35, ir * 0.17) {
         cx.pm.fill_path(&c, &ink, FillRule::Winding, t, Some(&mask));
+    }
+}
+
+/// Three z's drift up and fade out in turn.
+fn draw_zs(cx: &mut Ctx, x: f32, y: f32, ex: f32, pill_h: f32, t: f32, fade: f32) {
+    for i in 0..3 {
+        let ph = (t / 3.6 + i as f32 / 3.0) % 1.0;
+        let zx = x + ex + 3.0 + ph * 14.0 + (ph * 9.0 + i as f32).sin() * 1.5;
+        let zy = y + 1.0 - ph * pill_h * 0.38;
+        cx.t("z", zx, zy, 6.0 + ph * 6.0, color(WHITE, fade * (ph * std::f32::consts::PI).sin() * 0.85), Align::Left);
+    }
+}
+
+/// A little robot: a glowing visor with a scanning bar; blinks by squashing, sleeps as a dim line.
+#[allow(clippy::too_many_arguments)]
+fn draw_robot_eye(cx: &mut Ctx, x: f32, y: f32, ex: f32, ey: f32, open: f32, t: f32, fade: f32, asleep: bool, pill_h: f32, mood: (EyeMood, f32), pulse: f32) {
+    let w = ex * 1.9;
+    let (m, e) = mood;
+    let tint = if m == EyeMood::Heart { [255, 80, 140] } else { [60, 220, 255] };
+    if asleep || open < 0.12 {
+        cx.rrect(rect(x - w / 2.0, y - 1.0, w, 2.0), 1.0, color(tint, fade * if asleep { 0.35 } else { 0.9 }));
+        if asleep {
+            draw_zs(cx, x, y, w / 2.0, pill_h, t, fade);
+        }
+        return;
+    }
+    let h = (ey * 1.7 * open.min(1.25)).max(2.0);
+    cx.rrect(rect(x - w / 2.0 - 3.0, y - h / 2.0 - 3.0, w + 6.0, h + 6.0), 9.0, color(tint, fade * (0.16 + 0.12 * pulse)));
+    cx.rrect(rect(x - w / 2.0, y - h / 2.0, w, h), 6.0, color([8, 18, 24], fade));
+    let inner = rect(x - w / 2.0 + 2.0, y - h / 2.0 + 2.0, w - 4.0, (h - 4.0).max(1.0));
+    cx.rrect(inner, 4.5, color(tint, fade * 0.85));
+    // Scanning bar sweeps back and forth; the surprise mood makes it dart faster.
+    let speed = if m == EyeMood::Surprised { 2.6 + 2.0 * e } else { 0.8 };
+    let sweep = ((t * speed).sin() * 0.5 + 0.5) * (inner.w - 3.0);
+    cx.rrect(rect(inner.x + sweep, inner.y, 3.0, inner.h), 1.5, color([255, 255, 255], fade * 0.95));
+    for dx in [-1.0f32, 1.0] {
+        cx.circle(x + dx * (w / 2.0 + 6.0), y, 1.4, color(tint, fade * 0.7));
     }
 }
 
@@ -847,6 +982,21 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
             cx.triangle([(r.x + 26.5, mid + 4.5), (r.x + 31.0, mid - 0.5), (r.x + 27.5, mid - 0.5)], color(WHITE, a));
         }
     }
+    // Thin progress line along the bottom edge: the focus timer, otherwise the playing track.
+    let rad = (r.h * 0.4).min(r.w / 4.0);
+    let m = notch.media();
+    let progress = if timer_active {
+        Some((1.0 - timer.remaining().as_secs_f32() / timer.total().as_secs_f32(), GREEN))
+    } else if m.has_session && m.playing && !m.duration.is_zero() {
+        Some((notch.media_position().as_secs_f32() / m.duration.as_secs_f32(), notch.accent()))
+    } else {
+        None
+    };
+    if let Some((frac, tint)) = progress {
+        let w = ((r.w - 2.0 * rad) * frac.clamp(0.0, 1.0)).max(2.0);
+        cx.rrect(rect(r.x + rad, r.h - 4.0, r.w - 2.0 * rad, 1.5), 0.75, color(WHITE, 0.10 * a));
+        cx.rrect(rect(r.x + rad, r.h - 4.0, w, 1.5), 0.75, color(tint, 0.9 * a));
+    }
     let clock = chrono::Local::now().format(clock_fmt(notch)).to_string();
     cx.t(&clock, r.x + r.w / 2.0, mid + 7.0, 20.0, color(WHITE, a), Align::Center);
     if notch.wants_audio() {
@@ -863,8 +1013,12 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     }
 }
 
-fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, a: f32) {
+fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, event_title: Option<&str>, a: f32) {
     let r = shape.rect;
+    let meeting = match alert {
+        Alert::Meeting { mins } => format!("Meeting in {mins} min"),
+        _ => String::new(),
+    };
     let mid = r.h / 2.0;
     let (ix, rx) = (r.x + 46.0, r.x + r.w - 36.0);
     let (title, sub, accent, ring, value): (&str, String, [u8; 3], f32, Option<String>) = match alert {
@@ -881,6 +1035,7 @@ fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, a: f32) {
         Alert::Offline => ("Offline", "Connection lost".into(), ORANGE, 0.0, None),
         Alert::Language(l) => ("Keyboard", String::from_utf8_lossy(&l).to_uppercase(), BLUE, 1.0, None),
         Alert::TodoDue => ("Time's up!", "A task is due".into(), ORANGE, 1.0, None),
+        Alert::Meeting { .. } => (meeting.as_str(), event_title.unwrap_or("Click to join").to_string(), BLUE, 1.0, None),
     };
     cx.ring(ix, mid, 16.0, 3.5, ring, accent, a);
     cx.t(title, r.x + 88.0, mid - 2.0, 23.0, color(WHITE, a), Align::Left);
@@ -904,6 +1059,8 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
     match notch.page {
         Page::Music => draw_music(cx, notch, a),
         Page::Control => draw_control(cx, notch, a),
+        Page::Notes => draw_list(cx, notch, notch.notes(), ("No notes yet", "Type  note <text>  in the launcher"), a),
+        Page::Clipboard => draw_list(cx, notch, notch.clips(), if notch.settings().clipboard_history { ("Nothing copied yet", "Copied text shows up here") } else { ("Clipboard history is off", "Turn it on in settings (gear)") }, a),
         Page::Timer => draw_timer(cx, notch, a),
         Page::Stats => draw_stats(cx, notch, a),
         Page::Todo => draw_todo(cx, notch, a),
@@ -1117,6 +1274,31 @@ fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
 /// Handles a left click at pill-logical coordinates; the host runs the returned outcome.
 pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
     use visus_core::MediaCommand;
+    if let Some(Alert::Meeting { .. }) = notch.alert_kind() {
+        if let Some(url) = notch.alert_event().and_then(|e| e.url.clone()) {
+            return Outcome::OpenUrl(url);
+        }
+    }
+    // Clicking a lyric line jumps the track to that line.
+    if notch.is_open() && notch.page == Page::Music && notch.lyrics_open() {
+        if let Lyrics::Ready(lines) = notch.lyrics() {
+            let s = notch.shape().rect;
+            let (lx, lw) = (s.x + 392.0, s.w - 392.0 - 28.0);
+            if x >= lx && x <= lx + lw {
+                let pos = notch.media_position();
+                let focus = current_index(lines, pos).map_or(-1, |i| i as i32);
+                for off in -1..=3i32 {
+                    let base = [96.0, 130.0, 164.0, 194.0, 222.0][(off + 1) as usize];
+                    if y >= base - 22.0 && y <= base + 8.0 {
+                        if let Some(line) = usize::try_from(focus + off).ok().and_then(|i| lines.get(i)) {
+                            visus_platform::media_command(MediaCommand::Seek { target: line.at, current: pos });
+                            return Outcome::None;
+                        }
+                    }
+                }
+            }
+        }
+    }
     if let Some(layout) = palette_layout(notch) {
         if let Some(i) = layout.rows.iter().position(|r| r.contains(x, y)) {
             notch.palette_select(i);
@@ -1157,13 +1339,15 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                 Toggle::Clock24 => notch.update_settings(|s| s.clock_24h = !s.clock_24h),
                 Toggle::Visualizer => notch.update_settings(|s| s.visualizer = !s.visualizer),
                 Toggle::Battery => notch.update_settings(|s| s.show_battery = !s.show_battery),
+                Toggle::Clipboard => notch.update_settings(|s| s.clipboard_history = !s.clipboard_history),
+                Toggle::EyeMoods => notch.update_settings(|s| s.eye_moods = !s.eye_moods),
                 Toggle::Autostart => {
                     let _ = visus_platform::set_autostart(!visus_platform::autostart_enabled());
                 }
             },
             Button::Size(i) => notch.update_settings(|s| s.scale = SIZES[i as usize % SIZES.len()].1),
             Button::EyeColour(i) => notch.update_settings(|s| s.eye_iris = Rgb(EYE_COLOURS[i as usize % EYE_COLOURS.len()])),
-            Button::Style(i) => notch.update_settings(|s| s.eye_style = if i == 0 { EyeStyle::Classic } else { EyeStyle::Sauron }),
+            Button::Style(i) => notch.update_settings(|s| s.eye_style = [EyeStyle::Classic, EyeStyle::Sauron, EyeStyle::Cat, EyeStyle::Robot][i as usize % 4]),
             Button::Location => notch.begin_location_input(),
             Button::SettingsOpen => notch.open_settings(),
             Button::SettingsClose => notch.close_settings(),
@@ -1179,6 +1363,23 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                 return Outcome::Rescan;
             }
             Button::FolderAdd => notch.begin_folder_input(),
+            Button::NoteCopy(i) => {
+                if let Some(t) = notch.notes().get(i) {
+                    visus_platform::set_clipboard(t.clone());
+                }
+            }
+            Button::NoteDelete(i) => notch.note_remove(i),
+            Button::ClipCopy(i) => {
+                if let Some(t) = notch.clips().get(i) {
+                    visus_platform::set_clipboard(t.clone());
+                }
+            }
+            Button::ClipDelete(i) => notch.clip_remove(i),
+            Button::Event(i) => {
+                if let Some(url) = upcoming(notch, 2).get(i).and_then(|e| e.url.clone()) {
+                    return Outcome::OpenUrl(url);
+                }
+            }
             Button::Volume => {
                 notch.begin_drag(1);
                 drag(notch, x);
@@ -1411,6 +1612,8 @@ fn draw_panel(cx: &mut Ctx, notch: &Notch, l: &PaletteLayout, p: f32) {
                 Kind::Visus => ([96, 120, 255], "V".to_string()),
                 Kind::Calc => (GREEN, "=".to_string()),
                 Kind::Web => (BLUE, "\u{2197}".to_string()),
+                Kind::Window => ([90, 130, 255], "W".to_string()),
+                Kind::Note => ([255, 204, 0], "N".to_string()),
                 Kind::App => (kind_tint(kind, &item.title), item.title.chars().next().map_or("?".into(), |c| c.to_uppercase().to_string())),
             };
             cx.rrect(tile, 9.0, color(tint, ca));
@@ -1616,14 +1819,23 @@ fn draw_shelf(cx: &mut Ctx, notch: &Notch, a: f32) {
 }
 
 fn draw_calendar(cx: &mut Ctx, notch: &Notch, a: f32) {
-    use chrono::{Datelike, NaiveDate};
+    use chrono::{DateTime, Datelike, NaiveDate};
     let x0 = notch.shape().rect.x;
     let today = chrono::Local::now().date_naive();
     cx.t(&today.format("%A").to_string(), x0 + 130.0, 92.0, 18.0, color(GRAY, a), Align::Center);
     cx.t(&today.day().to_string(), x0 + 130.0, 160.0, 68.0, color(WHITE, a), Align::Center);
     cx.t(&today.format("%B %Y").to_string(), x0 + 130.0, 196.0, 18.0, color(GRAY, a), Align::Center);
     let due = notch.todos().iter().filter(|t| !t.done && t.due.is_some()).count();
-    if due > 0 {
+    let next = upcoming(notch, 2);
+    if !next.is_empty() {
+        for (i, e) in next.iter().enumerate() {
+            let when = DateTime::<chrono::Local>::from(std::time::UNIX_EPOCH + std::time::Duration::from_secs(e.start.max(0) as u64));
+            let stamp = if e.all_day { when.format("%a").to_string() } else { when.format(if notch.settings().clock_24h { "%a %H:%M" } else { "%a %-I:%M %p" }).to_string() };
+            let line = cx.fit(&format!("{stamp}  {}", e.title), 13.0, 226.0);
+            let tint = if e.url.is_some() { BLUE } else { WHITE };
+            cx.t(&line, x0 + 36.0, 218.0 + i as f32 * 20.0, 13.0, color(tint, a), Align::Left);
+        }
+    } else if due > 0 {
         cx.t(&format!("{due} reminder{} today", if due == 1 { "" } else { "s" }), x0 + 130.0, 220.0, 14.0, color(ORANGE, a), Align::Center);
     }
 
@@ -1680,8 +1892,8 @@ fn settings_buttons_raw(x0: f32) -> Vec<(Button, Rect)> {
     for i in 0..EYE_COLOURS.len() {
         v.push((Button::EyeColour(i as u8), rect(x0 + 380.0 + i as f32 * 32.0 - 2.0, 138.0, 30.0, 30.0)));
     }
-    for i in 0..2 {
-        v.push((Button::Style(i), rect(x0 + 380.0 + i as f32 * 96.0, 178.0, 90.0, 28.0)));
+    for i in 0..4 {
+        v.push((Button::Style(i), rect(x0 + 380.0 + i as f32 * 76.0, 178.0, 70.0, 28.0)));
     }
     for (i, t) in CHIPS.iter().enumerate() {
         v.push((Button::Toggle(t.0), chip_rect(x0, i)));
@@ -1692,20 +1904,22 @@ fn settings_buttons_raw(x0: f32) -> Vec<(Button, Rect)> {
     v.push((Button::EyeTime(-1), rect(x0 + 190.0, 250.0, 30.0, 26.0)));
     v.push((Button::EyeTime(1), rect(x0 + 276.0, 250.0, 30.0, 26.0)));
     for i in 0..visus_platform::list_drives().len().min(7) {
-        v.push((Button::DriveToggle(i as u8), rect(x0 + 380.0 + i as f32 * 52.0, 282.0, 46.0, 26.0)));
+        v.push((Button::DriveToggle(i as u8), rect(x0 + 380.0 + i as f32 * 52.0, 294.0, 46.0, 26.0)));
     }
     v
 }
 
-const CHIPS: [(Toggle, &str); 4] = [
-    (Toggle::Quiet, "Quiet mode"),
-    (Toggle::Clock24, "24-hour clock"),
+const CHIPS: [(Toggle, &str); 6] = [
+    (Toggle::Quiet, "Quiet"),
+    (Toggle::Clock24, "24h clock"),
     (Toggle::Visualizer, "Visualizer"),
-    (Toggle::Battery, "Battery ring"),
+    (Toggle::Battery, "Battery"),
+    (Toggle::Clipboard, "Clipboard"),
+    (Toggle::EyeMoods, "Eye moods"),
 ];
 
 fn chip_rect(x0: f32, i: usize) -> Rect {
-    rect(x0 + 380.0 + (i % 2) as f32 * 148.0, 212.0 + (i / 2) as f32 * 26.0, 140.0, 22.0)
+    rect(x0 + 380.0 + (i % 3) as f32 * 98.0, 212.0 + (i / 3) as f32 * 26.0, 92.0, 22.0)
 }
 
 const SETTINGS_W: f32 = 744.0;
@@ -1840,11 +2054,11 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
         }
         cx.circle(px, py, 11.0, color(*c, a));
     }
-    for (i, label) in ["Classic", "Sauron"].iter().enumerate() {
-        let on = (s.eye_style == EyeStyle::Sauron) == (i == 1);
-        let rc = rect(x0 + 380.0 + i as f32 * 96.0, 178.0, 90.0, 28.0);
+    for (i, label) in ["Classic", "Sauron", "Cat", "Robot"].iter().enumerate() {
+        let on = s.eye_style == [EyeStyle::Classic, EyeStyle::Sauron, EyeStyle::Cat, EyeStyle::Robot][i];
+        let rc = rect(x0 + 380.0 + i as f32 * 76.0, 178.0, 70.0, 28.0);
         cx.rrect(rc, 14.0, if on { color(WHITE, 0.9 * a) } else { color(WHITE, 0.12 * a) });
-        cx.t(label, rc.x + 45.0, rc.y + 19.0, 14.0, if on { color([0, 0, 0], a) } else { color(WHITE, a) }, Align::Center);
+        cx.t(label, rc.x + 35.0, rc.y + 19.0, 14.0, if on { color([0, 0, 0], a) } else { color(WHITE, a) }, Align::Center);
     }
 
     let (label, status) = match notch.update_status() {
@@ -1895,20 +2109,22 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
             Toggle::Quiet => s.quiet,
             Toggle::Clock24 => s.clock_24h,
             Toggle::Visualizer => s.visualizer,
+            Toggle::Clipboard => s.clipboard_history,
+            Toggle::EyeMoods => s.eye_moods,
             _ => s.show_battery,
         };
         let rc = chip_rect(x0, i);
         cx.rrect(rc, 12.0, if on { color(GREEN, 0.9 * a) } else { color(WHITE, 0.12 * a) });
-        cx.t(label, rc.x + 70.0, rc.y + 17.0, 13.0, if on { color([0, 0, 0], a) } else { color(WHITE, a) }, Align::Center);
+        cx.t(label, rc.x + rc.w / 2.0, rc.y + 16.0, 12.0, if on { color([0, 0, 0], a) } else { color(WHITE, a) }, Align::Center);
     }
-    cx.t("Search drives for apps", x0 + 380.0, 274.0, 14.0, color(GRAY, a), Align::Left);
+    cx.t("Search drives for apps", x0 + 380.0, 288.0, 14.0, color(GRAY, a), Align::Left);
     for (i, d) in visus_platform::list_drives().iter().take(7).enumerate() {
         let on = s.app_folders.iter().any(|f| f == d);
-        let rc = rect(x0 + 380.0 + i as f32 * 52.0, 282.0, 46.0, 26.0);
+        let rc = rect(x0 + 380.0 + i as f32 * 52.0, 294.0, 46.0, 26.0);
         cx.rrect(rc, 13.0, if on { color(GREEN, 0.9 * a) } else { color(WHITE, 0.12 * a) });
         cx.t(d.trim_end_matches('\\'), rc.x + 23.0, rc.y + 18.0, 14.0, if on { color([0, 0, 0], a) } else { color(WHITE, a) }, Align::Center);
     }
-    cx.t("Scans up to 3 folders deep", x0 + 380.0, 328.0, 12.0, color(GRAY, 0.8 * a), Align::Left);
+    cx.t("Scans up to 3 folders deep", x0 + 380.0, 338.0, 12.0, color(GRAY, 0.8 * a), Align::Left);
     cx.t("Extra app folders", x0 + 36.0, 292.0, 14.0, color(GRAY, a), Align::Left);
     for (i, f) in s.app_folders.iter().take(2).enumerate() {
         let y = 298.0 + i as f32 * 26.0;

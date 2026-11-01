@@ -6,6 +6,8 @@ pub enum EyeStyle {
     #[default]
     Classic,
     Sauron,
+    Cat,
+    Robot,
 }
 
 /// sRGB colour stored as `#rrggbb` in settings so it is easy to hand-edit.
@@ -59,6 +61,12 @@ pub struct Settings {
     pub visualizer: bool,
     /// Battery ring on the closed pill when the machine has a battery.
     pub show_battery: bool,
+    /// Remember recent clipboard text (memory only, never written to disk).
+    pub clipboard_history: bool,
+    /// Let the idle eye change expressions now and then.
+    pub eye_moods: bool,
+    /// ICS link or file path whose events appear in the calendar and as meeting peeks.
+    pub calendar_url: Option<String>,
     pub hide_in_fullscreen: bool,
     /// Show the idle eye when nothing has happened for a while.
     pub mascot: bool,
@@ -104,6 +112,9 @@ impl Default for Settings {
             clock_24h: true,
             visualizer: true,
             show_battery: true,
+            clipboard_history: true,
+            eye_moods: true,
+            calendar_url: None,
             hide_in_fullscreen: true,
             mascot: true,
             idle_secs: 45,

@@ -54,6 +54,10 @@ pub enum Event {
     Weather(Option<crate::Weather>),
     Update(crate::UpdateStatus),
     Network { online: bool },
+    Clipboard(String),
+    /// Open top-level windows (handle, title) for the launcher's switcher.
+    Windows(Arc<Vec<(isize, String)>>),
+    Calendar(Arc<Vec<crate::CalEvent>>),
     /// Result of a lyrics lookup for a track; `None` means nothing was found.
     Lyrics { title: String, artist: String, lines: Option<Arc<Vec<LyricLine>>> },
 }
@@ -63,4 +67,6 @@ pub enum MediaCommand {
     PlayPause,
     Next,
     Previous,
+    /// Jump to `target`; `current` lets backends that only support relative seeks compute the offset.
+    Seek { target: Duration, current: Duration },
 }

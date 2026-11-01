@@ -1,6 +1,7 @@
 //! Linux integration over D-Bus: MPRIS for media, UPower for the charger.
 
 mod apps;
+mod clip;
 mod autostart;
 mod ipc;
 mod mpris;
@@ -26,8 +27,11 @@ pub fn start(emit: Emit) {
     mpris::start(emit.clone());
     power::start(emit.clone());
     ipc::listen(emit.clone());
+    clip::watch(emit.clone());
     std::thread::spawn(move || emit(visus_core::Event::Apps(std::sync::Arc::new(apps::list()))));
 }
+
+pub use clip::{focus_window, list_windows};
 
 pub fn prepare_window(_hwnd: isize) {}
 

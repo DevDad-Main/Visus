@@ -5,7 +5,9 @@ use std::sync::Arc;
 use visus_core::Event;
 
 mod art;
+mod clipboard;
 mod controls;
+pub use clipboard::set_clipboard;
 pub use controls::*;
 
 /// Extra folders the launcher scans for apps; set before `start`.

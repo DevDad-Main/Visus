@@ -23,6 +23,10 @@ impl Spring {
         self.damping = damping;
     }
 
+    pub fn velocity(&self) -> f32 {
+        self.velocity
+    }
+
     pub fn is_settled(&self) -> bool {
         (self.target - self.value).abs() < 0.05 && self.velocity.abs() < 0.05
     }

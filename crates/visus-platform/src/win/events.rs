@@ -106,6 +106,7 @@ unsafe fn run() {
             &GUID_ACDC_POWER_SOURCE,
             DEVICE_NOTIFY_WINDOW_HANDLE,
         );
+        let _ = windows::Win32::System::DataExchange::AddClipboardFormatListener(hwnd);
         let _ = SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), Some(hinstance), 0);
         for ev in [EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND] {
             SetWinEventHook(ev, ev, None, Some(foreground_hook), 0, 0, WINEVENT_OUTOFCONTEXT);
@@ -132,6 +133,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_POWERBROADCAST if wp.0 as u32 == PBT_POWERSETTINGCHANGE => {
                 report_power(true);
                 LRESULT(1)
+            }
+            windows::Win32::UI::WindowsAndMessaging::WM_CLIPBOARDUPDATE => {
+                if let Some(t) = read_clipboard() {
+                    emit(Event::Clipboard(t));
+                }
+                LRESULT(0)
             }
             WM_HOTKEY | WM_TOGGLE => {
                 emit(Event::TogglePalette);
@@ -269,6 +276,43 @@ fn report_fullscreen() {
     );
     if FULLSCREEN.swap(full, Ordering::Relaxed) != full {
         emit(Event::Fullscreen(full));
+    }
+}
+
+/// Plain text on the clipboard, if any; retries briefly because another app may hold it open.
+fn read_clipboard() -> Option<String> {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    unsafe {
+        let mut opened = false;
+        for _ in 0..4 {
+            if OpenClipboard(None).is_ok() {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        if !opened {
+            return None;
+        }
+        let text = (|| {
+            let handle = GetClipboardData(13).ok()?;
+            let g = HGLOBAL(handle.0);
+            let p = GlobalLock(g) as *const u16;
+            if p.is_null() {
+                return None;
+            }
+            let mut len = 0;
+            while len < 4000 && *p.add(len) != 0 {
+                len += 1;
+            }
+            let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, len));
+            let _ = GlobalUnlock(g);
+            Some(s)
+        })();
+        let _ = CloseClipboard();
+        text
     }
 }
 

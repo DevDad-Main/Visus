@@ -1,4 +1,4 @@
-use crate::{Controls, Action, Command, Event, FOCUS, Hud, Lyrics, MediaInfo, Outcome, Palette, Settings, Spring, Stats, Timer, Todo, UpdateStatus, Weather, parse_task};
+use crate::{CalEvent, Controls, Action, Command, Event, FOCUS, Hud, Lyrics, MediaInfo, Outcome, Palette, Settings, Spring, Stats, Timer, Todo, UpdateStatus, Weather, parse_task};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9,12 +9,14 @@ pub enum Page {
     Stats,
     Shelf,
     Todo,
+    Notes,
+    Clipboard,
     Calendar,
     Weather,
 }
 
 impl Page {
-    pub const ALL: [Page; 8] = [Page::Music, Page::Control, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Calendar, Page::Weather];
+    pub const ALL: [Page; 10] = [Page::Music, Page::Control, Page::Timer, Page::Stats, Page::Shelf, Page::Todo, Page::Notes, Page::Clipboard, Page::Calendar, Page::Weather];
 }
 
 /// Short-lived expressions the awake eye cycles through.
@@ -46,6 +48,7 @@ pub enum Alert {
     Online,
     Offline,
     Language([u8; 2]),
+    Meeting { mins: u16 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -145,6 +148,16 @@ pub struct Notch {
     viz_live: bool,
     viz_bars: [f32; VIZ_BARS],
     viz_phase: f32,
+    alert_at: Option<Instant>,
+    notes: Vec<String>,
+    notes_dirty: bool,
+    clips: Vec<String>,
+    events: Vec<CalEvent>,
+    alerted: Vec<i64>,
+    alert_event: Option<CalEvent>,
+    last_meeting_check: Instant,
+    window_request: bool,
+    hour: u8,
 }
 
 impl Notch {
@@ -196,6 +209,16 @@ impl Notch {
             viz_live: false,
             viz_bars: [0.08; VIZ_BARS],
             viz_phase: 0.0,
+            alert_at: None,
+            notes: Vec::new(),
+            notes_dirty: false,
+            clips: Vec::new(),
+            events: Vec::new(),
+            alerted: Vec::new(),
+            alert_event: None,
+            last_meeting_check: Instant::now(),
+            window_request: false,
+            hour: 12,
         };
         n.retarget();
         n
@@ -261,6 +284,9 @@ impl Notch {
             Event::Hud(Hud::Volume { level, muted }) => self.alert(Alert::Volume { level, muted }),
             Event::Fullscreen(f) => self.hidden = f && self.settings.hide_in_fullscreen,
             Event::Apps(apps) => self.palette.set_apps(apps),
+            Event::Windows(w) => self.palette.set_windows((*w).clone()),
+            Event::Calendar(e) => self.events = (*e).clone(),
+            Event::Clipboard(t) => self.clip_add(t),
             Event::TogglePalette => self.toggle_palette(),
         }
     }
@@ -273,9 +299,96 @@ impl Notch {
             return;
         }
         self.touch();
+        self.alert_at = Some(Instant::now());
         self.mode = Mode::Peek(a);
         self.peek_left = PEEK_TIME;
         self.retarget();
+    }
+
+    /// Seconds since the current alert landed while its ripple still plays.
+    pub fn alert_age(&self) -> Option<f32> {
+        self.alert_at.map(|t| t.elapsed().as_secs_f32()).filter(|a| *a < 0.9)
+    }
+
+    // ---- notes, clipboard history, calendar
+
+    pub fn notes(&self) -> &[String] {
+        &self.notes
+    }
+
+    pub fn set_notes(&mut self, n: Vec<String>) {
+        self.notes = n;
+    }
+
+    pub fn take_notes_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.notes_dirty)
+    }
+
+    pub fn note_add(&mut self, text: String) {
+        self.notes.insert(0, text.trim().chars().take(400).collect());
+        self.notes.truncate(30);
+        self.notes_dirty = true;
+    }
+
+    pub fn note_remove(&mut self, i: usize) {
+        if i < self.notes.len() {
+            self.notes.remove(i);
+            self.notes_dirty = true;
+        }
+    }
+
+    pub fn clips(&self) -> &[String] {
+        &self.clips
+    }
+
+    fn clip_add(&mut self, text: String) {
+        let t: String = text.trim().chars().take(400).collect();
+        if !self.settings.clipboard_history || t.is_empty() {
+            return;
+        }
+        self.clips.retain(|c| *c != t);
+        self.clips.insert(0, t);
+        self.clips.truncate(30);
+    }
+
+    pub fn clip_remove(&mut self, i: usize) {
+        if i < self.clips.len() {
+            self.clips.remove(i);
+        }
+    }
+
+    /// True once after the launcher opened, so the host can list open windows.
+    pub fn take_window_request(&mut self) -> bool {
+        std::mem::take(&mut self.window_request)
+    }
+
+    /// Hour of day 0..=23, used for the eye's mood.
+    pub fn set_hour(&mut self, h: u8) {
+        self.hour = h.min(23);
+    }
+
+    pub fn events(&self) -> &[CalEvent] {
+        &self.events
+    }
+
+    /// The event a meeting alert is about.
+    pub fn alert_event(&self) -> Option<&CalEvent> {
+        self.alert_event.as_ref()
+    }
+
+    fn check_meetings(&mut self) {
+        if self.last_meeting_check.elapsed() < Duration::from_secs(15) {
+            return;
+        }
+        self.last_meeting_check = Instant::now();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        let due = self.events.iter().find(|e| !e.all_day && e.start > now && e.start - now <= 600 && !self.alerted.contains(&e.start)).cloned();
+        if let Some(e) = due {
+            self.alerted.push(e.start);
+            let mins = ((e.start - now) as u16).div_ceil(60).max(1);
+            self.alert_event = Some(e);
+            self.alert(Alert::Meeting { mins });
+        }
     }
 
     pub fn alert_kind(&self) -> Option<Alert> {
@@ -306,14 +419,16 @@ impl Notch {
 
     /// Redraw cadence needed while otherwise static, e.g. the progress bar.
     pub fn refresh_interval(&self) -> Option<Duration> {
-        let media = self.is_open() && self.media.has_session && self.media.playing;
+        let playing = self.media.has_session && self.media.playing;
+        let media = self.is_open() && playing;
+        let closed_progress = playing && self.mode == Mode::Closed && !self.settings.minimal;
         let synced = media && self.lyrics_open && matches!(self.lyrics, Lyrics::Ready(_));
         let viz = self.visualizer_active() && self.mode == Mode::Closed;
         let base = if viz {
             Some(VISUALIZER_REFRESH)
         } else if synced {
             Some(LYRIC_REFRESH)
-        } else if media || self.timer.is_running() {
+        } else if media || closed_progress || self.timer.is_running() {
             Some(PROGRESS_REFRESH)
         } else if self.is_open() && self.page == Page::Control {
             Some(CONTROLS_REFRESH)
@@ -833,6 +948,7 @@ impl Notch {
         self.close_settings();
         self.touch();
         self.palette.clear();
+        self.window_request = true;
         self.palette_open = true;
         self.palette_anim.tune(700.0, 46.0);
         self.palette_anim.target = 1.0;
@@ -878,6 +994,17 @@ impl Notch {
         match action {
             Action::Launch(t) => Outcome::Launch(t),
             Action::OpenUrl(u) => Outcome::OpenUrl(u),
+            Action::FocusWindow(h) => Outcome::FocusWindow(h),
+            Action::AddNote(t) => {
+                self.note_add(t);
+                self.show_page(Page::Notes);
+                Outcome::None
+            }
+            Action::SetCalendar(u) => {
+                self.update_settings(|s| s.calendar_url = Some(u));
+                self.show_page(Page::Calendar);
+                Outcome::None
+            }
             Action::Command(c) => match c {
                 Command::Quit => Outcome::Quit,
                 Command::ShowPage(p) => {
@@ -963,7 +1090,7 @@ impl Notch {
 
     /// Current expression and how far through it the eye is (0..1).
     pub fn eye_mood(&self) -> (EyeMood, f32) {
-        if self.eye_state() != EyeState::Awake {
+        if !self.settings.eye_moods || self.eye_state() != EyeState::Awake {
             return (EyeMood::None, 0.0);
         }
         let t = self.awake_secs();
@@ -1020,6 +1147,12 @@ impl Notch {
                     EyeMood::Squint => o = o.min(1.0 - 0.5 * e),
                     EyeMood::Surprised => o *= 1.0 + 0.22 * e,
                     _ => {}
+                }
+                // Late at night the eye stays sleepy; in the morning it is wide awake.
+                if self.hour >= 23 || self.hour < 5 {
+                    o = o.min(0.72);
+                } else if (6..10).contains(&self.hour) {
+                    o *= 1.08;
                 }
                 o.min(1.0 - 0.55 * self.eye_drowsy()).max(0.0)
             }
@@ -1151,12 +1284,14 @@ impl Notch {
     }
 
     pub fn shape(&self) -> Shape {
+        // Squash and stretch: the pill gets slightly shorter while it widens quickly, and taller while it narrows.
+        let squash = (self.w.velocity() * 0.000012).clamp(-0.04, 0.04);
         Shape {
             rect: Rect {
                 x: (self.window_w - self.w.value) / 2.0,
                 y: 0.0,
                 w: self.w.value,
-                h: self.h.value,
+                h: self.h.value * (1.0 - squash),
             },
             bottom_radius: self.r.value,
         }
@@ -1174,6 +1309,7 @@ impl Notch {
 
     pub fn tick(&mut self, dt: Duration) {
         self.wander();
+        self.check_meetings();
         if self.mode == Mode::Closed {
             self.retarget();
         }
