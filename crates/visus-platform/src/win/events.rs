@@ -19,7 +19,7 @@ use windows::Win32::System::Power::{
 };
 use windows::Win32::UI::Accessibility::SetWinEventHook;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, VK_CAPITAL, VK_SPACE, VK_VOLUME_DOWN, VK_VOLUME_MUTE,
+    GetKeyState, MOD_ALT, MOD_CONTROL, VK_CONTROL, MOD_NOREPEAT, RegisterHotKey, VK_CAPITAL, VK_SPACE, VK_VOLUME_DOWN, VK_VOLUME_MUTE,
     VK_VOLUME_UP,
 };
 use windows::Win32::UI::Shell::{
@@ -29,7 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, EVENT_SYSTEM_FOREGROUND,
     EVENT_SYSTEM_MINIMIZEEND, GetMessageW, KBDLLHOOKSTRUCT, KillTimer, MSG, PostMessageW,
     RegisterClassW, SetTimer, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WINEVENT_OUTOFCONTEXT, WM_APP, WM_HOTKEY, WM_KEYDOWN, WM_POWERBROADCAST, WM_TIMER,
+    WINDOW_STYLE, WINEVENT_OUTOFCONTEXT, WM_APP, WM_HOTKEY, WM_KEYDOWN, WM_SYSKEYDOWN, WM_POWERBROADCAST, WM_TIMER,
     WNDCLASSW, DEVICE_NOTIFY_WINDOW_HANDLE, PBT_POWERSETTINGCHANGE,
 };
 
@@ -43,6 +43,7 @@ static LAYOUT: AtomicU32 = AtomicU32::new(0);
 const WM_KEY_CAPS: u32 = WM_APP + 1;
 const WM_KEY_VOLUME: u32 = WM_APP + 2;
 const WM_FOREGROUND: u32 = WM_APP + 3;
+const WM_TOGGLE: u32 = WM_APP + 4;
 const T_CAPS: usize = 1;
 const T_VOLUME: usize = 2;
 const T_FULLSCREEN: usize = 3;
@@ -132,7 +133,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 report_power(true);
                 LRESULT(1)
             }
-            WM_HOTKEY => {
+            WM_HOTKEY | WM_TOGGLE => {
                 emit(Event::TogglePalette);
                 LRESULT(0)
             }
@@ -175,6 +176,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 /// Only inspects the few keys we show HUDs for; nothing else is read, stored or forwarded.
 unsafe extern "system" fn key_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
+        // Alt+Space arrives as a system key; handling it here works even when another app owns the hotkey.
+        if code >= 0 && wp.0 as u32 == WM_SYSKEYDOWN {
+            let kb = &*(lp.0 as *const KBDLLHOOKSTRUCT);
+            let ctrl = GetKeyState(VK_CONTROL.0 as i32) < 0;
+            if kb.vkCode == VK_SPACE.0 as u32 && kb.flags.0 & 0x20 != 0 && !ctrl {
+                let h = HWND_RAW.load(Ordering::Relaxed);
+                if h != 0 {
+                    let _ = PostMessageW(Some(HWND(h as *mut _)), WM_TOGGLE, WPARAM(0), LPARAM(0));
+                    return LRESULT(1);
+                }
+            }
+        }
         if code >= 0 && wp.0 as u32 == WM_KEYDOWN {
             let vk = (*(lp.0 as *const KBDLLHOOKSTRUCT)).vkCode as u16;
             let target = if vk == VK_CAPITAL.0 {

@@ -1200,17 +1200,19 @@ fn draw_palette(cx: &mut Ctx, notch: &Notch) {
     let centre = (l.panel.x + l.panel.w / 2.0) * k + ox;
     let src_top = (l.panel.y - 16.0) * k + oy;
     let src_h = (l.panel.h + 32.0) * k;
-    let y_shrink = 1.0 - smooth((g - 0.08) / 0.92);
+    // A small swell at the start makes the pull-in feel springy.
+    let swell = 1.0 + 0.05 * (std::f32::consts::PI * (g / 0.3).min(1.0)).sin();
+    let y_shrink = (1.0 - smooth((g - 0.05) / 0.95)) * swell;
     // The funnel ends as a point just under the pill instead of inside it.
     let pill_bottom = (notch.shape().rect.h + 3.0) * k + oy;
     let dst_top = src_top + (pill_bottom - src_top) * smooth(g);
-    let alpha = 1.0 - smooth((g - 0.7) / 0.25);
+    let alpha = 1.0 - smooth((g - 0.84) / 0.15);
     let half = (PANEL_W / 2.0 + 16.0) * k;
     const N: usize = 90;
     for i in 0..N {
         let (u0, u1) = (i as f32 / N as f32, (i + 1) as f32 / N as f32);
         let um = (u0 + u1) / 2.0;
-        let sx = 1.0 - 0.97 * smooth(g * 1.5 - 0.5 * um);
+        let sx = ((1.0 - smooth(g * 1.25 - 0.25 * um)) * swell).max(0.004);
         let (sy0, dy0, dy1) = (src_top + u0 * src_h, dst_top + u0 * src_h * y_shrink, dst_top + u1 * src_h * y_shrink);
         let dh = dy1 - dy0;
         if dh < 0.02 {

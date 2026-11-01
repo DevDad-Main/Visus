@@ -818,7 +818,7 @@ impl Notch {
     pub fn close_palette(&mut self) {
         self.palette_open = false;
         // Slow start, then accelerating: reads as being sucked into the pill.
-        self.palette_anim.tune(80.0, 18.0);
+        self.palette_anim.tune(130.0, 23.0);
         self.palette_anim.target = 0.0;
     }
 
