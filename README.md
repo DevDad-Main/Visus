@@ -8,7 +8,7 @@ out of the way. Native Rust, no web engine, near-zero CPU when idle.
 - **Music**: any player (Windows media sessions / Linux MPRIS), album art, transport controls, synced lyrics.
 - **Focus timer**: presets and steppers; the pill ring counts down. **To-do** with `@14:30` reminders.
 - **Stats** (CPU, memory, network), **Calendar**, **Weather** (search your city), **File shelf** (drop files on the pill).
-- **Launcher**: Alt+Space (Windows) or `visus --toggle-palette` (Linux, bind it in your compositor). Searches apps
+- **Launcher**: Alt+Space or Ctrl+Alt+Space (Windows) or `visus --toggle-palette` (Linux, bind it in your compositor). Searches apps
   with icons, runs Visus commands, does maths, opens URLs, searches the web, takes screenshots.
 - **Alerts**: charger, Caps Lock, volume, keyboard language, Wi-Fi, reminders.
 - **Idle eye** that blinks, looks around and follows your cursor. Classic or Sauron style, any colour.

@@ -72,7 +72,7 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
   search a city). Settings is a popup under the pill (gear button): toggles, size, eye colour/style/delay,
   location, launcher drives/folders, update check. 
 - Quick launcher / command palette beneath the pill: apps, Visus commands, arithmetic, URLs, web search,
-  "Take screenshot", "Check for updates". Open via the magnifier in the open pill, **Alt+Space** (Windows),
+  "Take screenshot", "Check for updates". Open via the magnifier in the open pill, **Alt+Space** or **Ctrl+Alt+Space** (Windows),
   or on Linux bind a key to `visus-app --toggle-palette`.
 - Alert peeks: charger, Caps Lock, volume, keyboard language and Wi-Fi/online changes (Windows), timer done,
   task due.
@@ -96,7 +96,9 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 
 ## Roadmap (after v1.0)
 
-1. Fix whatever real-world Windows testing finds.
+1. Fix whatever real-world Windows testing finds (settings popup, drop, launcher focus, updater, alerts still lightly tested).
+   v1.0.1: Ctrl+Alt+Space hotkey, weather page has no location row (set city in settings), minimal notch hides content, equalizer glyph removed.
+   Still to do: user-configurable hotkey, Linux global hotkey without compositor binding, Wayland drag-and-drop.
 2. Bluetooth/brightness HUDs, notifications center, calendar events, shelf drag-out.
 3. Plugin host behind a data-driven page registry; more eye styles; macOS port; installer/Store packaging.
 

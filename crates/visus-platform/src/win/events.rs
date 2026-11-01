@@ -19,7 +19,7 @@ use windows::Win32::System::Power::{
 };
 use windows::Win32::UI::Accessibility::SetWinEventHook;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, MOD_ALT, MOD_NOREPEAT, RegisterHotKey, VK_CAPITAL, VK_SPACE, VK_VOLUME_DOWN, VK_VOLUME_MUTE,
+    GetKeyState, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, VK_CAPITAL, VK_SPACE, VK_VOLUME_DOWN, VK_VOLUME_MUTE,
     VK_VOLUME_UP,
 };
 use windows::Win32::UI::Shell::{
@@ -112,6 +112,7 @@ unsafe fn run() {
         SetTimer(Some(hwnd), T_FULLSCREEN, FULLSCREEN_RECHECK_MS, None);
         // Alt+Space opens the launcher; quietly skipped if another app owns the combination.
         let _ = RegisterHotKey(Some(hwnd), 1, MOD_ALT | MOD_NOREPEAT, VK_SPACE.0 as u32);
+        let _ = RegisterHotKey(Some(hwnd), 2, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_SPACE.0 as u32);
 
         report_power(false);
         report_fullscreen();

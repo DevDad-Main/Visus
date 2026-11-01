@@ -198,7 +198,6 @@ fn page_buttons(notch: &Notch, x0: f32, cx: f32) -> Vec<(Button, Rect)> {
         Page::Timer => timer_buttons(x0),
         Page::Todo => todo_buttons(notch, x0),
         Page::Shelf => shelf_buttons(notch, x0),
-        Page::Weather => vec![(Button::Location, rect(x0 + 36.0, 204.0, 300.0, 30.0))],
         _ => Vec::new(),
     }
 }
@@ -372,7 +371,7 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
 
     let r = shape.rect;
     let ch = notch.settings().closed_height;
-    let closed_a = (1.0 - (r.h - ch) / 20.0).clamp(0.0, 1.0);
+    let closed_a = if notch.settings().minimal { 0.0 } else { (1.0 - (r.h - ch) / 20.0).clamp(0.0, 1.0) };
     let peek_a = ((r.h - (ch + 12.0)) / 24.0).clamp(0.0, 1.0) * (1.0 - ((r.h - 100.0) / 60.0).clamp(0.0, 1.0));
     let open_a = ((r.h - 150.0) / 70.0).clamp(0.0, 1.0);
 
@@ -573,12 +572,6 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     }
     let clock = chrono::Local::now().format("%H:%M").to_string();
     cx.t(&clock, r.x + r.w / 2.0, mid + 7.0, 20.0, color(WHITE, a), Align::Center);
-    // Equalizer glyph; flat when nothing plays.
-    let heights: [f32; 4] = if notch.media().playing { [8.0, 14.0, 10.0, 6.0] } else { [5.0, 5.0, 5.0, 5.0] };
-    for (i, h) in heights.iter().enumerate() {
-        let x = r.x + r.w - 38.0 + i as f32 * 6.0;
-        cx.rrect(rect(x, mid - h / 2.0, 2.5, *h), 1.25, color(WHITE, a));
-    }
 }
 
 fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, a: f32) {
@@ -1292,8 +1285,7 @@ fn draw_weather(cx: &mut Ctx, notch: &Notch, a: f32) {
     let mid = r.x + r.w / 2.0;
     if notch.settings().weather_lat.is_none() || notch.settings().weather_lon.is_none() {
         cx.t("Where are you?", mid, 118.0, 26.0, color(WHITE, a), Align::Center);
-        cx.t("Type a city below to see the weather", mid, 148.0, 16.0, color(GRAY, a), Align::Center);
-        draw_location_row(cx, notch, rect(r.x + 36.0, 204.0, 300.0, 30.0), a);
+        cx.t("Set your city in settings (gear)", mid, 148.0, 16.0, color(GRAY, a), Align::Center);
         return;
     }
     match notch.weather() {
@@ -1304,7 +1296,6 @@ fn draw_weather(cx: &mut Ctx, notch: &Notch, a: f32) {
         }
         None => cx.t("Loading\u{2026}", mid, 140.0, 22.0, color(GRAY, a), Align::Center),
     }
-    draw_location_row(cx, notch, rect(r.x + 36.0, 204.0, 300.0, 30.0), a);
 }
 
 fn settings_buttons_raw(x0: f32) -> Vec<(Button, Rect)> {
