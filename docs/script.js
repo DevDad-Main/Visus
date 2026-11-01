@@ -23,7 +23,7 @@
 
   // Tabbed showcases (page tour, clock styles).
   document.querySelectorAll(".showcase").forEach((box) => {
-    const img = box.querySelector(".show img");
+    const img = box.querySelector(".show img, .scene img");
     const tabs = [...box.querySelectorAll(".tabs button")];
     const show = (btn) => {
       tabs.forEach((b) => b.classList.toggle("on", b === btn));

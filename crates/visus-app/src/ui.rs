@@ -3,7 +3,7 @@ use tiny_skia::{
     SpreadMode, FilterQuality, Pattern,
     Stroke, Transform, LineCap,
 };
-use visus_core::{Alert, AppKind, ClockStyle, Radio, EyeMood, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, GAME_ITEM_W, GameItem, WIN_GRID, current_index, weather_label};
+use visus_core::{Alert, AppKind, ClockStyle, Radio, EyeMood, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, GAME_CARD_HEAD, GAME_CARD_ROW, GAME_HIST, GAME_ITEM_W, GameItem, GameStats, GameStyle, WIN_GRID, current_index, weather_label};
 
 use crate::text::{Align, Text};
 
@@ -795,7 +795,7 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     }
 
     let ch = notch.settings().closed_height;
-    let closed_a = if notch.settings().minimal { 0.0 } else { (1.0 - (r.h - ch) / 20.0).clamp(0.0, 1.0) };
+    let closed_a = if notch.game_active() { 1.0 } else if notch.settings().minimal { 0.0 } else { (1.0 - (r.h - ch) / 20.0).clamp(0.0, 1.0) };
     let peek_a = ((r.h - (ch + 12.0)) / 24.0).clamp(0.0, 1.0) * (1.0 - ((r.h - 100.0) / 60.0).clamp(0.0, 1.0));
     let open_a = ((r.h - 150.0) / 70.0).clamp(0.0, 1.0);
 
@@ -819,7 +819,7 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
         };
         draw_alert(&mut cx, &shape, alert, text, (notch.settings().eye_style, notch.settings().eye_moods, notch.alert_age().unwrap_or(1.0)), peek_a);
     }
-    if open_a > 0.0 {
+    if open_a > 0.0 && !notch.game_active() {
         draw_open(&mut cx, notch, open_a);
     }
     draw_palette(&mut cx, notch);
@@ -1340,27 +1340,114 @@ fn heat(frac: f32) -> [u8; 3] {
     }
 }
 
-/// In-game HUD: one capsule per reading, each with a label, a coloured ring and the value.
+/// (label, 0..1 fill, text) for one HUD reading.
+fn game_reading(g: &GameStats, it: GameItem) -> (&'static str, f32, String) {
+    match it {
+        GameItem::Cpu => ("CPU", g.cpu, format!("{:.0}%", g.cpu * 100.0)),
+        GameItem::CpuTemp => ("CPU", g.cpu_temp.unwrap_or(0.0) / 100.0, format!("{:.0}\u{b0}C", g.cpu_temp.unwrap_or(0.0))),
+        GameItem::Gpu => ("GPU", g.gpu.unwrap_or(0.0), format!("{:.0}%", g.gpu.unwrap_or(0.0) * 100.0)),
+        GameItem::GpuTemp => ("GPU", g.gpu_temp.unwrap_or(0.0) / 100.0, format!("{:.0}\u{b0}C", g.gpu_temp.unwrap_or(0.0))),
+        GameItem::Ram => ("RAM", g.ram, format!("{:.1}GB", g.ram_used_gb)),
+    }
+}
+
+/// In-game HUD in the chosen layout.
 fn draw_game(cx: &mut Ctx, notch: &Notch, a: f32) {
+    if notch.settings().game_style == GameStyle::Card {
+        draw_game_card(cx, notch, a);
+        return;
+    }
+    let bars = notch.settings().game_style == GameStyle::Bars;
     let r = notch.shape().rect;
     let g = notch.game_stats();
     let items = notch.game_items();
     let mid = r.y + r.h / 2.0;
     let x0 = r.x + (r.w - items.len() as f32 * GAME_ITEM_W) / 2.0;
     for (i, it) in items.iter().enumerate() {
-        let (label, frac, text) = match it {
-            GameItem::Cpu => ("CPU", g.cpu, format!("{:.0}%", g.cpu * 100.0)),
-            GameItem::CpuTemp => ("CPU", g.cpu_temp.unwrap_or(0.0) / 100.0, format!("{:.0}\u{b0}C", g.cpu_temp.unwrap_or(0.0))),
-            GameItem::Gpu => ("GPU", g.gpu.unwrap_or(0.0), format!("{:.0}%", g.gpu.unwrap_or(0.0) * 100.0)),
-            GameItem::GpuTemp => ("GPU", g.gpu_temp.unwrap_or(0.0) / 100.0, format!("{:.0}\u{b0}C", g.gpu_temp.unwrap_or(0.0))),
-            GameItem::Ram => ("RAM", g.ram, format!("{:.1}GB", g.ram_used_gb)),
-        };
+        let (label, frac, text) = game_reading(&g, *it);
         let ix = x0 + i as f32 * GAME_ITEM_W;
         cx.rrect(rect(ix + 3.0, mid - 12.0, GAME_ITEM_W - 6.0, 24.0), 12.0, color(WHITE, 0.07 * a));
         let lw = cx.text_width(label, 10.0);
         cx.t(label, ix + 14.0, mid + 3.5, 10.0, color(GRAY, a), Align::Left);
-        cx.ring(ix + 14.0 + lw + 14.0, mid, 6.5, 2.4, frac.clamp(0.0, 1.0), heat(frac), a);
+        let gx = ix + 14.0 + lw + 10.0;
+        if bars {
+            // Five stacked bars fill from the bottom like a level meter.
+            let lit = (frac.clamp(0.0, 1.0) * 5.0).ceil() as usize;
+            for k in 0..5usize {
+                let on = 4 - k < lit;
+                cx.rrect(rect(gx, mid - 8.4 + k as f32 * 3.6, 14.0, 2.4), 1.2, if on { color(heat(frac), a) } else { color(WHITE, 0.12 * a) });
+            }
+        } else {
+            cx.ring(gx + 6.5, mid, 6.5, 2.4, frac.clamp(0.0, 1.0), heat(frac), a);
+        }
         cx.t(&text, ix + GAME_ITEM_W - 12.0, mid + 5.0, 14.0, color(WHITE, a), Align::Right);
+    }
+}
+
+/// Stacked card: a load graph on top, then a row per component.
+fn draw_game_card(cx: &mut Ctx, notch: &Notch, a: f32) {
+    let r = notch.shape().rect;
+    let g = notch.game_stats();
+    let hist = notch.game_history();
+    let (x0, w) = (r.x, r.w);
+    let use_gpu = g.gpu.is_some();
+    let (label, cur) = if use_gpu { ("GPU", g.gpu.unwrap_or(0.0)) } else { ("CPU", g.cpu) };
+    cx.t(label, x0 + 22.0, 26.0, 11.0, color(GRAY, a), Align::Left);
+    cx.t(&format!("{:.0}", cur * 100.0), x0 + 22.0, 58.0, 30.0, color(WHITE, a), Align::Left);
+    let num_w = cx.text_width(&format!("{:.0}", cur * 100.0), 30.0);
+    cx.t("%", x0 + 24.0 + num_w, 58.0, 14.0, color(GRAY, a), Align::Left);
+    let sub = if use_gpu { g.gpu_temp.map(|t| format!("{t:.0}\u{b0}C")) } else { g.cpu_temp.map(|t| format!("{t:.0}\u{b0}C")) };
+    if let Some(t) = sub {
+        cx.t(&t, x0 + w - 22.0, 26.0, 12.0, color(GRAY, a), Align::Right);
+    }
+    // Load history, newest on the right.
+    let (gx, gw, gy, gh) = (x0 + 20.0, w - 40.0, 68.0, 28.0);
+    let tint = heat(cur);
+    cx.rrect(rect(gx, gy + gh + 1.0, gw, 1.0), 0.5, color(WHITE, 0.10 * a));
+    if hist.len() >= 2 {
+        let pts: Vec<(f32, f32)> = hist
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let v = if use_gpu { s.gpu.unwrap_or(0.0) } else { s.cpu };
+                (gx + gw * (GAME_HIST - hist.len() + i) as f32 / (GAME_HIST - 1) as f32, gy + gh * (1.0 - v.clamp(0.0, 1.0)))
+            })
+            .collect();
+        let mut line = PathBuilder::new();
+        for (i, (px, py)) in pts.iter().enumerate() {
+            if i == 0 { line.move_to(*px, *py) } else { line.line_to(*px, *py) }
+        }
+        let mut fill = PathBuilder::new();
+        fill.move_to(pts[0].0, gy + gh);
+        for (px, py) in &pts {
+            fill.line_to(*px, *py);
+        }
+        fill.line_to(pts[pts.len() - 1].0, gy + gh);
+        fill.close();
+        if let Some(f) = fill.finish() {
+            cx.fill(&f, color(tint, 0.16 * a));
+        }
+        if let Some(l) = line.finish() {
+            cx.stroke(&l, color(tint, a), 1.6);
+        }
+    }
+    // One row per component: load ring + value, then temperature.
+    let mut rows: Vec<(&str, f32, String, Option<(f32, String)>)> = vec![("CPU", g.cpu, format!("{:.0}%", g.cpu * 100.0), g.cpu_temp.map(|t| (t / 100.0, format!("{t:.0}\u{b0}C"))))];
+    if let Some(gp) = g.gpu {
+        rows.push(("GPU", gp, format!("{:.0}%", gp * 100.0), g.gpu_temp.map(|t| (t / 100.0, format!("{t:.0}\u{b0}C")))));
+    }
+    rows.push(("RAM", g.ram, format!("{:.1}GB", g.ram_used_gb), None));
+    for (i, (name, frac, text, temp)) in rows.iter().enumerate() {
+        let y = GAME_CARD_HEAD + i as f32 * GAME_CARD_ROW;
+        cx.rrect(rect(x0 + 10.0, y, w - 20.0, GAME_CARD_ROW - 6.0), 12.0, color(WHITE, 0.07 * a));
+        let mid = y + (GAME_CARD_ROW - 6.0) / 2.0;
+        cx.t(name, x0 + 24.0, mid + 3.5, 10.0, color(GRAY, a), Align::Left);
+        cx.ring(x0 + 84.0, mid, 6.5, 2.4, frac.clamp(0.0, 1.0), heat(*frac), a);
+        cx.t(text, x0 + 98.0, mid + 5.0, 14.0, color(WHITE, a), Align::Left);
+        if let Some((tf, tt)) = temp {
+            cx.ring(x0 + 166.0, mid, 6.5, 2.4, tf.clamp(0.0, 1.0), heat(*tf), a);
+            cx.t(tt, x0 + 180.0, mid + 5.0, 14.0, color(WHITE, a), Align::Left);
+        }
     }
 }
 
@@ -1836,6 +1923,11 @@ fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
 /// Handles a left click at pill-logical coordinates; the host runs the returned outcome.
 pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
     use visus_core::MediaCommand;
+    // Clicking the in-game HUD flips to the next layout.
+    if notch.game_active() {
+        notch.update_settings(|s| s.game_style = s.game_style.next());
+        return Outcome::None;
+    }
     if notch.alert_kind() == Some(Alert::UpdateAvailable) {
         notch.open_settings();
         return Outcome::None;
@@ -1916,7 +2008,17 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                 Toggle::Clipboard => notch.update_settings(|s| s.clipboard_history = !s.clipboard_history),
                 Toggle::EyeMoods => notch.update_settings(|s| s.eye_moods = !s.eye_moods),
                 Toggle::ClockStyle => notch.update_settings(|s| s.clock_style = s.clock_style.next()),
-                Toggle::GameHud => notch.update_settings(|s| s.game_hud = !s.game_hud),
+                Toggle::GameHud => notch.update_settings(|s| {
+                    // Off, then each layout in turn, then off again.
+                    if !s.game_hud {
+                        s.game_hud = true;
+                        s.game_style = GameStyle::Pills;
+                    } else if s.game_style == GameStyle::Card {
+                        s.game_hud = false;
+                    } else {
+                        s.game_style = s.game_style.next();
+                    }
+                }),
                 Toggle::AutoUpdate => notch.update_settings(|s| s.auto_update = !s.auto_update),
                 Toggle::Autostart => {
                     let _ = visus_platform::set_autostart(!visus_platform::autostart_enabled());
@@ -2894,7 +2996,11 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
         };
         let rc = chip_rect(x0, i);
         cx.rrect(rc, 12.0, if on { color(cx.accent, 0.9 * a) } else { color(WHITE, 0.12 * a) });
-        let label = if *t == Toggle::ClockStyle { format!("Clock: {}", s.clock_style.name()) } else { label.to_string() };
+        let label = match t {
+            Toggle::ClockStyle => format!("Clock: {}", s.clock_style.name()),
+            Toggle::GameHud => if s.game_hud { format!("HUD: {}", s.game_style.name()) } else { "HUD: off".to_string() },
+            _ => label.to_string(),
+        };
         cx.t(&label, rc.x + rc.w / 2.0, rc.y + 16.0, 12.0, if on { color(cx.ink, a) } else { color(WHITE, a) }, Align::Center);
     }
     cx.t("Search drives for apps", x0 + 380.0, 302.0, 14.0, color(GRAY, a), Align::Left);

@@ -66,10 +66,17 @@
     <div class="wrap center">
       <p class="eyebrow">Game mode</p>
       <h2>When the game starts,<br>the pill becomes a HUD.</h2>
-      <p class="sub">Visus notices when a game takes the screen and turns into a quiet row of live readings: CPU and GPU load, temperatures, memory. No overlay to set up. When you quit, it goes back to being a clock.</p>
-      <div class="scene">
-        <div class="scene-bg" aria-hidden="true"></div>
-        <img src="assets/shots/pill_game.webp" alt="Visus game HUD showing CPU, GPU, temperature and RAM" width="674" height="36" loading="lazy">
+      <p class="sub">Visus notices when a game takes the screen and turns into a quiet row of live readings: CPU and GPU load, temperatures, memory. No overlay to set up. Three layouts, and a click on the HUD flips between them. When you quit, it goes back to being a clock.</p>
+      <div class="showcase">
+        <div class="scene">
+          <div class="scene-bg" aria-hidden="true"></div>
+          <img src="assets/shots/hud_pills.webp" alt="Visus game HUD showing CPU, GPU, temperature and RAM" width="674" height="36" loading="lazy">
+        </div>
+        <div class="tabs">
+          <button class="on" data-shot="hud_pills" data-w="674" data-h="36">Pills</button>
+          <button data-shot="hud_bars" data-w="674" data-h="36">Bars</button>
+          <button data-shot="hud_card" data-w="300" data-h="232">Card</button>
+        </div>
       </div>
       <p class="fine">Shows the readings your machine exposes: GPU stats need an NVIDIA card (AMD on Linux), CPU temperature is available on Linux.</p>
     </div>

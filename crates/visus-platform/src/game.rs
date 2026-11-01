@@ -18,7 +18,7 @@ pub fn is_game_path(path: &str) -> bool {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn is_game_class(class: &str) -> bool {
     let c = class.to_lowercase();
-    c.starts_with("steam_app_") || c.starts_with("gamescope") || c.ends_with(".exe") || ["lutris", "heroic", "minecraft", "retroarch", "cs2", "dota2", "wine"].iter().any(|k| c.contains(k))
+    c.starts_with("steam_app_") || c.starts_with("gamescope") || c.ends_with(".exe") || ["lutris", "heroic", "minecraft", "retroarch", "cs2", "dota2", "wine", "cemu", "yuzu", "ryujinx", "rpcs3", "dolphin", "pcsx2", "duckstation", "ppsspp", "citra", "xemu", "mgba", "melonds", "flycast"].iter().any(|k| c.contains(k))
 }
 
 /// Polls Hyprland for a fullscreen game window.
@@ -51,6 +51,7 @@ mod tests {
         assert!(!is_game_path(r"C:\Program Files\Google\Chrome\chrome.exe"));
         assert!(!is_game_path(r"C:\Windows\explorer.exe"));
         assert!(is_game_class("steam_app_1245620"));
+        assert!(is_game_class("Cemu"));
         assert!(!is_game_class("firefox"));
     }
 }

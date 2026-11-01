@@ -700,11 +700,24 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             notch.tick(Duration::from_millis(16));
         }
         notch.handle(Event::Game(true));
-        notch.handle(Event::GameStats(visus_core::GameStats { cpu: 0.54, cpu_temp: Some(71.0), gpu: Some(0.88), gpu_temp: Some(76.0), ram: 0.38, ram_used_gb: 12.1 }));
+        if let Some(st) = std::env::var("VISUS_HUD").ok().and_then(|v| [visus_core::GameStyle::Pills, visus_core::GameStyle::Bars, visus_core::GameStyle::Card].into_iter().find(|s| s.name().eq_ignore_ascii_case(&v))) {
+            notch.update_settings(|s| s.game_style = st);
+        }
+        for i in 0..40 {
+            let t = i as f32 / 39.0;
+            notch.handle(Event::GameStats(visus_core::GameStats {
+                cpu: 0.45 + 0.1 * (t * 9.0).sin(),
+                cpu_temp: Some(71.0),
+                gpu: Some(0.80 + 0.12 * (t * 6.0).sin() * (1.0 - t * 0.3)),
+                gpu_temp: Some(76.0),
+                ram: 0.38,
+                ram_used_gb: 12.1,
+            }));
+        }
         for _ in 0..300 {
             notch.tick(Duration::from_millis(16));
         }
-        let mut pm = Pixmap::new(WIN_W as u32 * 2, 240).expect("pixmap");
+        let mut pm = Pixmap::new(WIN_W as u32 * 2, 520).expect("pixmap");
         ui::draw(&mut pm, &text::Text::new(), &notch, 2.0);
         pm.save_png(out).expect("write png");
         return;

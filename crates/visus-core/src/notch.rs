@@ -109,7 +109,12 @@ const MINIMAL: (f32, f32) = (190.0, 6.0);
 const VISUALIZER_EXTRA: f32 = 76.0;
 /// Layout of the in-game HUD: side padding and width of each reading.
 pub const GAME_PAD: f32 = 12.0;
+pub const GAME_HIST: usize = 40;
 pub const GAME_ITEM_W: f32 = 124.0;
+/// The card layout: width, header (graph) height and height of each row.
+pub const GAME_CARD_W: f32 = 270.0;
+pub const GAME_CARD_HEAD: f32 = 106.0;
+pub const GAME_CARD_ROW: f32 = 38.0;
 /// The idle pill drops the empty visualizer slot and tightens around battery and clock.
 const IDLE_TRIM: f32 = 16.0;
 const MOOD_PERIOD: f32 = 16.0;
@@ -150,6 +155,7 @@ pub struct Notch {
     fullscreen: bool,
     game: bool,
     game_stats: crate::GameStats,
+    game_hist: Vec<crate::GameStats>,
     timer: Timer,
     settings: Settings,
     stats: Stats,
@@ -232,6 +238,7 @@ impl Notch {
             fullscreen: false,
             game: false,
             game_stats: crate::GameStats::default(),
+            game_hist: Vec::new(),
             timer: Timer::new(FOCUS),
             settings: Settings::default(),
             stats: Stats::default(),
@@ -377,6 +384,10 @@ impl Notch {
             }
             Event::GameStats(s) => {
                 self.game_stats = s;
+                self.game_hist.push(s);
+                if self.game_hist.len() > GAME_HIST {
+                    self.game_hist.remove(0);
+                }
                 self.retarget();
             }
             Event::Apps(apps) => self.palette.set_apps(apps),
@@ -419,6 +430,16 @@ impl Notch {
 
     fn refresh_hidden(&mut self) {
         self.hidden = self.fullscreen && self.settings.hide_in_fullscreen && !self.game_active();
+    }
+
+    /// Recent readings, oldest first, for the card's graph.
+    pub fn game_history(&self) -> &[crate::GameStats] {
+        &self.game_hist
+    }
+
+    /// Rows in the card layout: CPU, GPU when available, RAM.
+    pub fn game_rows(&self) -> usize {
+        2 + self.game_stats.gpu.is_some() as usize
     }
 
     pub fn game_stats(&self) -> crate::GameStats {
@@ -1708,7 +1729,10 @@ impl Notch {
 
     fn retarget(&mut self) {
         let ((w, h), r) = match self.mode {
-            Mode::Closed if self.game_active() => ((GAME_PAD * 2.0 + GAME_ITEM_W * self.game_items().len() as f32, self.settings.closed_height), self.settings.closed_height * 0.5),
+            Mode::Closed if self.game_active() => match self.settings.game_style {
+                crate::GameStyle::Card => ((GAME_CARD_W, GAME_CARD_HEAD + GAME_CARD_ROW * self.game_rows() as f32 + 8.0), 22.0),
+                _ => ((GAME_PAD * 2.0 + GAME_ITEM_W * self.game_items().len() as f32, self.settings.closed_height), self.settings.closed_height * 0.5),
+            },
             Mode::Closed if self.settings.minimal => (MINIMAL, 3.0),
             Mode::Closed => {
                 // While the idle eye shows, the pill tightens around it; hovering grows it again.

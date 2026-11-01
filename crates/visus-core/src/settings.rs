@@ -1,5 +1,33 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+/// Layout of the in-game HUD.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GameStyle {
+    #[default]
+    Pills,
+    Bars,
+    Card,
+}
+
+impl GameStyle {
+    pub fn name(self) -> &'static str {
+        match self {
+            GameStyle::Pills => "Pills",
+            GameStyle::Bars => "Bars",
+            GameStyle::Card => "Card",
+        }
+    }
+
+    pub fn next(self) -> GameStyle {
+        match self {
+            GameStyle::Pills => GameStyle::Bars,
+            GameStyle::Bars => GameStyle::Card,
+            GameStyle::Card => GameStyle::Pills,
+        }
+    }
+}
+
 /// How the clock is drawn in the pill and the open header.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -101,6 +129,7 @@ pub struct Settings {
     pub file_manager: Option<String>,
     pub hide_in_fullscreen: bool,
     pub game_hud: bool,
+    pub game_style: GameStyle,
     /// Look for a newer release in the background (a few seconds after start, then twice a day).
     pub auto_update: bool,
     /// Show the idle eye when nothing has happened for a while.
@@ -155,6 +184,7 @@ impl Default for Settings {
             file_manager: None,
             hide_in_fullscreen: true,
             game_hud: true,
+            game_style: GameStyle::Pills,
             auto_update: true,
             mascot: true,
             idle_secs: 45,

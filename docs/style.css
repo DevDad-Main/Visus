@@ -69,12 +69,12 @@ h2 { font-size: clamp(32px, 5vw, 56px); margin-bottom: 22px; }
 .states figcaption { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--mute); }
 
 .gamesec { padding: 130px 0 40px; }
-.scene { position: relative; margin: 56px auto 0; max-width: 1000px; height: 210px; border-radius: 26px; overflow: hidden; border: 1px solid var(--line); display: grid; justify-items: center; align-items: start; }
+.scene { position: relative; margin: 56px auto 22px; max-width: 1000px; height: 290px; border-radius: 26px; overflow: hidden; border: 1px solid var(--line); display: grid; justify-items: center; align-items: start; }
 .scene-bg { position: absolute; inset: 0; background:
   radial-gradient(60% 90% at 20% 100%, #b3262e 0%, transparent 70%),
   radial-gradient(60% 80% at 85% 0%, #ff7a6b 0%, transparent 65%),
   linear-gradient(160deg, #2a0f1e, #6c1c2c 55%, #14101c); }
-.scene img { position: relative; margin-top: 0; width: min(674px, 94%); height: auto; filter: drop-shadow(0 20px 40px rgba(0,0,0,.5)); }
+.scene img { position: relative; margin-top: 0; max-width: 94%; height: auto; filter: drop-shadow(0 20px 40px rgba(0,0,0,.5)); }
 .fine { margin: 28px auto 0; max-width: 560px; font-size: 13px; color: #6c7283; }
 
 .vinyl-sec { padding: 130px 0; }
