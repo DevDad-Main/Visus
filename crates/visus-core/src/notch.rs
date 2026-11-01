@@ -68,7 +68,9 @@ enum Mode {
 
 const MINIMAL: (f32, f32) = (190.0, 6.0);
 /// Extra closed-pill width while the music visualizer is shown.
-const VISUALIZER_EXTRA: f32 = 60.0;
+const VISUALIZER_EXTRA: f32 = 76.0;
+pub const VIZ_BARS: usize = 9;
+const EYE_PILL_W: f32 = 104.0;
 const CONTROLS_REFRESH: Duration = Duration::from_millis(400);
 const VISUALIZER_REFRESH: Duration = Duration::from_millis(33);
 const PEEK: (f32, f32) = (500.0, 92.0);
@@ -127,6 +129,8 @@ pub struct Notch {
     slider_drag: bool,
     viz_level: f32,
     viz_live: bool,
+    viz_bars: [f32; VIZ_BARS],
+    viz_phase: f32,
 }
 
 impl Notch {
@@ -176,6 +180,8 @@ impl Notch {
             slider_drag: false,
             viz_level: 0.0,
             viz_live: false,
+            viz_bars: [0.08; VIZ_BARS],
+            viz_phase: 0.0,
         };
         n.retarget();
         n
@@ -332,6 +338,50 @@ impl Notch {
     /// Smoothed loudness when real audio is available; `None` means animate without it.
     pub fn visualizer_level(&self) -> Option<f32> {
         self.viz_live.then_some(self.viz_level)
+    }
+
+    fn step_visualizer(&mut self, s: f32) {
+        if !self.wants_audio() {
+            return;
+        }
+        self.viz_phase += s;
+        let t = self.viz_phase;
+        let level = if self.viz_live { self.viz_level } else { 0.55 + 0.25 * (t * 1.3).sin() };
+        let mid = (VIZ_BARS - 1) as f32 / 2.0;
+        for (i, bar) in self.viz_bars.iter_mut().enumerate() {
+            let f = i as f32;
+            let wave = 0.5 + 0.5 * (t * (4.0 + f * 1.3) + f * 1.7).sin() * (0.6 + 0.4 * (t * (1.7 + f * 0.6) + f).sin());
+            let profile = 0.55 + 0.45 * (1.0 - (f - mid).abs() / mid);
+            let target = (0.08 + level * (0.25 + 0.75 * wave) * 0.92) * profile;
+            let rate = if target > *bar { 18.0 } else { 7.0 };
+            *bar += (target - *bar) * (1.0 - (-rate * s).exp());
+        }
+    }
+
+    /// Smoothed bar heights 0..1 for the closed-pill visualizer.
+    pub fn visualizer_bars(&self) -> [f32; VIZ_BARS] {
+        self.viz_bars
+    }
+
+    /// Bright tint taken from the album art; white when there is none.
+    pub fn accent(&self) -> [u8; 3] {
+        let Some(art) = &self.media.art else { return [255, 255, 255] };
+        let (mut sum, mut n) = ([0u32; 3], 0u32);
+        for px in art.rgba.chunks_exact(4).step_by(7) {
+            if px[3] > 200 {
+                for c in 0..3 {
+                    sum[c] += px[c] as u32;
+                }
+                n += 1;
+            }
+        }
+        if n == 0 {
+            return [255, 255, 255];
+        }
+        let avg = [sum[0] as f32 / n as f32, sum[1] as f32 / n as f32, sum[2] as f32 / n as f32];
+        let m = avg.iter().cloned().fold(1.0, f32::max);
+        // Normalise brightness, then lift towards white so it reads on black.
+        avg.map(|c| ((c / m) * 255.0 * 0.8 + 255.0 * 0.2) as u8)
     }
 
     pub fn wants_controls(&self) -> bool {
@@ -1023,6 +1073,10 @@ impl Notch {
 
     pub fn tick(&mut self, dt: Duration) {
         self.wander();
+        if self.mode == Mode::Closed {
+            self.retarget();
+        }
+        self.step_visualizer(dt.as_secs_f32());
         if self.timer.poll_finished() {
             self.alert(Alert::TimerDone);
         }
@@ -1057,8 +1111,13 @@ impl Notch {
         let ((w, h), r) = match self.mode {
             Mode::Closed if self.settings.minimal => (MINIMAL, 3.0),
             Mode::Closed => {
-                let w = self.settings.closed_width + if self.visualizer_active() { VISUALIZER_EXTRA } else { 0.0 };
-                ((w, self.settings.closed_height), self.settings.closed_height * 0.42)
+                // While the idle eye shows, the pill tightens around it; hovering grows it again.
+                let (w, h) = if self.eye_state() != EyeState::Hidden {
+                    (EYE_PILL_W, self.settings.closed_height - 4.0)
+                } else {
+                    (self.settings.closed_width + if self.visualizer_active() { VISUALIZER_EXTRA } else { 0.0 }, self.settings.closed_height)
+                };
+                ((w, h), h * 0.42)
             }
             Mode::Peek(_) => (PEEK, 26.0),
             Mode::Open => (OPEN, 44.0),

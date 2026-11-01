@@ -17,7 +17,7 @@ pub use anim::Spring;
 pub use controls::{Controls, Radio};
 pub use lyrics::{LyricLine, Lyrics, current_index, parse_lrc};
 pub use event::{Art, Event, Hud, MediaCommand, MediaInfo};
-pub use notch::{Alert, EyeState, Notch, Page, Rect, Shape};
+pub use notch::{VIZ_BARS, Alert, EyeState, Notch, Page, Rect, Shape};
 pub use settings::{Rgb, Settings};
 pub use palette::{Action, App, AppKind, guess_kind, Command, Item, Kind, Outcome, Palette, MAX_RESULTS};
 pub use extras::{UpdateStatus, Weather, is_newer, weather_label};

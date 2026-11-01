@@ -168,11 +168,17 @@ fn draw_todo(cx: &mut Ctx, notch: &Notch, a: f32) {
 const TIMER_PRESETS: [u32; 6] = [5, 10, 15, 25, 45, 60];
 
 fn tile_rect(x0: f32, i: usize) -> Rect {
-    rect(x0 + 36.0 + (i % 2) as f32 * 118.0, 64.0 + (i / 2) as f32 * 82.0, 108.0, 72.0)
+    rect(x0 + 36.0 + (i % 2) as f32 * 126.0, 66.0 + (i / 2) as f32 * 84.0, 116.0, 74.0)
 }
 
+/// Pointer area of the volume slider (taller than the thin track so it is easy to grab).
 fn slider_rect(x0: f32) -> Rect {
-    rect(x0 + 330.0, 112.0, 340.0, 44.0)
+    rect(x0 + 330.0, 98.0, 340.0, 40.0)
+}
+
+/// Visible track: x, width and centre y.
+fn slider_track(x0: f32) -> (f32, f32, f32) {
+    (x0 + 340.0, 320.0, 118.0)
 }
 
 fn control_buttons(x0: f32) -> Vec<(Button, Rect)> {
@@ -186,49 +192,130 @@ pub fn drag(notch: &mut Notch, x: f32) {
     if !notch.slider_dragging() {
         return;
     }
-    let r = slider_rect(notch.shape().rect.x);
-    let v = ((x - r.x) / r.w).clamp(0.0, 1.0);
+    let (tx, tw, _) = slider_track(notch.shape().rect.x);
+    let v = ((x - tx) / tw).clamp(0.0, 1.0);
     notch.set_volume_local(v);
     visus_platform::set_volume(v);
+}
+
+fn quad_arc(pb: &mut PathBuilder, cx: f32, cy: f32, r: f32) {
+    pb.move_to(cx - r * 0.85, cy - r * 0.45);
+    pb.quad_to(cx, cy - r * 1.45, cx + r * 0.85, cy - r * 0.45);
+}
+
+fn control_icon(cx: &mut Ctx, i: usize, (x, y): (f32, f32), c: [u8; 4], muted: bool) {
+    let mut pb = PathBuilder::new();
+    match i {
+        0 => {
+            quad_arc(&mut pb, x, y + 5.0, 5.0);
+            quad_arc(&mut pb, x, y + 5.0, 9.0);
+            if let Some(p) = pb.finish() {
+                cx.stroke(&p, c, 1.8);
+            }
+            cx.circle(x, y + 5.0, 1.6, c);
+        }
+        1 => {
+            let pts = [(-3.6, -3.8), (3.4, 3.2), (0.0, 6.8), (0.0, -6.8), (3.4, -3.2), (-3.6, 3.8)];
+            pb.move_to(x + pts[0].0, y + pts[0].1);
+            for p in &pts[1..] {
+                pb.line_to(x + p.0, y + p.1);
+            }
+            if let Some(p) = pb.finish() {
+                cx.stroke(&p, c, 1.6);
+            }
+        }
+        2 => {
+            pb.move_to(x - 7.0, y - 3.0);
+            pb.line_to(x - 3.5, y - 3.0);
+            pb.line_to(x + 1.0, y - 7.0);
+            pb.line_to(x + 1.0, y + 7.0);
+            pb.line_to(x - 3.5, y + 3.0);
+            pb.line_to(x - 7.0, y + 3.0);
+            pb.close();
+            if let Some(p) = pb.finish() {
+                cx.fill(&p, c);
+            }
+            let mut w = PathBuilder::new();
+            if muted {
+                w.move_to(x + 4.0, y - 3.5);
+                w.line_to(x + 10.0, y + 3.5);
+                w.move_to(x + 10.0, y - 3.5);
+                w.line_to(x + 4.0, y + 3.5);
+            } else {
+                w.move_to(x + 4.5, y - 4.0);
+                w.quad_to(x + 9.0, y, x + 4.5, y + 4.0);
+            }
+            if let Some(p) = w.finish() {
+                cx.stroke(&p, c, 1.7);
+            }
+        }
+        _ => {
+            pb.move_to(x + 2.5, y - 7.5);
+            pb.cubic_to(x - 9.0, y - 6.0, x - 9.0, y + 6.0, x + 2.5, y + 7.5);
+            pb.cubic_to(x - 3.0, y + 4.0, x - 3.0, y - 4.0, x + 2.5, y - 7.5);
+            pb.close();
+            if let Some(p) = pb.finish() {
+                cx.fill(&p, c);
+            }
+        }
+    }
 }
 
 fn draw_control(cx: &mut Ctx, notch: &Notch, a: f32) {
     let x0 = notch.shape().rect.x;
     let c = notch.controls();
     let tiles: [(&str, Option<bool>, [u8; 3]); 4] = [
-        ("Wi-Fi", c.wifi, BLUE),
-        ("Bluetooth", c.bluetooth, BLUE),
+        ("Wi-Fi", c.wifi, [10, 132, 255]),
+        ("Bluetooth", c.bluetooth, [10, 132, 255]),
         ("Mute", c.has_volume.then_some(c.muted), ORANGE),
         ("Quiet", Some(notch.settings().quiet), [191, 90, 242]),
     ];
     for (i, (label, state, tint)) in tiles.iter().enumerate() {
         let rc = tile_rect(x0, i);
         let on = *state == Some(true);
-        let bg = match state {
-            Some(true) => color(*tint, 0.95 * a),
-            Some(false) => color(WHITE, 0.12 * a),
-            None => color(WHITE, 0.05 * a),
+        let (bg, badge, ink) = match state {
+            Some(true) => (color(*tint, 0.96 * a), color([255, 255, 255], 0.28 * a), color([255, 255, 255], a)),
+            Some(false) => (color(WHITE, 0.10 * a), color(WHITE, 0.12 * a), color(WHITE, a)),
+            None => (color(WHITE, 0.04 * a), color(WHITE, 0.06 * a), color(GRAY, 0.7 * a)),
         };
-        cx.rrect(rc, 20.0, bg);
-        let ink = if on { [0, 0, 0] } else if state.is_none() { GRAY } else { WHITE };
-        cx.t(label, rc.x + 16.0, rc.y + 32.0, 17.0, color(ink, a), Align::Left);
+        cx.rrect(rc, 22.0, bg);
+        if let Some(edge) = rrect(rc.x + 0.5, rc.y + 0.5, rc.w - 1.0, rc.h - 1.0, 22.0) {
+            cx.stroke(&edge, color(WHITE, 0.07 * a), 1.0);
+        }
+        let ic = (rc.x + 28.0, rc.y + 27.0);
+        cx.circle(ic.0, ic.1, 15.0, badge);
+        control_icon(cx, i, ic, ink, c.muted);
+        cx.t(label, rc.x + 16.0, rc.y + 62.0, 15.0, ink, Align::Left);
         let sub = match state {
             Some(true) => "On",
             Some(false) => "Off",
-            None => "Unavailable",
+            None => "N/A",
         };
-        cx.t(sub, rc.x + 16.0, rc.y + 54.0, 13.0, color(if on { [0, 0, 0] } else { GRAY }, 0.8 * a), Align::Left);
+        cx.t(sub, rc.x + rc.w - 14.0, rc.y + 31.0, 12.0, color(if on { [255, 255, 255] } else { GRAY }, 0.85 * a), Align::Right);
     }
-    let s = slider_rect(x0);
+
+    let (tx, tw, ty) = slider_track(x0);
     let v = if c.muted { 0.0 } else { c.volume };
-    cx.t("Volume", s.x, s.y - 14.0, 17.0, color(WHITE, a), Align::Left);
-    cx.t(&format!("{:.0}%", v * 100.0), s.x + s.w, s.y - 14.0, 15.0, color(GRAY, a), Align::Right);
-    cx.rrect(s, 22.0, color(WHITE, 0.14 * a));
+    cx.t("Volume", tx, 84.0, 14.0, color(GRAY, a), Align::Left);
+    cx.t(&format!("{:.0}%", v * 100.0), tx + tw, 84.0, 14.0, color(WHITE, a), Align::Right);
+    cx.rrect(rect(tx, ty - 3.0, tw, 6.0), 3.0, color(WHITE, 0.16 * a));
     if v > 0.0 {
-        cx.rrect(rect(s.x, s.y, (s.w * v).max(s.h), s.h), 22.0, color(WHITE, 0.92 * a));
+        cx.rrect(rect(tx, ty - 3.0, (tw * v).max(6.0), 6.0), 3.0, color(WHITE, 0.95 * a));
     }
-    let hint = if c.has_volume { "Quiet hides pop-ups; timers still show" } else { "Volume control unavailable on this system" };
-    cx.t(hint, s.x, s.y + s.h + 28.0, 13.0, color(GRAY, a), Align::Left);
+    let kx = tx + tw * v;
+    cx.circle(kx, ty + 1.0, 11.0, color([0, 0, 0], 0.35 * a));
+    cx.circle(kx, ty, 9.0, color(WHITE, a));
+
+    let m = notch.media();
+    if m.has_session && !m.title.is_empty() {
+        cx.t("NOW PLAYING", tx, 168.0, 11.0, color(GRAY, 0.9 * a), Align::Left);
+        let title = cx.fit(&m.title, 17.0, tw);
+        cx.t(&title, tx, 190.0, 17.0, color(WHITE, a), Align::Left);
+        let artist = cx.fit(&m.artist, 13.0, tw);
+        cx.t(&artist, tx, 209.0, 13.0, color(GRAY, a), Align::Left);
+    } else if !c.has_volume {
+        cx.t("Volume control unavailable on this system", tx, 190.0, 13.0, color(GRAY, a), Align::Left);
+    }
 }
 
 fn timer_buttons(x0: f32) -> Vec<(Button, Rect)> {
@@ -640,19 +727,16 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     }
     let clock = chrono::Local::now().format("%H:%M").to_string();
     cx.t(&clock, r.x + r.w / 2.0, mid + 7.0, 20.0, color(WHITE, a), Align::Center);
-    if notch.visualizer_active() {
-        let t = chrono::Local::now().timestamp_millis() as f32 / 1000.0;
-        for i in 0..5 {
-            let f = i as f32;
-            let shape = 0.5 + 0.5 * (t * (5.0 + f * 1.7) + f * 1.3).sin() * (0.6 + 0.4 * (t * (2.3 + f) + f).sin());
-            // Real output loudness when the OS reports it, otherwise a plain animation.
-            let wave = match notch.visualizer_level() {
-                Some(l) => 0.12 + l * (0.35 + 0.65 * shape),
-                None => shape,
-            };
-            let h = 3.0 + 13.0 * wave.min(1.0);
-            let x = r.x + r.w - 42.0 + f * 5.5;
-            cx.rrect(rect(x, mid - h / 2.0, 2.5, h), 1.25, color(WHITE, a));
+    if notch.wants_audio() {
+        let bars = notch.visualizer_bars();
+        let tint = notch.accent();
+        let (bw, gap) = (2.4, 2.6);
+        let x0 = r.x + r.w - 24.0 - (bars.len() as f32 * bw + (bars.len() - 1) as f32 * gap);
+        for (i, v) in bars.iter().enumerate() {
+            let h = 3.5 + 19.0 * v.clamp(0.0, 1.0);
+            let x = x0 + i as f32 * (bw + gap);
+            cx.rrect(rect(x - 1.5, mid - h / 2.0 - 2.0, bw + 3.0, h + 4.0), (bw + 3.0) / 2.0, color(tint, 0.14 * a));
+            cx.rrect(rect(x, mid - h / 2.0, bw, h), bw / 2.0, color(tint, a));
         }
     }
 }

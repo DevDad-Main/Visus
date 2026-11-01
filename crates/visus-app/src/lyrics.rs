@@ -74,6 +74,33 @@ fn get_json(agent: &ureq::Agent, path: &str, params: &[(&str, String)]) -> Optio
     serde_json::from_str(&body).ok()
 }
 
+/// NetEase Music's public endpoints: a broad catalogue with synced lyrics, used when LRCLIB has nothing.
+fn netease(agent: &ureq::Agent, title: &str, artist: &str, duration: Duration) -> Lines {
+    let get = |url: &str, params: &[(&str, String)]| -> Option<Value> {
+        let mut req = agent.get(url).header("Referer", "https://music.163.com");
+        for (k, v) in params {
+            req = req.query(k, v);
+        }
+        serde_json::from_str(&req.call().ok()?.body_mut().read_to_string().ok()?).ok()
+    };
+    let found = get(
+        "https://music.163.com/api/search/get/",
+        &[("s", format!("{title} {artist}")), ("type", "1".into()), ("offset", "0".into()), ("limit", "6".into())],
+    )?;
+    let want = duration.as_millis() as i64;
+    let wanted = title.to_lowercase();
+    let song = found["result"]["songs"].as_array()?.iter().find(|s| {
+        let name = s["name"].as_str().unwrap_or("").to_lowercase();
+        let near = want == 0 || (s["duration"].as_i64().unwrap_or(0) - want).abs() < 6000;
+        near && !name.is_empty() && (name.contains(&wanted) || wanted.contains(&name))
+    })?;
+    let lyric = get("https://music.163.com/api/song/lyric", &[("id", song["id"].as_i64()?.to_string()), ("lv", "1".into())])?;
+    let mut lines = parse_lrc(lyric["lrc"]["lyric"].as_str()?);
+    // Credit lines such as "作词 : …" sit at the very start.
+    lines.retain(|l| !(l.at < Duration::from_secs(15) && (l.text.contains(" : ") || l.text.contains('：'))));
+    (!lines.is_empty()).then(|| Arc::new(lines))
+}
+
 fn synced(v: &Value) -> Lines {
     let lines = parse_lrc(v["syncedLyrics"].as_str()?);
     (!lines.is_empty()).then(|| Arc::new(lines))
@@ -121,7 +148,9 @@ fn lookup(agent: &ureq::Agent, title: &str, artist: &str, duration: Duration) ->
             return Some(lines);
         }
     }
-    // Last resort: free-text search on the cleaned title and channel.
     let q = format!("{ca} {ct}");
-    get_json(agent, "search", &[("q", q)])?.as_array()?.iter().find_map(synced)
+    if let Some(lines) = get_json(agent, "search", &[("q", q)]).and_then(|v| v.as_array()?.iter().find_map(synced)) {
+        return Some(lines);
+    }
+    attempts.iter().take(3).find_map(|(t, a)| netease(agent, t, a, duration))
 }
