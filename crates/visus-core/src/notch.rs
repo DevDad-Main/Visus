@@ -66,6 +66,9 @@ enum Mode {
 }
 
 const MINIMAL: (f32, f32) = (190.0, 6.0);
+/// Extra closed-pill width while the music visualizer is shown.
+const VISUALIZER_EXTRA: f32 = 60.0;
+const VISUALIZER_REFRESH: Duration = Duration::from_millis(33);
 const PEEK: (f32, f32) = (500.0, 92.0);
 const OPEN: (f32, f32) = (744.0, 248.0);
 const PEEK_TIME: Duration = Duration::from_millis(2800);
@@ -153,7 +156,7 @@ impl Notch {
             todos_dirty: false,
             palette: Palette::default(),
             palette_open: false,
-            palette_anim: Spring::new(0.0),
+            palette_anim: Spring::snappy(0.0),
             settings_open: false,
             settings_anim: Spring::new(0.0),
             folder_input: None,
@@ -187,6 +190,7 @@ impl Notch {
                 let changed = (&m.title, &m.artist) != (&self.media.title, &self.media.artist);
                 self.media = m;
                 self.media_at = Instant::now();
+                self.retarget();
                 if changed {
                     self.lyrics = if self.track_key().is_some() { Lyrics::Loading } else { Lyrics::None };
                 }
@@ -271,7 +275,10 @@ impl Notch {
     pub fn refresh_interval(&self) -> Option<Duration> {
         let media = self.is_open() && self.media.has_session && self.media.playing;
         let synced = media && self.lyrics_open && matches!(self.lyrics, Lyrics::Ready(_));
-        let base = if synced {
+        let viz = self.visualizer_active() && self.mode == Mode::Closed;
+        let base = if viz {
+            Some(VISUALIZER_REFRESH)
+        } else if synced {
             Some(LYRIC_REFRESH)
         } else if media || self.timer.is_running() {
             Some(PROGRESS_REFRESH)
@@ -284,6 +291,11 @@ impl Notch {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         }
+    }
+
+    /// The closed pill shows an equalizer (and widens) only while music plays.
+    pub fn visualizer_active(&self) -> bool {
+        !self.hidden && !self.settings.minimal && self.media.has_session && self.media.playing
     }
 
     pub fn timer(&self) -> &Timer {
@@ -962,7 +974,10 @@ impl Notch {
     fn retarget(&mut self) {
         let ((w, h), r) = match self.mode {
             Mode::Closed if self.settings.minimal => (MINIMAL, 3.0),
-            Mode::Closed => ((self.settings.closed_width, self.settings.closed_height), self.settings.closed_height * 0.42),
+            Mode::Closed => {
+                let w = self.settings.closed_width + if self.visualizer_active() { VISUALIZER_EXTRA } else { 0.0 };
+                ((w, self.settings.closed_height), self.settings.closed_height * 0.42)
+            }
             Mode::Peek(_) => (PEEK, 26.0),
             Mode::Open => (OPEN, 44.0),
         };

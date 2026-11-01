@@ -572,6 +572,16 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     }
     let clock = chrono::Local::now().format("%H:%M").to_string();
     cx.t(&clock, r.x + r.w / 2.0, mid + 7.0, 20.0, color(WHITE, a), Align::Center);
+    if notch.visualizer_active() {
+        let t = chrono::Local::now().timestamp_millis() as f32 / 1000.0;
+        for i in 0..5 {
+            let f = i as f32;
+            let wave = 0.5 + 0.5 * (t * (5.0 + f * 1.7) + f * 1.3).sin() * (0.6 + 0.4 * (t * (2.3 + f) + f).sin());
+            let h = 4.0 + 12.0 * wave;
+            let x = r.x + r.w - 42.0 + f * 5.5;
+            cx.rrect(rect(x, mid - h / 2.0, 2.5, h), 1.25, color(WHITE, a));
+        }
+    }
 }
 
 fn draw_alert(cx: &mut Ctx, shape: &Shape, alert: Alert, a: f32) {
@@ -964,7 +974,8 @@ pub fn palette_layout(notch: &Notch) -> Option<PaletteLayout> {
     let n = notch.palette().results.len().max(1) as f32;
     let full_h = PANEL_TOP_PAD + n * ROW_H + PANEL_FOOTER;
     let p = p.clamp(0.0, 1.04);
-    let w = PANEL_W * (0.72 + 0.28 * p.min(1.0));
+    // Closing sucks the panel up into the pill: it narrows faster than it shortens.
+    let w = if notch.palette_is_open() { PANEL_W * (0.72 + 0.28 * p.min(1.0)) } else { PANEL_W * (0.06 + 0.94 * p.min(1.0).powi(2)) };
     let panel = Rect { x: centre - w / 2.0, y: s.h + 10.0, w, h: full_h * p };
     let search = Rect { x: panel.x + 16.0, y: panel.y + 14.0, w: w - 32.0, h: 40.0 };
     let rows = (0..notch.palette().results.len())
@@ -989,6 +1000,7 @@ fn draw_palette(cx: &mut Ctx, notch: &Notch) {
     let Some(l) = palette_layout(notch) else { return };
     let p = notch.palette_progress().clamp(0.0, 1.0);
     let ca = ((p - 0.5) / 0.5).clamp(0.0, 1.0);
+    let p = if notch.palette_is_open() { p } else { (p / 0.35).min(1.0) };
     let pal = notch.palette();
 
     // Soft shadow, then the body and a hairline edge so it reads as glass-black beneath the pill.

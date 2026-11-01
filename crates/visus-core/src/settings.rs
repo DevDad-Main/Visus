@@ -58,7 +58,9 @@ pub struct Settings {
     /// Overall size multiplier for the pill and its content.
     pub scale: f32,
     /// Closed pill size in logical pixels, before `scale`.
+    #[serde(skip)]
     pub closed_width: f32,
+    #[serde(skip)]
     pub closed_height: f32,
     pub timer_minutes: u32,
     pub eye_style: EyeStyle,
@@ -94,8 +96,8 @@ impl Default for Settings {
             mascot: true,
             idle_secs: 45,
             scale: 1.0,
-            closed_width: 228.0,
-            closed_height: 38.0,
+            closed_width: 172.0,
+            closed_height: 32.0,
             timer_minutes: 25,
             eye_style: EyeStyle::Classic,
             weather_lat: None,

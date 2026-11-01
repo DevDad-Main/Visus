@@ -79,15 +79,49 @@ fn synced(v: &Value) -> Lines {
     (!lines.is_empty()).then(|| Arc::new(lines))
 }
 
+/// Strips "(Official Video)", "[HD]", "ft. X" and " - Topic" noise typical of YouTube titles.
+fn clean(s: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0;
+    for c in s.chars() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = (depth - 1).max(0),
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    let lower = out.to_lowercase();
+    let cut = [" ft.", " feat.", " featuring", " | ", " // "].iter().filter_map(|m| lower.find(m)).min().unwrap_or(out.len());
+    out.truncate(cut);
+    out.trim().trim_end_matches(" - Topic").trim().to_string()
+}
+
 fn lookup(agent: &ureq::Agent, title: &str, artist: &str, duration: Duration) -> Lines {
-    let mut params = vec![("track_name", title.to_string()), ("artist_name", artist.to_string())];
-    if !duration.is_zero() {
-        params.push(("duration", duration.as_secs().to_string()));
+    let (title, artist) = (title.to_string(), artist.to_string());
+    let mut attempts = vec![(title.clone(), artist.clone())];
+    let (ct, ca) = (clean(&title), clean(&artist));
+    // YouTube titles often read "Artist - Song" with the channel as the artist.
+    if let Some((a, t)) = ct.split_once(" - ") {
+        attempts.push((t.trim().to_string(), a.trim().to_string()));
     }
-    // Exact match first, then a looser search when durations disagree.
-    if let Some(lines) = get_json(agent, "get", &params).and_then(|v| synced(&v)) {
-        return Some(lines);
+    attempts.push((ct.clone(), ca.clone()));
+    attempts.dedup();
+    for (t, a) in &attempts {
+        let mut params = vec![("track_name", t.clone()), ("artist_name", a.clone())];
+        if !duration.is_zero() {
+            params.push(("duration", duration.as_secs().to_string()));
+        }
+        // Exact match first, then a looser search when durations disagree.
+        if let Some(lines) = get_json(agent, "get", &params).and_then(|v| synced(&v)) {
+            return Some(lines);
+        }
+        params.retain(|(k, _)| *k != "duration");
+        if let Some(lines) = get_json(agent, "search", &params).and_then(|v| v.as_array()?.iter().find_map(synced)) {
+            return Some(lines);
+        }
     }
-    params.retain(|(k, _)| *k != "duration");
-    get_json(agent, "search", &params)?.as_array()?.iter().find_map(synced)
+    // Last resort: free-text search on the cleaned title and channel.
+    let q = format!("{ca} {ct}");
+    get_json(agent, "search", &[("q", q)])?.as_array()?.iter().find_map(synced)
 }

@@ -13,6 +13,11 @@ impl Spring {
         Self { value, target: value, velocity: 0.0, stiffness: 320.0, damping: 26.0 }
     }
 
+    /// Stiffer spring for snappy UI such as the launcher.
+    pub fn snappy(value: f32) -> Self {
+        Self { stiffness: 700.0, damping: 46.0, ..Self::new(value) }
+    }
+
     pub fn is_settled(&self) -> bool {
         (self.target - self.value).abs() < 0.05 && self.velocity.abs() < 0.05
     }
