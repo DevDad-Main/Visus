@@ -1515,10 +1515,14 @@ fn draw_face(cx: &mut Ctx, x: f32, y: f32, style: EyeStyle, expr: Expr, age: f32
     match expr {
         Expr::Sad => cx.circle(x + 14.0, y + 5.0, 1.8, color([120, 190, 255], a)),
         Expr::Game => {
-            // A little gamepad in the corner.
-            cx.rrect(rect(x + 8.0, y + 6.0, 13.0, 7.0), 3.5, color(tint, a));
-            cx.circle(x + 12.0, y + 9.5, 1.1, color(ink, a));
-            cx.circle(x + 17.0, y + 9.5, 1.1, color(ink, a));
+            // A little gamepad in the corner, outlined so it reads against the face.
+            let dark = [18, 18, 22];
+            cx.rrect(rect(x + 5.5, y + 1.5, 21.0, 13.0), 6.5, color([0, 0, 0], 0.9 * a));
+            cx.rrect(rect(x + 7.0, y + 3.0, 18.0, 10.0), 5.0, color(tint, a));
+            cx.rrect(rect(x + 9.0, y + 7.2, 5.0, 1.6), 0.8, color(dark, a));
+            cx.rrect(rect(x + 10.7, y + 5.5, 1.6, 5.0), 0.8, color(dark, a));
+            cx.circle(x + 19.5, y + 6.8, 1.2, color(dark, a));
+            cx.circle(x + 21.8, y + 9.0, 1.2, color(dark, a));
         }
         Expr::Music => {
             cx.circle(x + 15.0, y + 8.0, 2.2, color(tint, a));
