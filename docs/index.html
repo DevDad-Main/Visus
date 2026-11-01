@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visus — a living notch for your desktop</title>
+<meta name="description" content="Visus is a tiny always-on-top pill for Windows and Linux. Music, timers, notes, clipboard, calendar and a watchful eye, all in one place.">
+<meta name="theme-color" content="#050507">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="nav">
+  <a class="brand" href="#top"><img src="assets/icon.png" alt="" width="26" height="26"><span>Visus</span></a>
+  <nav>
+    <a href="#pill">The pill</a>
+    <a href="#features">Features</a>
+    <a href="#looks">Looks</a>
+    <a class="cta-sm" href="#download" data-dl>Download</a>
+  </nav>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="glow" aria-hidden="true"></div>
+    <div class="stage" aria-hidden="true">
+      <div class="notch" id="notch">
+        <div class="slot l"><svg viewBox="0 0 24 24" class="ring"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="8.5" class="fill"/></svg></div>
+        <div class="slot c"><span class="clock" id="clock">12:00</span></div>
+        <div class="slot r"><span class="viz"><i></i><i></i><i></i><i></i><i></i></span></div>
+        <div class="eye"><span></span></div>
+      </div>
+    </div>
+    <p class="eyebrow">Windows &amp; Linux · free · native</p>
+    <h1>Your desktop<br>has a <em>pulse</em>.</h1>
+    <p class="lede">Visus lives at the top of your screen as a small, quiet pill. Hover, and it opens into music, timers, notes, your clipboard and more. Look away, and it falls asleep.</p>
+    <div class="actions">
+      <a class="btn primary" href="#download" data-dl><span data-dl-label>Download Visus</span></a>
+      <a class="btn ghost" href="https://github.com/DevDad-Main/Visus" rel="noopener">View source</a>
+    </div>
+    <p class="meta" data-dl-meta>&nbsp;</p>
+  </section>
+
+  <section class="band" id="pill">
+    <div class="wrap split">
+      <div>
+        <p class="eyebrow">Dynamic by design</p>
+        <h2>It only grows<br>when there is something to show.</h2>
+        <p>Idle, Visus is just your battery and the time. Play a song and the pill widens to make room for a live visualiser. Start a download and a speed readout slides in. Plug in the charger and it greets you with a face.</p>
+      </div>
+      <div class="states" aria-hidden="true">
+        <div class="mini"><span class="mb"></span><b>12:41</b></div>
+        <div class="mini wide"><span class="mb"></span><b>12:41</b><span class="viz"><i></i><i></i><i></i><i></i><i></i></span></div>
+        <div class="mini wide dl"><span class="mb"></span><b>12:41</b><span class="rate">&darr; 4.2 MB/s</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="vinyl-sec">
+    <div class="wrap split rev">
+      <div class="deck" aria-hidden="true">
+        <div class="record"><div class="label"></div><div class="hole"></div></div>
+        <div class="sheen"></div>
+      </div>
+      <div>
+        <p class="eyebrow">Music</p>
+        <h2>Album art, <br>on a spinning record.</h2>
+        <p>Whatever is playing, Visus picks up the title, artist and cover, spins it on a vinyl, and tints the whole interface with the colour of the artwork. Synced lyrics, seeking and media keys are built in.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="features" id="features">
+    <div class="wrap">
+      <p class="eyebrow">Everything in reach</p>
+      <h2>Small footprint. Big reach.</h2>
+      <div class="grid">
+        <article><h3>Now playing</h3><p>Cover, progress, lyrics, volume and media controls for whatever is playing on your machine.</p></article>
+        <article><h3>Focus timer</h3><p>Start a countdown and a ring appears on the pill. It nudges you when time is up.</p></article>
+        <article><h3>Launcher</h3><p>Search apps, switch to ones already running, jump between windows, open files with <code>fm</code>.</p></article>
+        <article><h3>Notes &amp; to-dos</h3><p>Capture a thought in a second. Add <code>@18:00</code> to a task and it reminds you.</p></article>
+        <article><h3>Clipboard history</h3><p>Everything you copied recently, one click away, kept only on your device.</p></article>
+        <article><h3>Calendar</h3><p>Paste an ICS link and upcoming meetings show up, with a heads-up before they start.</p></article>
+        <article><h3>File shelf</h3><p>Drop files onto the pill to park them while you work, then drag them out where you need them.</p></article>
+        <article><h3>Live alerts</h3><p>Charging, low battery, headphones, controllers, downloads: each gets its own little reaction.</p></article>
+        <article><h3>System glance</h3><p>CPU, memory, network speed and weather without opening a single window.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="band looks" id="looks">
+    <div class="wrap">
+      <p class="eyebrow">Make it yours</p>
+      <h2>Three clocks. Four characters.</h2>
+      <p class="sub">Pick a clock, pick an eye, and let the pill match your setup.</p>
+      <div class="clocks" aria-hidden="true">
+        <div class="clk classic"><b id="c1">12:41</b><small>Classic</small></div>
+        <div class="clk flip"><div class="cards" id="flip"><u>1</u><u>2</u><s>:</s><u>4</u><u>1</u></div><small>Flip</small></div>
+        <div class="clk led"><div class="seg" id="led">12:41</div><small>LED</small></div>
+      </div>
+      <div class="eyes" aria-hidden="true">
+        <div class="e e-classic"><span></span></div>
+        <div class="e e-sauron"><span></span></div>
+        <div class="e e-cat"><span></span></div>
+        <div class="e e-robot"><span></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="download" id="download">
+    <div class="wrap center">
+      <img src="assets/icon.png" alt="" width="72" height="72" class="app-icon">
+      <h2>Try Visus.</h2>
+      <p class="sub" data-dl-sub>Free. No account. Small enough to forget it is running.</p>
+      <div class="actions">
+        <a class="btn primary big" href="https://github.com/DevDad-Main/Visus/releases/latest" data-dl-main><span data-dl-label>Download Visus</span></a>
+      </div>
+      <p class="meta" data-dl-meta>&nbsp;</p>
+      <div class="all" id="all-dl"></div>
+      <p class="fine">Windows 10/11 · Linux (Wayland &amp; X11). Windows may show a SmartScreen notice because the app is not code-signed yet; choose “More info”, then “Run anyway”.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span class="brand"><img src="assets/icon.png" alt="" width="20" height="20">Visus</span>
+    <span>Made by DevDad · <a href="https://github.com/DevDad-Main/Visus" rel="noopener">GitHub</a> · <a href="https://github.com/DevDad-Main/Visus/releases" rel="noopener">All releases</a></span>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
