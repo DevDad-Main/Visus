@@ -1,5 +1,32 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+/// How the clock is drawn in the pill and the open header.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClockStyle {
+    #[default]
+    Classic,
+    Flip,
+    Led,
+}
+
+impl ClockStyle {
+    pub const ALL: [ClockStyle; 3] = [ClockStyle::Classic, ClockStyle::Flip, ClockStyle::Led];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ClockStyle::Classic => "Classic",
+            ClockStyle::Flip => "Flip",
+            ClockStyle::Led => "LED",
+        }
+    }
+
+    pub fn next(self) -> ClockStyle {
+        let i = Self::ALL.iter().position(|s| *s == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EyeStyle {
@@ -57,6 +84,7 @@ pub struct Settings {
     pub quiet: bool,
     /// 24-hour clock in the pill; false shows 12-hour time.
     pub clock_24h: bool,
+    pub clock_style: ClockStyle,
     /// Equalizer bars on the closed pill while music plays.
     pub visualizer: bool,
     /// Battery ring on the closed pill when the machine has a battery.
@@ -114,6 +142,7 @@ impl Default for Settings {
             minimal: false,
             quiet: false,
             clock_24h: true,
+            clock_style: ClockStyle::Classic,
             visualizer: true,
             show_battery: true,
             net_bits: false,

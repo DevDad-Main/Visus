@@ -3,7 +3,7 @@ use tiny_skia::{
     SpreadMode, FilterQuality, Pattern,
     Stroke, Transform, LineCap,
 };
-use visus_core::{Alert, AppKind, Radio, EyeMood, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, current_index, weather_label};
+use visus_core::{Alert, AppKind, ClockStyle, Radio, EyeMood, EyeState, EyeStyle, Kind, Lyrics, Notch, Outcome, Page, Rect, Rgb, Shape, UpdateStatus, current_index, weather_label};
 
 use crate::text::{Align, Text};
 
@@ -70,6 +70,7 @@ pub enum Toggle {
     Battery,
     Clipboard,
     EyeMoods,
+    ClockStyle,
 }
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -84,8 +85,8 @@ pub fn buttons(notch: &Notch) -> Vec<(Button, Rect)> {
     }
     let (x0, cx) = (s.rect.x, s.rect.x + s.rect.w / 2.0);
     let mut btns = page_buttons(notch, x0, cx);
-    btns.push((Button::Palette, rect(x0 + s.rect.w - 76.0, 10.0, 44.0, 36.0)));
-    btns.push((Button::SettingsOpen, rect(x0 + s.rect.w - 124.0, 10.0, 44.0, 36.0)));
+    btns.push((Button::Palette, rect(x0 + s.rect.w - 80.0, 8.0, 36.0, 36.0)));
+    btns.push((Button::SettingsOpen, rect(x0 + s.rect.w - 120.0, 8.0, 36.0, 36.0)));
     if notch.download().is_some() {
         btns.push((Button::Downloads, rect(x0 + 36.0, 12.0, 160.0, 28.0)));
     }
@@ -702,31 +703,43 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
                 let xf = cx.xf();
                 cx.pm.fill_path(&path, &p, FillRule::Winding, xf, None);
             }
-            // Two soft blobs drift slowly along the lower edge, like a gentle swell.
-            let t = chrono::Local::now().timestamp_millis() as f32 / 1000.0;
-            for (phase, sway) in [(0.0f32, 0.30f32), (2.4, 0.26)] {
-                let bx = centre + (t * 0.45 + phase).sin() * r.w * sway;
-                let by = r.h * (0.98 + 0.06 * (t * 0.7 + phase).cos());
-                let radius = r.w * 0.42;
-                if let (Some(shader), true) = (
-                    RadialGradient::new(
-                        Point::from_xy(bx, by),
-                        Point::from_xy(bx, by),
-                        radius,
-                        vec![
-                            GradientStop::new(0.0, Color::from_rgba8(tint[0], tint[1], tint[2], ((amt * 0.55).clamp(0.0, 1.0) * 255.0) as u8)),
-                            GradientStop::new(1.0, Color::from_rgba8(tint[0], tint[1], tint[2], 0)),
-                        ],
+            // Two slow swells roll horizontally along the lower edge, clipped to the pill.
+            if let Some(mut mask) = tiny_skia::Mask::new(cx.pm.width(), cx.pm.height()) {
+                let xf = cx.xf();
+                mask.fill_path(&path, FillRule::Winding, true, xf);
+                let t = anim_secs();
+                let open = notch.is_open();
+                let (base, amp) = if open { (r.h * 0.80, 11.0) } else { (r.h * 0.64, 3.0) };
+                for (phase, speed, alpha, drop) in [(0.0f32, 0.8f32, 0.55f32, 0.0f32), (2.1, -0.55, 0.35, r.h * 0.06)] {
+                    let (x_l, x_r, n) = (r.x - 24.0, r.x + r.w + 24.0, 56);
+                    let mut pb = PathBuilder::new();
+                    for i in 0..=n {
+                        let u = i as f32 / n as f32;
+                        let x = x_l + (x_r - x_l) * u;
+                        let y = base + drop + amp * ((u * std::f32::consts::TAU * 1.6 + t * speed + phase).sin() + 0.3 * (u * std::f32::consts::TAU * 2.4 - t * speed * 0.7).sin());
+                        if i == 0 {
+                            pb.move_to(x, y);
+                        } else {
+                            pb.line_to(x, y);
+                        }
+                    }
+                    pb.line_to(x_r, r.h + 12.0);
+                    pb.line_to(x_l, r.h + 12.0);
+                    pb.close();
+                    let Some(wave) = pb.finish() else { continue };
+                    let stop = |at: f32, al: f32| GradientStop::new(at, Color::from_rgba8(tint[0], tint[1], tint[2], (al.clamp(0.0, 1.0) * 255.0) as u8));
+                    if let Some(shader) = LinearGradient::new(
+                        Point::from_xy(centre, base - amp),
+                        Point::from_xy(centre, r.h),
+                        vec![stop(0.0, amt * alpha * 0.8), stop(1.0, amt * alpha * 0.25)],
                         SpreadMode::Pad,
                         Transform::identity(),
-                    ),
-                    true,
-                ) {
-                    let mut p = Paint::default();
-                    p.shader = shader;
-                    p.anti_alias = true;
-                    let xf = cx.xf();
-                    cx.pm.fill_path(&path, &p, FillRule::Winding, xf, None);
+                    ) {
+                        let mut p = Paint::default();
+                        p.shader = shader;
+                        p.anti_alias = true;
+                        cx.pm.fill_path(&wave, &p, FillRule::Winding, xf, Some(&mask));
+                    }
                 }
             }
         }
@@ -802,6 +815,7 @@ fn draw_hover(cx: &mut Ctx, notch: &Notch) {
         Button::Volume | Button::Brightness => {}
         _ => {
             let radius = match b {
+                Button::Palette | Button::SettingsOpen => 18.0,
                 Button::Tile(_) => 22.0,
                 Button::Toggle(_) => 12.0,
                 _ => (r.h / 2.0).min(14.0),
@@ -1132,6 +1146,130 @@ fn sauron_fire(cx: &mut Ctx, x: f32, y: f32, ex: f32, ey: f32, open: f32, t: f32
     }
 }
 
+const SEGMENTS: [u8; 10] = [0b0111111, 0b0000110, 0b1011011, 0b1001111, 0b1100110, 0b1101101, 0b1111101, 0b0000111, 0b1111111, 0b1101111];
+
+/// Hour and minute digits as shown (hour tens blank in 12-hour mode below 10).
+fn clock_digits(notch: &Notch, h: u32, m: u32) -> [Option<u8>; 4] {
+    let hh = if notch.settings().clock_24h { h } else { [12, h % 12][(h % 12 != 0) as usize] };
+    let tens = if !notch.settings().clock_24h && hh < 10 { None } else { Some((hh / 10) as u8) };
+    [tens, Some((hh % 10) as u8), Some((m / 10) as u8), Some((m % 10) as u8)]
+}
+
+/// One split-flap card; mid-flip it is composed from two cached faces.
+#[allow(clippy::too_many_arguments)]
+fn flip_card(cx: &mut Ctx, x: f32, y: f32, w: f32, h: f32, old: Option<u8>, new: Option<u8>, p: f32, a: f32) {
+    fn face(cx: &mut Ctx, x: f32, y: f32, w: f32, h: f32, d: Option<u8>, a: f32) {
+        cx.rrect(rect(x, y, w, h), 4.0, color([34, 34, 40], a));
+        if let Some(d) = d {
+            cx.t(&d.to_string(), x + w / 2.0, y + h * 0.76, h * 0.74, color(WHITE, a), Align::Center);
+        }
+        cx.rrect(rect(x, y + h / 2.0 - 0.6, w, 1.2), 0.5, color([0, 0, 0], 0.75 * a));
+    }
+    if old == new || p >= 1.0 {
+        face(cx, x, y, w, h, new, a);
+        return;
+    }
+    let k = cx.scale;
+    let (pw, ph) = ((w * k).ceil() as u32 + 2, (h * k).ceil() as u32 + 2);
+    let (Some(mut t_old), Some(mut t_new)) = (Pixmap::new(pw, ph), Pixmap::new(pw, ph)) else {
+        face(cx, x, y, w, h, new, a);
+        return;
+    };
+    for (pm, d) in [(&mut t_old, old), (&mut t_new, new)] {
+        let mut sub = Ctx { accent: cx.accent, ink: cx.ink, pm, text: cx.text, scale: k, ox: -x * k, oy: -y * k };
+        face(&mut sub, x, y, w, h, d, a);
+    }
+    let (px, py, pwf, hh) = (x * k + cx.ox, y * k + cx.oy, w * k, h * k / 2.0);
+    let ym = py + hh;
+    let mut blit = |pm: &Pixmap, dest: (f32, f32, f32, f32), xf: Transform| {
+        let Some(r) = tiny_skia::Rect::from_xywh(dest.0, dest.1, dest.2, dest.3) else { return };
+        let mut paint = Paint::default();
+        paint.shader = tiny_skia::Pattern::new(pm.as_ref(), SpreadMode::Pad, tiny_skia::FilterQuality::Bilinear, 1.0, xf);
+        cx.pm.fill_rect(r, &paint, Transform::identity(), None);
+    };
+    let place = Transform::from_translate(px, py);
+    blit(&t_new, (px, py, pwf, hh), place);
+    blit(&t_old, (px, ym, pwf, hh), place);
+    if p < 0.5 {
+        let s = 1.0 - 2.0 * p;
+        blit(&t_old, (px, ym - s * hh, pwf, s * hh), Transform::from_row(1.0, 0.0, 0.0, s, px, ym - s * hh));
+    } else {
+        let s = 2.0 * p - 1.0;
+        blit(&t_new, (px, ym, pwf, s * hh), Transform::from_row(1.0, 0.0, 0.0, s, px, ym - s * hh));
+    }
+}
+
+/// The pill's clock in the chosen style, centred on (xm, ym); `size` is the font size or digit height.
+fn draw_clock(cx: &mut Ctx, notch: &Notch, xm: f32, ym: f32, size: f32, a: f32) {
+    use chrono::Timelike;
+    let now = chrono::Local::now();
+    let (h, m, s) = (now.hour(), now.minute(), now.second());
+    let frac = now.timestamp_subsec_millis() as f32 / 1000.0;
+    match notch.settings().clock_style {
+        ClockStyle::Classic => {
+            cx.t(&now.format(clock_fmt(notch)).to_string(), xm, ym + size * 0.35, size, color(WHITE, a), Align::Center);
+        }
+        ClockStyle::Flip => {
+            let (cw, ch, gap, pair) = (size * 0.76, size * 1.3, 2.0, 9.0);
+            let total = 4.0 * cw + 2.0 * gap + pair;
+            let (x0, y0) = (xm - total / 2.0, ym - ch / 2.0);
+            let prev = now - chrono::Duration::minutes(1);
+            let (cur, old) = (clock_digits(notch, h, m), clock_digits(notch, prev.hour(), prev.minute()));
+            let p = if s == 0 { ((frac * 1000.0) / 380.0).min(1.0) } else { 1.0 };
+            let xs = [x0, x0 + cw + gap, x0 + 2.0 * cw + gap + pair, x0 + 3.0 * cw + 2.0 * gap + pair];
+            for i in 0..4 {
+                flip_card(cx, xs[i], y0, cw, ch, old[i], cur[i], p, a);
+            }
+            let cxm = x0 + 2.0 * cw + gap + pair / 2.0;
+            for dy in [-ch * 0.17, ch * 0.17] {
+                cx.circle(cxm, ym + dy, 1.5, color(cx.accent, a));
+            }
+        }
+        ClockStyle::Led => {
+            let (dw, dh) = (size * 0.52, size);
+            let t = size * 0.14;
+            let (gap, pair) = (size * 0.26, size * 0.5);
+            let total = 4.0 * dw + 2.0 * gap + pair;
+            let (x0, y0) = (xm - total / 2.0, ym - dh / 2.0);
+            let xs = [x0, x0 + dw + gap, x0 + 2.0 * dw + gap + pair, x0 + 3.0 * dw + 2.0 * gap + pair];
+            for (i, d) in clock_digits(notch, h, m).iter().enumerate() {
+                let half = dh / 2.0;
+                let segs = [
+                    (t * 0.8, 0.0, dw - 1.6 * t, t),
+                    (dw - t, t * 0.8, t, half - 1.2 * t),
+                    (dw - t, half + t * 0.4, t, half - 1.2 * t),
+                    (t * 0.8, dh - t, dw - 1.6 * t, t),
+                    (0.0, half + t * 0.4, t, half - 1.2 * t),
+                    (0.0, t * 0.8, t, half - 1.2 * t),
+                    (t * 0.8, half - t / 2.0, dw - 1.6 * t, t),
+                ];
+                let mask = d.map_or(0, |d| SEGMENTS[d as usize % 10]);
+                for (k, (sx, sy, sw, sh)) in segs.iter().enumerate() {
+                    let on = mask & (1 << k) != 0;
+                    let rc = rect(xs[i] + sx, y0 + sy, *sw, *sh);
+                    if on {
+                        cx.rrect(rect(rc.x - 1.2, rc.y - 1.2, rc.w + 2.4, rc.h + 2.4), t * 0.7, color(cx.accent, 0.18 * a));
+                        cx.rrect(rc, t * 0.5, color(cx.accent, a));
+                    } else if d.is_some() {
+                        cx.rrect(rc, t * 0.5, color(WHITE, 0.06 * a));
+                    }
+                }
+            }
+            if frac < 0.55 {
+                let cxm = x0 + 2.0 * dw + gap + pair / 2.0;
+                for dy in [-dh * 0.2, dh * 0.2] {
+                    cx.circle(cxm, ym + dy, t * 0.6, color(cx.accent, a));
+                }
+            }
+        }
+    }
+}
+
+/// Seconds on a wrapping clock; small enough for f32 to keep sub-millisecond phase.
+fn anim_secs() -> f32 {
+    (chrono::Local::now().timestamp_millis().rem_euclid(3_600_000)) as f32 / 1000.0
+}
+
 fn clock_fmt(notch: &Notch) -> &'static str {
     if notch.settings().clock_24h { "%H:%M" } else { "%-I:%M %p" }
 }
@@ -1168,15 +1306,14 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
         cx.rrect(rect(r.x + rad, r.h - 4.0, r.w - 2.0 * rad, 1.5), 0.75, color(WHITE, 0.10 * a));
         cx.rrect(rect(r.x + rad, r.h - 4.0, w, 1.5), 0.75, color(tint, 0.9 * a));
     }
-    let clock = chrono::Local::now().format(clock_fmt(notch)).to_string();
-    cx.t(&clock, r.x + r.w / 2.0, mid + 7.0, 20.0, color(WHITE, a), Align::Center);
+    draw_clock(cx, notch, r.x + r.w / 2.0, mid, 20.0, a);
     if let Some(rate) = notch.download() {
         let txt = rate_fmt(rate, notch.settings().net_bits);
         let tw = cx.text_width(&txt, 12.0);
         let rx = r.x + r.w - 22.0;
         cx.t(&txt, rx, mid + 4.5, 12.0, color(WHITE, a), Align::Right);
         let ax = rx - tw - 11.0;
-        let bob = (chrono::Local::now().timestamp_millis() as f32 / 300.0).sin() * 1.6;
+        let bob = (anim_secs() * 3.33).sin() * 1.6;
         cx.rrect(rect(ax - 1.0, mid - 7.0 + bob, 2.0, 7.0), 1.0, color(cx.accent, a));
         cx.triangle([(ax - 4.5, mid - 1.0 + bob), (ax + 4.5, mid - 1.0 + bob), (ax, mid + 5.0 + bob)], color(cx.accent, a));
     }
@@ -1350,8 +1487,13 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
     let mid = r.x + r.w / 2.0;
 
     let now = chrono::Local::now();
-    let header = format!("{}  {}", now.format("%a %-d %b %Y"), now.format(clock_fmt(notch)));
-    cx.t(&header, mid, 44.0, 22.0, color(WHITE, a), Align::Center);
+    if notch.settings().clock_style == ClockStyle::Classic {
+        let header = format!("{}  {}", now.format("%a %-d %b %Y"), now.format(clock_fmt(notch)));
+        cx.t(&header, mid, 44.0, 22.0, color(WHITE, a), Align::Center);
+    } else {
+        cx.t(&now.format("%A %-d %B").to_string(), mid, 20.0, 12.0, color(GRAY, a), Align::Center);
+        draw_clock(cx, notch, mid, 40.0, 22.0, a);
+    }
     if let Some(rate) = notch.download() {
         let chip = rect(r.x + 36.0, 12.0, 160.0, 28.0);
         cx.rrect(chip, 14.0, color(WHITE, 0.10 * a));
@@ -1359,8 +1501,8 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
         cx.triangle([(chip.x + 10.5, chip.y + 14.0), (chip.x + 19.5, chip.y + 14.0), (chip.x + 15.0, chip.y + 20.0)], color(cx.accent, a));
         cx.t(&rate_fmt(rate, notch.settings().net_bits), chip.x + 30.0, chip.y + 19.0, 13.0, color(WHITE, a), Align::Left);
     }
-    magnifier(cx, r.x + r.w - 62.0, 25.0, color(WHITE, 0.85 * a));
-    gear(cx, r.x + r.w - 102.0, 25.0, color(WHITE, 0.85 * a));
+    magnifier(cx, r.x + r.w - 62.0, 26.0, color(WHITE, 0.85 * a));
+    gear(cx, r.x + r.w - 102.0, 26.0, color(WHITE, 0.85 * a));
 
     match notch.page {
         Page::Music => draw_music(cx, notch, a),
@@ -1403,7 +1545,7 @@ fn draw_music(cx: &mut Ctx, notch: &Notch, a: f32) {
     let (x0, mid) = (r.x, r.x + r.w / 2.0);
     let m = notch.media();
 
-    draw_art(cx, rect(x0 + 39.0, 62.0, 96.0, 96.0), 18.0, m, a);
+    draw_art(cx, rect(x0 + 39.0, 62.0, 96.0, 96.0), 18.0, m, notch.vinyl_angle(), a);
 
     let (title, artist) = if m.has_session && !m.title.is_empty() {
         (m.title.clone(), m.artist.clone())
@@ -1474,7 +1616,7 @@ fn draw_music_lyrics(cx: &mut Ctx, notch: &Notch, a: f32) {
     let white = color(WHITE, a);
 
     // Left column: compact now-playing.
-    draw_art(cx, rect(x0 + 36.0, 62.0, 72.0, 72.0), 14.0, m, a);
+    draw_art(cx, rect(x0 + 36.0, 62.0, 72.0, 72.0), 14.0, m, notch.vinyl_angle(), a);
     let (title, artist) = if m.has_session && !m.title.is_empty() {
         (m.title.clone(), m.artist.clone())
     } else {
@@ -1661,6 +1803,7 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                 Toggle::Battery => notch.update_settings(|s| s.show_battery = !s.show_battery),
                 Toggle::Clipboard => notch.update_settings(|s| s.clipboard_history = !s.clipboard_history),
                 Toggle::EyeMoods => notch.update_settings(|s| s.eye_moods = !s.eye_moods),
+                Toggle::ClockStyle => notch.update_settings(|s| s.clock_style = s.clock_style.next()),
                 Toggle::Autostart => {
                     let _ = visus_platform::set_autostart(!visus_platform::autostart_enabled());
                 }
@@ -1838,12 +1981,13 @@ pub fn palette_layout(notch: &Notch) -> Option<PaletteLayout> {
 }
 
 fn magnifier(cx: &mut Ctx, x: f32, y: f32, c: [u8; 4]) {
-    if let Some(p) = PathBuilder::from_circle(x, y, 6.5) {
+    // Drawn so the whole glyph (lens plus handle) is centred on (x, y).
+    if let Some(p) = PathBuilder::from_circle(x - 2.4, y - 2.4, 6.5) {
         cx.stroke(&p, c, 2.0);
     }
     let mut pb = PathBuilder::new();
-    pb.move_to(x + 5.2, y + 5.2);
-    pb.line_to(x + 10.5, y + 10.5);
+    pb.move_to(x + 2.4, y + 2.4);
+    pb.line_to(x + 7.6, y + 7.6);
     if let Some(p) = pb.finish() {
         cx.stroke(&p, c, 2.2);
     }
@@ -2065,9 +2209,106 @@ fn draw_image(cx: &mut Ctx, r: Rect, radius: f32, art: &visus_core::Art, a: f32)
 }
 
 /// Cover art in a rounded square, or a gradient seeded from the title when there is none.
-fn draw_art(cx: &mut Ctx, r: Rect, radius: f32, m: &visus_core::MediaInfo, a: f32) {
-    if let Some(art) = m.art.as_ref() {
-        draw_image(cx, r, radius, art, a);
+/// A cached premultiplied copy of the cover (shared with `draw_image`).
+fn cached_art(art: &visus_core::Art) -> Option<Pixmap> {
+    ART_PIXMAPS.with(|cell| {
+        let mut map = cell.borrow_mut();
+        if !map.contains_key(&art.id) {
+            let mut pm = Pixmap::new(art.size, art.size)?;
+            for (dst, src) in pm.pixels_mut().iter_mut().zip(art.rgba.chunks_exact(4)) {
+                let al = src[3] as u32;
+                let mul = |c: u8| ((c as u32 * al + 127) / 255) as u8;
+                if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(mul(src[0]), mul(src[1]), mul(src[2]), src[3]) {
+                    *dst = p;
+                }
+            }
+            if map.len() > 40 {
+                map.clear();
+            }
+            map.insert(art.id, pm);
+        }
+        map.get(&art.id).cloned()
+    })
+}
+
+/// The cover as a spinning vinyl record: grooves, a rotating label, a spindle hole and a fixed sheen.
+fn draw_vinyl(cx: &mut Ctx, r: Rect, m: &visus_core::MediaInfo, angle: f32, a: f32) {
+    let (c, rad) = ((r.x + r.w / 2.0, r.y + r.h / 2.0), r.w.min(r.h) / 2.0);
+    cx.circle(c.0, c.1 + 1.5, rad + 1.5, color([0, 0, 0], 0.4 * a));
+    if let (Some(shader), Some(disc)) = (
+        RadialGradient::new(
+            Point::from_xy(c.0, c.1),
+            Point::from_xy(c.0, c.1),
+            rad,
+            vec![GradientStop::new(0.0, Color::from_rgba8(44, 44, 50, (a * 255.0) as u8)), GradientStop::new(1.0, Color::from_rgba8(12, 12, 15, (a * 255.0) as u8))],
+            SpreadMode::Pad,
+            Transform::identity(),
+        ),
+        PathBuilder::from_circle(c.0, c.1, rad),
+    ) {
+        let mut p = Paint::default();
+        p.shader = shader;
+        p.anti_alias = true;
+        let xf = cx.xf();
+        cx.pm.fill_path(&disc, &p, FillRule::Winding, xf, None);
+    }
+    for i in 0..8 {
+        if let Some(g) = PathBuilder::from_circle(c.0, c.1, rad * (0.76 + 0.03 * i as f32)) {
+            cx.stroke(&g, color(WHITE, (0.05 + 0.04 * (i % 2) as f32) * a), 0.6);
+        }
+    }
+    // Label: the cover, rotating with the record.
+    let lr = rad * 0.72;
+    if let Some(label) = PathBuilder::from_circle(c.0, c.1, lr) {
+        let xf = cx.xf();
+        let art_pm = m.art.as_deref().and_then(cached_art);
+        let mut paint = Paint::default();
+        paint.anti_alias = true;
+        match &art_pm {
+            Some(pm) => {
+                let k = lr * 2.0 / pm.width() as f32;
+                let t = Transform::from_translate(-(pm.width() as f32) / 2.0, -(pm.height() as f32) / 2.0).post_scale(k, k).post_rotate(angle).post_translate(c.0, c.1);
+                paint.shader = tiny_skia::Pattern::new(pm.as_ref(), SpreadMode::Pad, tiny_skia::FilterQuality::Bilinear, a, t);
+                cx.pm.fill_path(&label, &paint, FillRule::Winding, xf, None);
+            }
+            None => {
+                let h = if m.has_session { (hash(&m.title) % 360) as f32 / 360.0 } else { 0.62 };
+                let (c1, c2) = (hue_rgb(h), hue_rgb((h + 0.12) % 1.0));
+                let (dx, dy) = ((angle.to_radians()).cos() * lr, (angle.to_radians()).sin() * lr);
+                if let Some(shader) = LinearGradient::new(
+                    Point::from_xy(c.0 - dx, c.1 - dy),
+                    Point::from_xy(c.0 + dx, c.1 + dy),
+                    vec![GradientStop::new(0.0, Color::from_rgba8(c1[0], c1[1], c1[2], (a * 255.0) as u8)), GradientStop::new(1.0, Color::from_rgba8(c2[0], c2[1], c2[2], (a * 255.0) as u8))],
+                    SpreadMode::Pad,
+                    Transform::identity(),
+                ) {
+                    paint.shader = shader;
+                    cx.pm.fill_path(&label, &paint, FillRule::Winding, xf, None);
+                }
+            }
+        }
+        cx.stroke(&label, color(WHITE, 0.22 * a), 0.8);
+    }
+    cx.circle(c.0, c.1, rad * 0.075, color([6, 6, 8], a));
+    // Sheen: two soft wedges that stay put while the record turns.
+    for start in [-62.0f32, 118.0] {
+        let mut pb = PathBuilder::new();
+        pb.move_to(c.0, c.1);
+        for k in 0..=6 {
+            let ang = (start + 22.0 * k as f32 / 6.0).to_radians();
+            pb.line_to(c.0 + ang.cos() * rad, c.1 + ang.sin() * rad);
+        }
+        pb.close();
+        if let Some(w) = pb.finish() {
+            cx.fill(&w, color(WHITE, 0.07 * a));
+        }
+    }
+}
+
+fn draw_art(cx: &mut Ctx, r: Rect, radius: f32, m: &visus_core::MediaInfo, angle: f32, a: f32) {
+    let _ = radius;
+    draw_vinyl(cx, r, m, angle, a);
+    if true {
         return;
     }
     let Some(path) = rrect(r.x, r.y, r.w, r.h, radius) else { return };
@@ -2318,18 +2559,19 @@ fn settings_buttons_raw(x0: f32) -> Vec<(Button, Rect)> {
     v.push((Button::EyeTime(-1), rect(x0 + 190.0, 250.0, 30.0, 26.0)));
     v.push((Button::EyeTime(1), rect(x0 + 276.0, 250.0, 30.0, 26.0)));
     for i in 0..visus_platform::list_drives().len().min(7) {
-        v.push((Button::DriveToggle(i as u8), rect(x0 + 380.0 + i as f32 * 52.0, 294.0, 46.0, 26.0)));
+        v.push((Button::DriveToggle(i as u8), rect(x0 + 380.0 + i as f32 * 52.0, 308.0, 46.0, 26.0)));
     }
     v
 }
 
-const CHIPS: [(Toggle, &str); 6] = [
+const CHIPS: [(Toggle, &str); 7] = [
     (Toggle::Quiet, "Quiet"),
     (Toggle::Clock24, "24h clock"),
     (Toggle::Visualizer, "Visualizer"),
     (Toggle::Battery, "Battery"),
     (Toggle::Clipboard, "Clipboard"),
     (Toggle::EyeMoods, "Eye moods"),
+    (Toggle::ClockStyle, "Clock"),
 ];
 
 fn chip_rect(x0: f32, i: usize) -> Rect {
@@ -2525,20 +2767,22 @@ fn draw_settings(cx: &mut Ctx, notch: &Notch, x0: f32, a: f32) {
             Toggle::Visualizer => s.visualizer,
             Toggle::Clipboard => s.clipboard_history,
             Toggle::EyeMoods => s.eye_moods,
+            Toggle::ClockStyle => false,
             _ => s.show_battery,
         };
         let rc = chip_rect(x0, i);
         cx.rrect(rc, 12.0, if on { color(cx.accent, 0.9 * a) } else { color(WHITE, 0.12 * a) });
-        cx.t(label, rc.x + rc.w / 2.0, rc.y + 16.0, 12.0, if on { color(cx.ink, a) } else { color(WHITE, a) }, Align::Center);
+        let label = if *t == Toggle::ClockStyle { format!("Clock: {}", s.clock_style.name()) } else { label.to_string() };
+        cx.t(&label, rc.x + rc.w / 2.0, rc.y + 16.0, 12.0, if on { color(cx.ink, a) } else { color(WHITE, a) }, Align::Center);
     }
-    cx.t("Search drives for apps", x0 + 380.0, 288.0, 14.0, color(GRAY, a), Align::Left);
+    cx.t("Search drives for apps", x0 + 380.0, 302.0, 14.0, color(GRAY, a), Align::Left);
     for (i, d) in visus_platform::list_drives().iter().take(7).enumerate() {
         let on = s.app_folders.iter().any(|f| f == d);
-        let rc = rect(x0 + 380.0 + i as f32 * 52.0, 294.0, 46.0, 26.0);
+        let rc = rect(x0 + 380.0 + i as f32 * 52.0, 308.0, 46.0, 26.0);
         cx.rrect(rc, 13.0, if on { color(cx.accent, 0.9 * a) } else { color(WHITE, 0.12 * a) });
         cx.t(d.trim_end_matches('\\'), rc.x + 23.0, rc.y + 18.0, 14.0, if on { color(cx.ink, a) } else { color(WHITE, a) }, Align::Center);
     }
-    cx.t("Scans up to 3 folders deep", x0 + 380.0, 338.0, 12.0, color(GRAY, 0.8 * a), Align::Left);
+    cx.t("Scans up to 3 folders deep", x0 + 380.0, 352.0, 12.0, color(GRAY, 0.8 * a), Align::Left);
     cx.t("Extra app folders", x0 + 36.0, 292.0, 14.0, color(GRAY, a), Align::Left);
     for (i, f) in s.app_folders.iter().take(2).enumerate() {
         let y = 298.0 + i as f32 * 26.0;

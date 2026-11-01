@@ -23,6 +23,6 @@ pub use notch::{VIZ_BARS, Alert, EyeMood, EyeState, Notch, Page, Rect, Shape};
 pub use settings::{Rgb, Settings};
 pub use palette::{Action, App, AppKind, guess_kind, Command, Item, Kind, Outcome, Palette, MAX_RESULTS};
 pub use extras::{UpdateStatus, Weather, is_newer, weather_label};
-pub use settings::EyeStyle;
+pub use settings::{ClockStyle, EyeStyle};
 pub use stats::Stats;
 pub use todo::{Todo, parse_task};

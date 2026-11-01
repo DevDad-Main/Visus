@@ -529,6 +529,12 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
     if page == "shelf" {
         notch.set_shelf(vec!["/home/devdad/Projects/visus/Cargo.toml".into(), "/usr/bin/ls".into(), "/tmp/missing-report.pdf".into()]);
     }
+    if let Ok(v) = std::env::var("VISUS_CLOCK") {
+        let style = visus_core::ClockStyle::ALL.into_iter().find(|c| c.name().eq_ignore_ascii_case(&v));
+        if let Some(st) = style {
+            notch.update_settings(|s| s.clock_style = st);
+        }
+    }
     if let Some(p) = std::env::var("VISUS_POINTER").ok().and_then(|s| s.split_once(',').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))) {
         notch.set_pointer(Some(p));
     }

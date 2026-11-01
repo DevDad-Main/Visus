@@ -87,6 +87,8 @@ enum Mode {
 const MINIMAL: (f32, f32) = (190.0, 6.0);
 /// Extra closed-pill width while the music visualizer is shown.
 const VISUALIZER_EXTRA: f32 = 76.0;
+/// The idle pill drops the empty visualizer slot and tightens around battery and clock.
+const IDLE_TRIM: f32 = 16.0;
 const MOOD_PERIOD: f32 = 16.0;
 const MOOD_START: f32 = 11.0;
 const MOOD_LEN: f32 = 3.2;
@@ -99,6 +101,7 @@ const PEEK: (f32, f32) = (500.0, 92.0);
 const OPEN: (f32, f32) = (744.0, 248.0);
 const PEEK_TIME: Duration = Duration::from_millis(2800);
 const HOVER_CLOSE_DELAY: Duration = Duration::from_millis(250);
+const VINYL_DEG_PER_SEC: f32 = 110.0;
 const WAVE_REFRESH: Duration = Duration::from_millis(66);
 const PROGRESS_REFRESH: Duration = Duration::from_millis(200);
 const STATS_REFRESH: Duration = Duration::from_secs(1);
@@ -170,6 +173,8 @@ pub struct Notch {
     art_asked: String,
     art_pending: Option<(String, Instant)>,
     theme: [f32; 3],
+    vinyl_angle: f32,
+    vinyl_speed: f32,
     theme_cache: std::cell::Cell<Option<(u64, [u8; 3])>>,
     download: Option<u64>,
     alert_text: Option<String>,
@@ -245,6 +250,8 @@ impl Notch {
             art_asked: String::new(),
             art_pending: None,
             theme: Settings::default().eye_iris.0.map(f32::from),
+            vinyl_angle: 0.0,
+            vinyl_speed: 0.0,
             theme_cache: std::cell::Cell::new(None),
             download: None,
             alert_text: None,
@@ -575,6 +582,9 @@ impl Notch {
             Some(Duration::from_millis(100))
         } else if synced {
             Some(LYRIC_REFRESH)
+        } else if self.is_open() && self.page == Page::Music && (playing || self.vinyl_speed > 2.0) {
+            // The record spins, so the Music page redraws at about 30 fps.
+            Some(Duration::from_millis(33))
         } else if (media || closed_progress) && self.media.art.is_some() {
             // The album-art backdrop drifts slowly, so keep drawing while music plays.
             Some(WAVE_REFRESH)
@@ -586,6 +596,23 @@ impl Notch {
             Some(STATS_REFRESH)
         } else {
             None
+        };
+        // Flip cards animate for the first half second of each minute; LED colons and analog hands tick.
+        let clock = if self.hidden || self.settings.minimal {
+            None
+        } else {
+            match self.settings.clock_style {
+                crate::ClockStyle::Flip => {
+                    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1000, |d| d.as_millis() % 60_000);
+                    (ms < 500).then_some(Duration::from_millis(16))
+                }
+                crate::ClockStyle::Led => Some(Duration::from_millis(500)),
+                crate::ClockStyle::Classic => None,
+            }
+        };
+        let base = match (base, clock) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
         };
         let base = match (base, self.toast_text().map(|_| Duration::from_millis(100)).or(self.art_pending.as_ref().map(|_| Duration::from_millis(300)))) {
             (Some(a), Some(b)) => Some(a.min(b)),
@@ -714,6 +741,11 @@ impl Notch {
     fn theme_settled(&self) -> bool {
         let t = self.theme_target();
         (0..3).all(|i| (t[i] - self.theme[i]).abs() < 1.5)
+    }
+
+    /// Rotation of the album record in degrees.
+    pub fn vinyl_angle(&self) -> f32 {
+        self.vinyl_angle
     }
 
     pub fn wants_controls(&self) -> bool {
@@ -1526,6 +1558,13 @@ impl Notch {
     pub fn tick(&mut self, dt: Duration) {
         self.wander();
         {
+            // The record spins up and down smoothly with playback.
+            let target = if self.media.has_session && self.media.playing { VINYL_DEG_PER_SEC } else { 0.0 };
+            let s = dt.as_secs_f32();
+            self.vinyl_speed += (target - self.vinyl_speed) * (1.0 - (-2.5 * s).exp());
+            self.vinyl_angle = (self.vinyl_angle + self.vinyl_speed * s) % 360.0;
+        }
+        {
             let (t, k) = (self.theme_target(), 1.0 - (-5.0 * dt.as_secs_f32()).exp());
             for i in 0..3 {
                 self.theme[i] += (t[i] - self.theme[i]) * k;
@@ -1583,7 +1622,7 @@ impl Notch {
                 let (w, h) = if self.eye_state() != EyeState::Hidden {
                     (EYE_PILL_W, self.settings.closed_height - 4.0)
                 } else {
-                    (self.settings.closed_width + if self.download.is_some() { DOWNLOAD_EXTRA } else if self.visualizer_active() { VISUALIZER_EXTRA } else { 0.0 }, self.settings.closed_height)
+                    (self.settings.closed_width + if self.download.is_some() { DOWNLOAD_EXTRA } else if self.visualizer_active() { VISUALIZER_EXTRA } else { -IDLE_TRIM }, self.settings.closed_height)
                 };
                 ((w, h), h * 0.42)
             }
@@ -1651,7 +1690,7 @@ mod tests {
         assert_eq!(n.shape().rect.w, OPEN.0);
         n.hover(false);
         settle(&mut n);
-        assert_eq!(n.shape().rect.w, n.settings().closed_width);
+        assert_eq!(n.shape().rect.w, n.settings().closed_width - IDLE_TRIM);
         assert!(!n.is_animating());
     }
 
