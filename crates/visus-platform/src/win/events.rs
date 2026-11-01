@@ -288,6 +288,7 @@ fn report_fullscreen() {
 /// Full path of the foreground window's executable.
 fn foreground_exe() -> Option<String> {
     use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
     unsafe {
         let mut pid = 0u32;
