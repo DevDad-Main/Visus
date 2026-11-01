@@ -658,6 +658,14 @@ impl Notch {
         self.retarget();
     }
 
+    /// A file drag left the window without dropping: close the shelf shortly after, unless the pointer takes over.
+    pub fn drag_cancelled(&mut self) {
+        if self.mode == Mode::Open && self.page == Page::Shelf && self.leave_left.is_some() {
+            // The short delay absorbs flicker when a drag skims the window edge.
+            self.leave_left = Some(Duration::from_millis(500));
+        }
+    }
+
     pub fn todos(&self) -> &[Todo] {
         &self.todos
     }

@@ -351,6 +351,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.click(el)
             }
             WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => self.notch.end_drag(),
+            WindowEvent::HoveredFileCancelled => self.notch.drag_cancelled(),
             WindowEvent::HoveredFile(_) => self.notch.show_page(visus_core::Page::Shelf),
             WindowEvent::DroppedFile(path) => {
                 self.notch.shelf_add(path.to_string_lossy().into_owned());
