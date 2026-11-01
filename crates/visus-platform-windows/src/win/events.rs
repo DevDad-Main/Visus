@@ -1,0 +1,238 @@
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::OnceLock;
+
+use visus_core::{Event, Hud};
+use windows::core::w;
+use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+use windows::Win32::Media::Audio::{
+    IMMDeviceEnumerator, MMDeviceEnumerator, eConsole, eRender,
+};
+use windows::Win32::System::Com::{
+    CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Power::{
+    GUID_ACDC_POWER_SOURCE, GetSystemPowerStatus, RegisterPowerSettingNotification,
+    SYSTEM_POWER_STATUS,
+};
+use windows::Win32::UI::Accessibility::SetWinEventHook;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, VK_CAPITAL, VK_VOLUME_DOWN, VK_VOLUME_MUTE, VK_VOLUME_UP,
+};
+use windows::Win32::UI::Shell::{
+    QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, EVENT_SYSTEM_FOREGROUND,
+    EVENT_SYSTEM_MINIMIZEEND, GetMessageW, KBDLLHOOKSTRUCT, KillTimer, MSG, PostMessageW,
+    RegisterClassW, SetTimer, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WINEVENT_OUTOFCONTEXT, WM_APP, WM_KEYDOWN, WM_POWERBROADCAST, WM_TIMER,
+    WNDCLASSW, DEVICE_NOTIFY_WINDOW_HANDLE, PBT_POWERSETTINGCHANGE,
+};
+
+use crate::Emit;
+
+static EMIT: OnceLock<Emit> = OnceLock::new();
+static HWND_RAW: AtomicIsize = AtomicIsize::new(0);
+static FULLSCREEN: AtomicBool = AtomicBool::new(false);
+
+const WM_KEY_CAPS: u32 = WM_APP + 1;
+const WM_KEY_VOLUME: u32 = WM_APP + 2;
+const WM_FOREGROUND: u32 = WM_APP + 3;
+const T_CAPS: usize = 1;
+const T_VOLUME: usize = 2;
+const T_FULLSCREEN: usize = 3;
+/// Some fullscreen changes (F11 in a browser) fire no foreground event, so re-check cheaply.
+const FULLSCREEN_RECHECK_MS: u32 = 2000;
+/// Let the OS apply the key press before reading the resulting state.
+const SETTLE_MS: u32 = 50;
+
+fn emit(ev: Event) {
+    if let Some(f) = EMIT.get() {
+        f(ev);
+    }
+}
+
+pub fn start(e: Emit) {
+    let _ = EMIT.set(e);
+    std::thread::Builder::new()
+        .name("visus-os-events".into())
+        .spawn(|| unsafe { run() })
+        .expect("spawn os event thread");
+}
+
+unsafe fn run() {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok();
+
+        let hmodule = GetModuleHandleW(None).unwrap_or_default();
+        let hinstance = HINSTANCE(hmodule.0);
+        let class = w!("VisusEvents");
+        let wc = WNDCLASSW {
+            lpfnWndProc: Some(wndproc),
+            hInstance: hinstance,
+            lpszClassName: class,
+            ..Default::default()
+        };
+        RegisterClassW(&wc);
+
+        // Hidden top-level window: power notifications are delivered to it.
+        let hwnd = match CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            class,
+            w!("Visus"),
+            WINDOW_STYLE::default(),
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            Some(hinstance),
+            None,
+        ) {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+        HWND_RAW.store(hwnd.0 as isize, Ordering::Relaxed);
+
+        let _ = RegisterPowerSettingNotification(
+            HANDLE(hwnd.0),
+            &GUID_ACDC_POWER_SOURCE,
+            DEVICE_NOTIFY_WINDOW_HANDLE,
+        );
+        let _ = SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), Some(hinstance), 0);
+        for ev in [EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND] {
+            SetWinEventHook(ev, ev, None, Some(foreground_hook), 0, 0, WINEVENT_OUTOFCONTEXT);
+        }
+        SetTimer(Some(hwnd), T_FULLSCREEN, FULLSCREEN_RECHECK_MS, None);
+
+        report_power(false);
+        report_fullscreen();
+
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+}
+
+unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_POWERBROADCAST if wp.0 as u32 == PBT_POWERSETTINGCHANGE => {
+                report_power(true);
+                LRESULT(1)
+            }
+            WM_KEY_CAPS => {
+                SetTimer(Some(hwnd), T_CAPS, SETTLE_MS, None);
+                LRESULT(0)
+            }
+            WM_KEY_VOLUME => {
+                SetTimer(Some(hwnd), T_VOLUME, SETTLE_MS, None);
+                LRESULT(0)
+            }
+            WM_FOREGROUND => {
+                report_fullscreen();
+                LRESULT(0)
+            }
+            WM_TIMER => {
+                match wp.0 {
+                    T_CAPS => {
+                        let _ = KillTimer(Some(hwnd), T_CAPS);
+                        let on = GetKeyState(VK_CAPITAL.0 as i32) & 1 != 0;
+                        emit(Event::Hud(Hud::CapsLock(on)));
+                    }
+                    T_VOLUME => {
+                        let _ = KillTimer(Some(hwnd), T_VOLUME);
+                        if let Some((level, muted)) = read_volume() {
+                            emit(Event::Hud(Hud::Volume { level, muted }));
+                        }
+                    }
+                    T_FULLSCREEN => report_fullscreen(),
+                    _ => {}
+                }
+                LRESULT(0)
+            }
+            _ => DefWindowProcW(hwnd, msg, wp, lp),
+        }
+    }
+}
+
+/// Only inspects the few keys we show HUDs for; nothing else is read, stored or forwarded.
+unsafe extern "system" fn key_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    unsafe {
+        if code >= 0 && wp.0 as u32 == WM_KEYDOWN {
+            let vk = (*(lp.0 as *const KBDLLHOOKSTRUCT)).vkCode as u16;
+            let target = if vk == VK_CAPITAL.0 {
+                Some(WM_KEY_CAPS)
+            } else if vk == VK_VOLUME_UP.0 || vk == VK_VOLUME_DOWN.0 || vk == VK_VOLUME_MUTE.0 {
+                Some(WM_KEY_VOLUME)
+            } else {
+                None
+            };
+            if let Some(m) = target {
+                let h = HWND_RAW.load(Ordering::Relaxed);
+                if h != 0 {
+                    let _ = PostMessageW(Some(HWND(h as *mut _)), m, WPARAM(0), LPARAM(0));
+                }
+            }
+        }
+        CallNextHookEx(None, code, wp, lp)
+    }
+}
+
+unsafe extern "system" fn foreground_hook(
+    _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
+    _event: u32,
+    _hwnd: HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    let h = HWND_RAW.load(Ordering::Relaxed);
+    if h != 0 {
+        unsafe {
+            let _ = PostMessageW(Some(HWND(h as *mut _)), WM_FOREGROUND, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+fn report_power(_changed: bool) {
+    let mut s = SYSTEM_POWER_STATUS::default();
+    if unsafe { GetSystemPowerStatus(&mut s) }.is_err() {
+        return;
+    }
+    // BatteryFlag bit 7 = no battery (desktop): nothing to report.
+    if s.BatteryFlag & 128 != 0 {
+        return;
+    }
+    let percent = if s.BatteryLifePercent > 100 { 100 } else { s.BatteryLifePercent };
+    emit(Event::Power { on_ac: s.ACLineStatus == 1, percent });
+}
+
+fn report_fullscreen() {
+    let state = unsafe { SHQueryUserNotificationState() };
+    let full = matches!(
+        state,
+        Ok(s) if s == QUNS_BUSY || s == QUNS_RUNNING_D3D_FULL_SCREEN || s == QUNS_PRESENTATION_MODE
+    );
+    if FULLSCREEN.swap(full, Ordering::Relaxed) != full {
+        emit(Event::Fullscreen(full));
+    }
+}
+
+fn read_volume() -> Option<(f32, bool)> {
+    unsafe {
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+        let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole).ok()?;
+        let vol: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None).ok()?;
+        let level = vol.GetMasterVolumeLevelScalar().ok()?;
+        let muted = vol.GetMute().ok()?.as_bool();
+        Some((level, muted))
+    }
+}

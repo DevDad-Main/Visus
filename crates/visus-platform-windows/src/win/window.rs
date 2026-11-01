@@ -1,0 +1,29 @@
+use windows::Win32::Foundation::HWND;
+use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GWL_EXSTYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+};
+
+fn hwnd(h: isize) -> HWND {
+    HWND(h as *mut core::ffi::c_void)
+}
+
+/// Keeps the notch out of the taskbar/Alt-Tab and stops it stealing focus.
+pub fn prepare_window(h: isize) {
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd(h), GWL_EXSTYLE);
+        let ex = ex | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize;
+        SetWindowLongPtrW(hwnd(h), GWL_EXSTYLE, ex);
+    }
+}
+
+/// Clips the window to the pill so everything around it is click-through.
+/// Coordinates are physical pixels relative to the window.
+pub fn set_window_region(h: isize, x: i32, y: i32, w: i32, height: i32, radius: i32) {
+    unsafe {
+        // Start above the window so only the bottom corners are rounded.
+        let rgn = CreateRoundRectRgn(x, y - radius * 2, x + w, y + height, radius * 2, radius * 2);
+        // The system owns the region after a successful call.
+        SetWindowRgn(hwnd(h), Some(rgn), true);
+    }
+}
