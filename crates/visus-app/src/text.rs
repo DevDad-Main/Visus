@@ -1,4 +1,8 @@
-use ab_glyph::{Font, FontRef, ScaleFont, point};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use ab_glyph::{Font, FontRef, GlyphId, ScaleFont, point};
 use tiny_skia::Pixmap;
 
 static INTER: &[u8] = include_bytes!("../assets/Inter.ttf");
@@ -10,13 +14,23 @@ pub enum Align {
     Right,
 }
 
+/// Pre-rasterised glyph coverage, offset from the baseline origin.
+struct Cached {
+    left: i32,
+    top: i32,
+    w: usize,
+    cov: Vec<u8>,
+}
+
 pub struct Text {
     font: FontRef<'static>,
+    /// Keyed by glyph, size and quarter-pixel horizontal phase.
+    cache: RefCell<HashMap<(GlyphId, u32, u8), Option<Rc<Cached>>>>,
 }
 
 impl Text {
     pub fn new() -> Self {
-        Self { font: FontRef::try_from_slice(INTER).expect("bundled font") }
+        Self { font: FontRef::try_from_slice(INTER).expect("bundled font"), cache: RefCell::new(HashMap::new()) }
     }
 
     pub fn width(&self, s: &str, px: f32) -> f32 {
@@ -70,29 +84,57 @@ impl Text {
             if let Some(p) = prev {
                 cx += f.kern(p, id);
             }
-            let glyph = id.with_scale_and_position(px, point(cx, y));
+            let (gx0, phase) = (cx.floor(), ((cx - cx.floor()) * 4.0) as u8);
             cx += f.h_advance(id);
             prev = Some(id);
-            let Some(outlined) = self.font.outline_glyph(glyph) else { continue };
-            let b = outlined.px_bounds();
-            outlined.draw(|gx, gy, cov| {
-                let (px_x, px_y) = (b.min.x as i32 + gx as i32, b.min.y as i32 + gy as i32);
-                if px_x < 0 || px_y < 0 || px_x >= pw || px_y >= ph {
-                    return;
+            let Some(g) = self.glyph(id, px, phase) else { continue };
+            let (ox, oy) = (gx0 as i32 + g.left, y.round() as i32 + g.top);
+            for (i, cov) in g.cov.iter().enumerate() {
+                if *cov == 0 {
+                    continue;
                 }
-                let a = cov * rgba[3] as f32 / 255.0;
+                let (px_x, px_y) = (ox + (i % g.w) as i32, oy + (i / g.w) as i32);
+                if px_x < 0 || px_y < 0 || px_x >= pw || px_y >= ph {
+                    continue;
+                }
+                let a = *cov as f32 / 255.0 * rgba[3] as f32 / 255.0;
                 let dst = &mut pixels[(px_y * pw + px_x) as usize];
                 let inv = 1.0 - a;
                 let mix = |s: u8, d: u8| (s as f32 * a + d as f32 * inv).round().min(255.0) as u8;
                 // Source is premultiplied: colour * alpha.
                 let r = mix(rgba[0], dst.red());
-                let g = mix(rgba[1], dst.green());
+                let g2 = mix(rgba[1], dst.green());
                 let bl = mix(rgba[2], dst.blue());
                 let al = (255.0 * a + dst.alpha() as f32 * inv).round().min(255.0) as u8;
-                if let Some(px) = tiny_skia::PremultipliedColorU8::from_rgba(r.min(al), g.min(al), bl.min(al), al) {
+                if let Some(px) = tiny_skia::PremultipliedColorU8::from_rgba(r.min(al), g2.min(al), bl.min(al), al) {
                     *dst = px;
                 }
-            });
+            }
         }
+    }
+
+    fn glyph(&self, id: GlyphId, px: f32, phase: u8) -> Option<Rc<Cached>> {
+        let key = (id, px.to_bits(), phase);
+        if let Some(hit) = self.cache.borrow().get(&key) {
+            return hit.clone();
+        }
+        let glyph = id.with_scale_and_position(px, point(phase as f32 / 4.0, 0.0));
+        let made = self.font.outline_glyph(glyph).map(|o| {
+            let b = o.px_bounds();
+            let (w, h) = (b.width().ceil() as usize + 1, b.height().ceil() as usize + 1);
+            let mut cov = vec![0u8; w * h];
+            o.draw(|x, y, c| {
+                if (x as usize) < w && (y as usize) < h {
+                    cov[y as usize * w + x as usize] = (c * 255.0) as u8;
+                }
+            });
+            Rc::new(Cached { left: b.min.x as i32, top: b.min.y as i32, w, cov })
+        });
+        let mut cache = self.cache.borrow_mut();
+        if cache.len() > 4000 {
+            cache.clear();
+        }
+        cache.insert(key, made.clone());
+        made
     }
 }

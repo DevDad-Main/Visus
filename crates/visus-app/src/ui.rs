@@ -1597,13 +1597,52 @@ fn settings_buttons(notch: &Notch) -> Vec<(Button, Rect)> {
     }).collect()
 }
 
+/// Open Iconic "cog" (MIT), 8x8 grid, centred at (x, y) and drawn `size` logical pixels wide.
 fn gear(cx: &mut Ctx, x: f32, y: f32, c: [u8; 4]) {
-    if let Some(p) = PathBuilder::from_circle(x, y, 5.0) {
-        cx.stroke(&p, c, 2.0);
-    }
-    for k in 0..6 {
-        let ang = k as f32 * std::f32::consts::FRAC_PI_3;
-        cx.circle(x + 8.2 * ang.cos(), y + 8.2 * ang.sin(), 1.6, c);
+    let size = 20.0;
+    let mut pb = PathBuilder::new();
+    pb.move_to(3.5, 0.0);
+    pb.line_to(3.0, 1.19);
+    pb.cubic_to(2.9, 1.22, 2.81, 1.27, 2.72, 1.32);
+    pb.line_to(1.53, 0.82);
+    pb.line_to(0.81, 1.54);
+    pb.line_to(1.31, 2.73);
+    pb.cubic_to(1.26, 2.83, 1.22, 2.91, 1.18, 3.01);
+    pb.line_to(-0.01, 3.51);
+    pb.line_to(-0.01, 4.51);
+    pb.line_to(1.18, 5.01);
+    pb.cubic_to(1.22, 5.11, 1.26, 5.19, 1.31, 5.29);
+    pb.line_to(0.81, 6.48);
+    pb.line_to(1.53, 7.2);
+    pb.line_to(2.72, 6.7);
+    pb.cubic_to(2.81, 6.74, 2.9, 6.79, 3.0, 6.83);
+    pb.line_to(3.5, 8.02);
+    pb.line_to(4.5, 8.02);
+    pb.line_to(5.0, 6.83);
+    pb.cubic_to(5.09, 6.79, 5.19, 6.75, 5.28, 6.7);
+    pb.line_to(6.47, 7.2);
+    pb.line_to(7.19, 6.48);
+    pb.line_to(6.69, 5.29);
+    pb.cubic_to(6.73, 5.2, 6.78, 5.1, 6.82, 5.01);
+    pb.line_to(8.01, 4.51);
+    pb.line_to(8.01, 3.51);
+    pb.line_to(6.82, 3.01);
+    pb.cubic_to(6.79, 2.92, 6.74, 2.82, 6.69, 2.73);
+    pb.line_to(7.19, 1.54);
+    pb.line_to(6.47, 0.82);
+    pb.line_to(5.28, 1.32);
+    pb.cubic_to(5.19, 1.28, 5.09, 1.23, 5.0, 1.19);
+    pb.line_to(4.5, 0.0);
+    pb.close();
+    pb.move_to(4.0, 2.5);
+    pb.cubic_to(4.83, 2.5, 5.5, 3.17, 5.5, 4.0);
+    pb.cubic_to(5.5, 4.83, 4.83, 5.5, 4.0, 5.5);
+    pb.cubic_to(3.17, 5.5, 2.5, 4.83, 2.5, 4.0);
+    pb.cubic_to(2.5, 3.17, 3.17, 2.5, 4.0, 2.5);
+    if let Some(p) = pb.finish() {
+        let k = size / 8.0;
+        let t = cx.xf().pre_concat(Transform::from_row(k, 0.0, 0.0, k, x - size / 2.0, y - size / 2.0));
+        cx.pm.fill_path(&p, &Ctx::paint(c), FillRule::EvenOdd, t, None);
     }
 }
 

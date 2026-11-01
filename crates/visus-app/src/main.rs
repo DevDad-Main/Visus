@@ -83,6 +83,8 @@ struct App {
     last_region: Option<(i32, i32, i32, i32)>,
     last_cursor: Option<(i32, i32)>,
     last_tick: Instant,
+    next_frame: Instant,
+    frame: Duration,
     #[cfg(windows)]
     tray: Option<tray::Tray>,
 }
@@ -292,6 +294,10 @@ impl ApplicationHandler<UserEvent> for App {
         self.surface = Some(Surface::new(&ctx, window.clone()).expect("surface"));
         self.window = Some(window);
         self.last_tick = Instant::now();
+        // Pace animation to the monitor's refresh rate (60 to 144 Hz).
+        if let Some(mhz) = self.window.as_ref().and_then(|w| w.current_monitor()).and_then(|m| m.refresh_rate_millihertz()) {
+            self.frame = Duration::from_micros((1_000_000_000.0 / mhz as f64).clamp(6900.0, 16700.0) as u64);
+        }
 
         let proxy = self.proxy.clone();
         let emit: platform::Emit = Arc::new(move |ev| {
@@ -345,7 +351,11 @@ impl ApplicationHandler<UserEvent> for App {
                 self.click(el)
             }
             WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => self.notch.end_drag(),
-            WindowEvent::DroppedFile(path) => self.notch.shelf_add(path.to_string_lossy().into_owned()),
+            WindowEvent::HoveredFile(_) => self.notch.show_page(visus_core::Page::Shelf),
+            WindowEvent::DroppedFile(path) => {
+                self.notch.shelf_add(path.to_string_lossy().into_owned());
+                self.notch.show_page(visus_core::Page::Shelf);
+            }
             WindowEvent::Focused(false) if self.notch.keyboard_active() => self.notch.key_escape(),
             WindowEvent::MouseWheel { delta, .. } if self.notch.is_open() => {
                 let y = match delta {
@@ -393,7 +403,9 @@ impl ApplicationHandler<UserEvent> for App {
         store::sync(&mut self.notch);
 
         if self.notch.is_animating() {
-            el.set_control_flow(ControlFlow::WaitUntil(now + FRAME));
+            // Fixed cadence: render time does not stretch the frame interval.
+            self.next_frame = (self.next_frame + self.frame).max(now);
+            el.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
@@ -488,6 +500,15 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
     }
     let mut pm = Pixmap::new(WIN_W as u32 * 2, WIN_H as u32 * 2).expect("pixmap");
     ui::draw(&mut pm, &text::Text::new(), &notch, 2.0);
+    if std::env::var_os("VISUS_BENCH").is_some() {
+        let text = text::Text::new();
+        let t = std::time::Instant::now();
+        for _ in 0..60 {
+            let mut p = Pixmap::new(WIN_W as u32 * 2, WIN_H as u32 * 2).expect("pixmap");
+            ui::draw(&mut p, &text, &notch, 2.0);
+        }
+        eprintln!("draw avg {:.2} ms", t.elapsed().as_secs_f32() * 1000.0 / 60.0);
+    }
     pm.save_png(out).expect("write png");
 }
 
@@ -539,6 +560,8 @@ fn main() {
         last_region: None,
         last_cursor: None,
         last_tick: Instant::now(),
+        next_frame: Instant::now(),
+        frame: FRAME,
         #[cfg(windows)]
         tray: None,
     };
