@@ -269,7 +269,7 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
             GradientStop::new(1.0, Color::from_rgba8(gr, gg, gb, 0)),
         ],
         SpreadMode::Pad,
-        cx.xf(),
+        Transform::identity(),
     );
     if let (Some(shader), Some(path)) = (glow, PathBuilder::from_circle(x, y, glow_r)) {
         let mut p = Paint::default();
@@ -318,7 +318,7 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
             GradientStop::new(1.0, Color::from_rgba8(gr, gg, gb, (fade * 255.0) as u8)),
         ],
         SpreadMode::Pad,
-        cx.xf(),
+        Transform::identity(),
     );
     let t = cx.xf();
     if let (Some(shader), Some(c)) = (iris, PathBuilder::from_circle(ix, iy, ir)) {
@@ -423,29 +423,7 @@ fn draw_music(cx: &mut Ctx, notch: &Notch, a: f32) {
     let (x0, mid) = (r.x, r.x + r.w / 2.0);
     let m = notch.media();
 
-    // Placeholder art: a gradient seeded from the title until thumbnails are wired up.
-    let art = rect(x0 + 39.0, 62.0, 96.0, 96.0);
-    let h = if m.has_session { (hash(&m.title) % 360) as f32 / 360.0 } else { 0.62 };
-    let (c1, c2) = (hue_rgb(h), hue_rgb((h + 0.12) % 1.0));
-    if let Some(path) = rrect(art.x, art.y, art.w, art.h, 18.0) {
-        let grad = LinearGradient::new(
-            Point::from_xy(art.x * cx.scale + cx.ox, art.y * cx.scale),
-            Point::from_xy((art.x + art.w) * cx.scale + cx.ox, (art.y + art.h) * cx.scale),
-            vec![
-                GradientStop::new(0.0, Color::from_rgba8(c1[0], c1[1], c1[2], (a * 255.0) as u8)),
-                GradientStop::new(1.0, Color::from_rgba8(c2[0], c2[1], c2[2], (a * 255.0) as u8)),
-            ],
-            SpreadMode::Pad,
-            Transform::identity(),
-        );
-        if let Some(shader) = grad {
-            let mut p = Paint::default();
-            p.shader = shader;
-            p.anti_alias = true;
-            let t = cx.xf();
-            cx.pm.fill_path(&path, &p, FillRule::Winding, t, None);
-        }
-    }
+    draw_art(cx, rect(x0 + 39.0, 62.0, 96.0, 96.0), 18.0, m, a);
 
     let (title, artist) = if m.has_session && !m.title.is_empty() {
         (m.title.clone(), m.artist.clone())
@@ -516,11 +494,7 @@ fn draw_music_lyrics(cx: &mut Ctx, notch: &Notch, a: f32) {
     let white = color(WHITE, a);
 
     // Left column: compact now-playing.
-    let art = rect(x0 + 36.0, 62.0, 72.0, 72.0);
-    let h = if m.has_session { (hash(&m.title) % 360) as f32 / 360.0 } else { 0.62 };
-    let (c1, c2) = (hue_rgb(h), hue_rgb((h + 0.12) % 1.0));
-    cx.rrect(art, 14.0, color(c1, a));
-    cx.rrect(rect(art.x, art.y + art.h / 2.0, art.w, art.h / 2.0), 14.0, color(c2, 0.55 * a));
+    draw_art(cx, rect(x0 + 36.0, 62.0, 72.0, 72.0), 14.0, m, a);
     let (title, artist) = if m.has_session && !m.title.is_empty() {
         (m.title.clone(), m.artist.clone())
     } else {
@@ -691,4 +665,65 @@ fn draw_stats(cx: &mut Ctx, notch: &Notch, a: f32) {
     cx.t("Network", x0 + 480.0, 98.0, 18.0, color(GRAY, a), Align::Left);
     cx.t(&format!("\u{2193} {}", rate(st.rx_bytes_per_sec)), x0 + 480.0, 138.0, 26.0, color(WHITE, a), Align::Left);
     cx.t(&format!("\u{2191} {}", rate(st.tx_bytes_per_sec)), x0 + 480.0, 174.0, 26.0, color(WHITE, 0.75 * a), Align::Left);
+}
+
+thread_local! {
+    /// Premultiplied copy of the current cover, rebuilt only when the cover changes.
+    static ART_PIXMAP: std::cell::RefCell<Option<(u64, Pixmap)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Cover art in a rounded square, or a gradient seeded from the title when there is none.
+fn draw_art(cx: &mut Ctx, r: Rect, radius: f32, m: &visus_core::MediaInfo, a: f32) {
+    let Some(path) = rrect(r.x, r.y, r.w, r.h, radius) else { return };
+    let xf = cx.xf();
+
+    if let Some(art) = m.art.as_ref() {
+        ART_PIXMAP.with(|cell| {
+            let mut cell = cell.borrow_mut();
+            if cell.as_ref().is_none_or(|(id, _)| *id != art.id) {
+                let Some(mut pm) = Pixmap::new(art.size, art.size) else { return };
+                for (dst, src) in pm.pixels_mut().iter_mut().zip(art.rgba.chunks_exact(4)) {
+                    let al = src[3] as u32;
+                    let mul = |c: u8| ((c as u32 * al + 127) / 255) as u8;
+                    if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(mul(src[0]), mul(src[1]), mul(src[2]), src[3]) {
+                        *dst = p;
+                    }
+                }
+                *cell = Some((art.id, pm));
+            }
+            let Some((_, pm)) = cell.as_ref() else { return };
+            let k = r.w / art.size as f32;
+            let pattern = tiny_skia::Pattern::new(
+                pm.as_ref(),
+                SpreadMode::Pad,
+                tiny_skia::FilterQuality::Bilinear,
+                a,
+                Transform::from_row(k, 0.0, 0.0, k, r.x, r.y),
+            );
+            let mut p = Paint::default();
+            p.shader = pattern;
+            p.anti_alias = true;
+            cx.pm.fill_path(&path, &p, FillRule::Winding, xf, None);
+        });
+        return;
+    }
+
+    let h = if m.has_session { (hash(&m.title) % 360) as f32 / 360.0 } else { 0.62 };
+    let (c1, c2) = (hue_rgb(h), hue_rgb((h + 0.12) % 1.0));
+    let grad = LinearGradient::new(
+        Point::from_xy(r.x, r.y),
+        Point::from_xy(r.x + r.w, r.y + r.h),
+        vec![
+            GradientStop::new(0.0, Color::from_rgba8(c1[0], c1[1], c1[2], (a * 255.0) as u8)),
+            GradientStop::new(1.0, Color::from_rgba8(c2[0], c2[1], c2[2], (a * 255.0) as u8)),
+        ],
+        SpreadMode::Pad,
+        Transform::identity(),
+    );
+    if let Some(shader) = grad {
+        let mut p = Paint::default();
+        p.shader = shader;
+        p.anti_alias = true;
+        cx.pm.fill_path(&path, &p, FillRule::Winding, xf, None);
+    }
 }

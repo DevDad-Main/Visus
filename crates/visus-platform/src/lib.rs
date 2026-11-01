@@ -4,6 +4,8 @@
 use std::sync::Arc;
 use visus_core::Event;
 
+mod art;
+
 pub type Emit = Arc<dyn Fn(Event) + Send + Sync + 'static>;
 
 #[cfg(windows)]

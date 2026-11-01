@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use visus_core::{Event, MediaCommand, MediaInfo};
+use visus_core::{Art, Event, MediaCommand, MediaInfo};
 use zbus::blocking::fdo::DBusProxy;
 use zbus::blocking::{Connection, MessageIterator, Proxy};
 use zbus::message::Type;
@@ -17,6 +18,63 @@ const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 
 /// Bus name of the player the notch currently controls.
 static CURRENT: Mutex<Option<String>> = Mutex::new(None);
+/// Decoded covers by URL (None = failed), so each cover is fetched once.
+static ART: Mutex<Option<HashMap<String, Option<Arc<Art>>>>> = Mutex::new(None);
+static LOADING: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+/// Re-publishes media state; set once the watcher is running so art loads can trigger an update.
+static REFRESH: OnceLock<Arc<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+fn percent_decode(s: &str) -> Vec<u8> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hex = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok());
+            if let Some(v) = hex {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    out
+}
+
+fn fetch_art(url: &str) -> Option<Arc<Art>> {
+    let bytes = if let Some(path) = url.strip_prefix("file://") {
+        let decoded = String::from_utf8(percent_decode(path)).ok()?;
+        std::fs::read(decoded).ok()?
+    } else if url.starts_with("http://") || url.starts_with("https://") {
+        let mut resp = ureq::get(url).call().ok()?;
+        resp.body_mut().read_to_vec().ok()?
+    } else {
+        return None;
+    };
+    crate::art::decode(&bytes)
+}
+
+/// Returns a cached cover, or starts loading it in the background and returns None for now.
+fn art_for(url: &str) -> Option<Arc<Art>> {
+    if let Some(hit) = ART.lock().unwrap().get_or_insert_with(HashMap::new).get(url) {
+        return hit.clone();
+    }
+    if !LOADING.lock().unwrap().get_or_insert_with(HashSet::new).insert(url.to_string()) {
+        return None;
+    }
+    let url = url.to_string();
+    std::thread::spawn(move || {
+        let art = fetch_art(&url);
+        ART.lock().unwrap().get_or_insert_with(HashMap::new).insert(url.clone(), art);
+        LOADING.lock().unwrap().get_or_insert_with(HashSet::new).remove(&url);
+        if let Some(refresh) = REFRESH.get() {
+            refresh();
+        }
+    });
+    None
+}
 
 fn players(conn: &Connection) -> Vec<String> {
     DBusProxy::new(conn)
@@ -44,6 +102,7 @@ fn read(conn: &Connection, name: &str) -> Option<MediaInfo> {
         i64::try_from(v.clone()).ok().or_else(|| u64::try_from(v.clone()).ok().map(|x| x as i64))
     });
     let position: i64 = p.get_property("Position").unwrap_or(0);
+    let art = meta.get("mpris:artUrl").and_then(|v| String::try_from(v.clone()).ok()).and_then(|u| art_for(&u));
     Some(MediaInfo {
         has_session: true,
         title,
@@ -51,6 +110,7 @@ fn read(conn: &Connection, name: &str) -> Option<MediaInfo> {
         playing: status == "Playing",
         position: micros(position),
         duration: micros(length.unwrap_or(0)),
+        art,
     })
 }
 
@@ -98,6 +158,7 @@ pub fn start(emit: Emit) {
                 let conn = conn.clone();
                 Arc::new(move || emit(Event::Media(snapshot(&conn))))
             };
+            let _ = REFRESH.set(refresh.clone());
             refresh();
 
             // Property changes of any player, and players appearing or disappearing.

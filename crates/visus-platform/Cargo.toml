@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 visus-core = { version = "0.1.0", path = "../visus-core" }
 
 [target."cfg(windows)".dependencies]
@@ -11,4 +12,5 @@ windows = { version = "0.62.2", features = ["Foundation", "Media_Control", "Stor
 winreg = "0.55"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+ureq = "3"
 zbus = "5"

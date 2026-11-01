@@ -3,6 +3,21 @@ use std::time::Duration;
 
 use crate::LyricLine;
 
+/// Square album art, straight-alpha RGBA, already scaled down for display.
+#[derive(Clone, Debug)]
+pub struct Art {
+    pub size: u32,
+    pub rgba: Vec<u8>,
+    /// Content hash; lets callers detect a changed cover without comparing pixels.
+    pub id: u64,
+}
+
+impl PartialEq for Art {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MediaInfo {
     pub has_session: bool,
@@ -11,6 +26,7 @@ pub struct MediaInfo {
     pub playing: bool,
     pub position: Duration,
     pub duration: Duration,
+    pub art: Option<Arc<Art>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

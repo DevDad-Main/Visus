@@ -1,7 +1,8 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use visus_core::{Event, MediaCommand, MediaInfo};
+use visus_core::{Art, Event, MediaCommand, MediaInfo};
+use windows::Storage::Streams::DataReader;
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession as Session,
@@ -27,16 +28,44 @@ fn snapshot(manager: &Manager) -> MediaInfo {
     read_session(&session).unwrap_or_default()
 }
 
+/// Last decoded cover keyed by track, so state updates do not re-read the thumbnail stream.
+static ART_CACHE: Mutex<Option<((String, String), Option<Arc<Art>>)>> = Mutex::new(None);
+
+fn thumbnail(props: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionMediaProperties) -> Option<Arc<Art>> {
+    let stream = props.Thumbnail().ok()?.OpenReadAsync().ok()?.join().ok()?;
+    let size = stream.Size().ok()? as u32;
+    if size == 0 || size > 8_000_000 {
+        return None;
+    }
+    let reader = DataReader::CreateDataReader(&stream).ok()?;
+    reader.LoadAsync(size).ok()?.join().ok()?;
+    let mut buf = vec![0u8; size as usize];
+    reader.ReadBytes(&mut buf).ok()?;
+    crate::art::decode(&buf)
+}
+
 fn read_session(s: &Session) -> windows::core::Result<MediaInfo> {
     let props = s.TryGetMediaPropertiesAsync()?.join()?;
     let playing = s.GetPlaybackInfo()?.PlaybackStatus()? == Status::Playing;
     let tl = s.GetTimelineProperties()?;
     let start = ticks(tl.StartTime()?);
     let end = ticks(tl.EndTime()?);
+    let (title, artist) = (props.Title()?.to_string(), props.Artist()?.to_string());
+    let key = (title.clone(), artist.clone());
+    let cached = ART_CACHE.lock().unwrap().as_ref().filter(|(k, _)| *k == key).map(|(_, a)| a.clone());
+    let art = match cached {
+        Some(a) => a,
+        None => {
+            let a = thumbnail(&props);
+            *ART_CACHE.lock().unwrap() = Some((key, a.clone()));
+            a
+        }
+    };
     Ok(MediaInfo {
         has_session: true,
-        title: props.Title()?.to_string(),
-        artist: props.Artist()?.to_string(),
+        title,
+        artist,
+        art,
         playing,
         position: ticks(tl.Position()?).saturating_sub(start),
         duration: end.saturating_sub(start),

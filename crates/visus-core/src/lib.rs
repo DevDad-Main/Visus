@@ -11,7 +11,7 @@ mod timer;
 pub use timer::{FOCUS, Timer};
 pub use anim::Spring;
 pub use lyrics::{LyricLine, Lyrics, current_index, parse_lrc};
-pub use event::{Event, Hud, MediaCommand, MediaInfo};
+pub use event::{Art, Event, Hud, MediaCommand, MediaInfo};
 pub use notch::{Alert, EyeState, Notch, Page, Rect, Shape};
 pub use settings::{Rgb, Settings};
 pub use stats::Stats;
