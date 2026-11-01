@@ -229,26 +229,29 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     }
 }
 
-/// One glowing eye that looks around, blinks, and dozes off when idle long enough.
+/// An almond-shaped eye with iris, pupil and highlight; blinks, looks around and dozes off.
 fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
     let r = notch.shape().rect;
     let fade = notch.eye_fade() * a;
     let asleep = notch.eye_state() == EyeState::Asleep;
     let (lx, ly) = notch.eye_look();
-    let (x, y) = (r.x + r.w / 2.0 + lx * 20.0, r.h / 2.0 + ly * 3.0);
-    let half_h = (r.h * 0.29).max(4.0);
-    let ry = (half_h * notch.eye_openness()).max(1.2);
-    let rx = (half_h * 0.62).max(3.0);
+    let ey = r.h * 0.23;
+    let ex = ey * 1.9;
+    let (x, y) = (r.x + r.w / 2.0 + lx * 5.0, r.h / 2.0 + ly * 1.5);
+    let open = notch.eye_openness();
+    let iris_rgb = notch.settings().eye_iris;
+    let sclera = notch.settings().eye_sclera.0;
+    let [gr, gg, gb] = iris_rgb.0;
 
-    // Glow stays inside the pill so it never spills onto the desktop.
-    let glow_r = r.h * 0.46;
+    // Soft glow behind the eye, kept inside the pill.
+    let glow_r = r.h * 0.5;
     let glow = RadialGradient::new(
         Point::from_xy(x, y),
         Point::from_xy(x, y),
         glow_r,
         vec![
-            GradientStop::new(0.0, Color::from_rgba8(80, 170, 255, (fade * if asleep { 40.0 } else { 120.0 }) as u8)),
-            GradientStop::new(1.0, Color::from_rgba8(80, 170, 255, 0)),
+            GradientStop::new(0.0, Color::from_rgba8(gr, gg, gb, (fade * if asleep { 40.0 } else { 130.0 }) as u8)),
+            GradientStop::new(1.0, Color::from_rgba8(gr, gg, gb, 0)),
         ],
         SpreadMode::Pad,
         cx.xf(),
@@ -261,8 +264,63 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
         cx.pm.fill_path(&path, &p, FillRule::Winding, t, None);
     }
 
-    if let Some(oval) = tiny_skia::Rect::from_xywh(x - rx, y - ry, rx * 2.0, ry * 2.0).and_then(PathBuilder::from_oval) {
-        cx.fill(&oval, color(WHITE, fade * if asleep { 0.5 } else { 1.0 }));
+    // A closed lid is a downward arc; a cubic with both controls at h peaks at 0.75h.
+    if asleep || open < 0.12 {
+        let mut pb = PathBuilder::new();
+        pb.move_to(x - ex, y - 1.0);
+        pb.cubic_to(x - ex * 0.45, y + ey * 0.9, x + ex * 0.45, y + ey * 0.9, x + ex, y - 1.0);
+        if let Some(lid) = pb.finish() {
+            cx.stroke(&lid, color(WHITE, fade * if asleep { 0.55 } else { 0.9 }), 2.2);
+        }
+        if asleep {
+            cx.t("z", x + ex + 8.0, y - 3.0, 11.0, color(WHITE, fade * 0.5), Align::Left);
+            cx.t("z", x + ex + 16.0, y - 10.0, 8.0, color(WHITE, fade * 0.35), Align::Left);
+        }
+        return;
+    }
+
+    let h = ey * open / 0.75;
+    let mut pb = PathBuilder::new();
+    pb.move_to(x - ex, y);
+    pb.cubic_to(x - ex * 0.45, y - h, x + ex * 0.45, y - h, x + ex, y);
+    pb.cubic_to(x + ex * 0.45, y + h, x - ex * 0.45, y + h, x - ex, y);
+    pb.close();
+    let Some(almond) = pb.finish() else { return };
+    cx.fill(&almond, color(sclera, fade));
+
+    // Iris, pupil and highlight are clipped to the almond so lids cover them while blinking.
+    let Some(mut mask) = tiny_skia::Mask::new(cx.pm.width(), cx.pm.height()) else { return };
+    mask.fill_path(&almond, FillRule::Winding, true, cx.xf());
+    let light = iris_rgb.lighten(0.55);
+    let ir = ey * 0.95;
+    let (ix, iy) = (x + lx * (ex - ir) * 0.9, y + ly * ey * 0.25);
+    let iris = RadialGradient::new(
+        Point::from_xy(ix, iy),
+        Point::from_xy(ix, iy),
+        ir,
+        vec![
+            GradientStop::new(0.0, Color::from_rgba8(light[0], light[1], light[2], (fade * 255.0) as u8)),
+            GradientStop::new(1.0, Color::from_rgba8(gr, gg, gb, (fade * 255.0) as u8)),
+        ],
+        SpreadMode::Pad,
+        cx.xf(),
+    );
+    let t = cx.xf();
+    if let (Some(shader), Some(c)) = (iris, PathBuilder::from_circle(ix, iy, ir)) {
+        let mut p = Paint::default();
+        p.shader = shader;
+        p.anti_alias = true;
+        cx.pm.fill_path(&c, &p, FillRule::Winding, t, Some(&mask));
+    }
+    let mut ink = Paint::default();
+    ink.anti_alias = true;
+    ink.set_color(Color::from_rgba8(0, 0, 0, (fade * 255.0) as u8));
+    if let Some(c) = PathBuilder::from_circle(ix, iy, ir * 0.45) {
+        cx.pm.fill_path(&c, &ink, FillRule::Winding, t, Some(&mask));
+    }
+    ink.set_color(Color::from_rgba8(255, 255, 255, (fade * 230.0) as u8));
+    if let Some(c) = PathBuilder::from_circle(ix - ir * 0.3, iy - ir * 0.35, ir * 0.17) {
+        cx.pm.fill_path(&c, &ink, FillRule::Winding, t, Some(&mask));
     }
 }
 

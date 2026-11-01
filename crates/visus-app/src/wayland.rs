@@ -1,5 +1,8 @@
 //! Linux host: a wlr-layer-shell surface anchored to the top edge. Falls back to winit if unavailable.
 
+use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use smithay_client_toolkit::{
@@ -61,6 +64,9 @@ struct State {
     next_wake: Option<Instant>,
     last_tick: Instant,
     exit: bool,
+    hypr: Option<PathBuf>,
+    /// Focused monitor's top-centre in global layout coordinates, refreshed occasionally.
+    monitor_top: Option<((f32, f32), Instant)>,
 }
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -105,6 +111,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         next_wake: None,
         last_tick: Instant::now(),
         exit: false,
+        hypr: hypr_socket(),
+        monitor_top: None,
     };
 
     let mut event_loop: EventLoop<State> = EventLoop::try_new()?;
@@ -126,6 +134,7 @@ impl State {
         let now = Instant::now();
         let dt = now - self.last_tick;
         self.last_tick = now;
+        self.feed_eye();
         self.notch.tick(dt.min(Duration::from_millis(50)));
         store::sync(&mut self.notch);
 
@@ -143,6 +152,29 @@ impl State {
         let wake = ui::idle_wake(&self.notch);
         self.next_wake = wake.map(|d| now + d);
         wake
+    }
+
+    /// Wayland hides the global cursor, so ask Hyprland for it while the eye is awake.
+    fn feed_eye(&mut self) {
+        if self.notch.eye_state() != visus_core::EyeState::Awake {
+            return;
+        }
+        let Some(sock) = self.hypr.clone() else { return };
+        let stale = self.monitor_top.is_none_or(|(_, at)| at.elapsed() > Duration::from_secs(2));
+        if stale {
+            let mon = hypr_json(&sock, "j/monitors").and_then(|v| {
+                let m = v.as_array()?.iter().find(|m| m["focused"].as_bool() == Some(true))?.clone();
+                let scale = m["scale"].as_f64().unwrap_or(1.0) as f32;
+                let x = m["x"].as_f64()? as f32 + m["width"].as_f64()? as f32 / scale / 2.0;
+                Some((x, m["y"].as_f64()? as f32))
+            });
+            self.monitor_top = mon.map(|m| (m, Instant::now()));
+        }
+        let (Some(((mx, my), _)), Some(cur)) = (self.monitor_top, hypr_json(&sock, "j/cursorpos")) else { return };
+        let (Some(cx), Some(cy)) = (cur["x"].as_f64(), cur["y"].as_f64()) else { return };
+        self.notch.set_cursor_tracking(true);
+        let cy_pill = my + self.notch.settings().closed_height / 2.0;
+        self.notch.set_eye_target((cx as f32 - mx) / 500.0, (cy as f32 - cy_pill) / 300.0);
     }
 
     fn draw(&mut self) {
@@ -290,3 +322,30 @@ impl ProvidesRegistryState for State {
 }
 
 smithay_client_toolkit::delegate_dispatch2!(State);
+
+fn hypr_socket() -> Option<PathBuf> {
+    let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
+    let rt = std::env::var("XDG_RUNTIME_DIR").ok()?;
+    Some(PathBuf::from(rt).join("hypr").join(sig).join(".socket.sock"))
+}
+
+/// One request/response round trip on Hyprland's IPC socket.
+fn hypr_json(sock: &Path, cmd: &str) -> Option<serde_json::Value> {
+    let mut s = UnixStream::connect(sock).ok()?;
+    s.set_read_timeout(Some(Duration::from_millis(100))).ok()?;
+    s.write_all(cmd.as_bytes()).ok()?;
+    // Hyprland may keep the socket open, so stop as soon as a full JSON document has arrived.
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let n = s.read(&mut chunk).ok()?;
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&chunk[..n]);
+        if let Ok(v) = serde_json::from_slice(&out) {
+            return Some(v);
+        }
+    }
+    serde_json::from_slice(&out).ok()
+}

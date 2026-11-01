@@ -26,9 +26,34 @@ const WIN_W: f32 = 960.0;
 const WIN_H: f32 = 330.0;
 const FRAME: Duration = Duration::from_millis(16);
 
+/// A user-facing setting changed from the tray (or later, a settings window).
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub enum Change {
+    Scale(f32),
+    EyeIris(visus_core::Rgb),
+    ToggleMinimal,
+    ToggleMascot,
+    ToggleHideFullscreen,
+}
+
+impl Change {
+    fn apply(self, s: &mut visus_core::Settings) {
+        match self {
+            Change::Scale(k) => s.scale = k,
+            Change::EyeIris(c) => s.eye_iris = c,
+            Change::ToggleMinimal => s.minimal = !s.minimal,
+            Change::ToggleMascot => s.mascot = !s.mascot,
+            Change::ToggleHideFullscreen => s.hide_in_fullscreen = !s.hide_in_fullscreen,
+        }
+    }
+}
+
 #[derive(Debug)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum UserEvent {
     Os(Event),
+    Setting(Change),
     ToggleAutostart,
     Quit,
 }
@@ -189,7 +214,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         #[cfg(windows)]
         {
-            self.tray = tray::create(self.proxy.clone());
+            self.tray = tray::create(self.proxy.clone(), self.notch.settings());
         }
     }
 
@@ -198,6 +223,10 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Os(e) => {
                 self.notch.handle(e);
                 self.sync_visibility();
+            }
+            UserEvent::Setting(c) => {
+                self.notch.update_settings(|s| c.apply(s));
+                store::sync(&mut self.notch);
             }
             UserEvent::ToggleAutostart => {
                 let _ = platform::set_autostart(!platform::autostart_enabled());

@@ -10,4 +10,4 @@ pub use timer::{FOCUS, Timer};
 pub use anim::Spring;
 pub use event::{Event, Hud, MediaCommand, MediaInfo};
 pub use notch::{Alert, EyeState, Notch, Page, Rect, Shape};
-pub use settings::{Settings, Water};
+pub use settings::{Rgb, Settings, Water};
