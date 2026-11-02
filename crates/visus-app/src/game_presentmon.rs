@@ -83,13 +83,20 @@ pub fn set_active(active: bool, process_id: Option<u32>) {
     }
 }
 
+pub fn shutdown() {
+    stop();
+}
+
 fn executable() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("VISUS_PRESENTMON_EXE").filter(|path| !path.is_empty()) {
         let path = PathBuf::from(path);
-        return path
-            .is_file()
-            .then_some(path)
-            .ok_or_else(|| format!("PresentMon executable not found: {}", path.display()));
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(format!(
+            "PresentMon executable not found: {}",
+            path.display()
+        ));
     }
     if let Ok(app) = std::env::current_exe() {
         if let Some(directory) = app.parent() {

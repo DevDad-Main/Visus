@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.1 - 2026-11-02
+
+- Fix Windows-only PresentMon shutdown wiring and executable override path validation so native release tests compile.
+
 ## 1.14.0 - 2026-11-02
 
 - Bundle PresentMon 2.6.0 in Windows ZIP and installer packages, pinning and verifying its SHA-256 during release builds; include its MIT license.
