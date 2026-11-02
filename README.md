@@ -52,6 +52,10 @@ Download from [Releases](https://github.com/DevDad-Main/Visus/releases):
 Launcher tips: `note <text>` saves a note, `cal <ics link>` sets a calendar, `fm <command>` sets your file manager (e.g. `fm thunar {path}`, `fm "C:\\Tools\\Explorer++\\Explorer++.exe" {path}`, `fm foot -e yazi {path}`; `fm default` resets), and typing part of a window title switches to it.
 
 Settings, to-dos and the shelf live in `%APPDATA%\visus` (Windows) or `~/.config/visus` (Linux).
+Linux in-pill updates verify the release archive's SHA-256, replace the executable in a user-writable
+installation, and restart Visus. System-owned installations must be updated with their package manager.
+Versions through v1.11.0 only open the release page on Linux and require a manual upgrade before this
+update path is available. The Linux updater requires x86_64 and `tar`.
 Visus makes network requests for lyrics (LRCLIB), missing cover art, weather and city search (Open-Meteo),
 calendar URLs you configure, and update checks/downloads. Automatic update checks can be disabled in
 Settings. No accounts, no analytics.

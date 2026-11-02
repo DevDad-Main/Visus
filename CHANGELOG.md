@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.11.1 - 2026-11-02
+
+- Implement Linux in-pill updates for user-writable x86_64 installations, with archive checksum
+	verification, atomic executable replacement, rollback if restart launch fails, and restart handoff.
+- Replace the misleading Linux "Opened the release page" failure with real installation and clear
+	messages for missing assets or system-owned installations. Versions through v1.11.0 need one manual upgrade.
+
 ## 1.11.0 - 2026-11-02
 
 ### Added

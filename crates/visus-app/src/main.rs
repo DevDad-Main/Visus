@@ -840,6 +840,16 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    #[cfg(target_os = "linux")]
+    if args.get(1).map(String::as_str) == Some("--restart-after") {
+        let Some(parent) = args.get(2).and_then(|value| value.parse::<u32>().ok()) else { return };
+        let process = std::path::PathBuf::from(format!("/proc/{parent}"));
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while process.exists() {
+            if Instant::now() >= deadline { return; }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
     if args.get(1).map(String::as_str) == Some("--settings-preview") {
         if let Some(out) = args.get(2) { settings_surface::preview(out, args.get(3).map(String::as_str)); }
         return;
