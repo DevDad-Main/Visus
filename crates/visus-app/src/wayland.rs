@@ -37,10 +37,10 @@ use smithay_client_toolkit::{
 use tiny_skia::Pixmap;
 use visus_core::{Event, Notch, Outcome};
 
-use crate::{actions, events, lyrics, weather, stats, store, text::Text, ui};
+use crate::{actions, events, lyrics, weather, stats, store, settings_surface, text::Text, ui};
 
 const WIN_W: u32 = 960;
-const WIN_H: u32 = 520;
+const WIN_H: u32 = 800;
 const FRAME: Duration = Duration::from_millis(16);
 const BTN_LEFT: u32 = 0x110;
 const SCROLL_STEP: f64 = 12.0;
@@ -56,6 +56,7 @@ struct State {
     pointer: Option<wl_pointer::WlPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     keyboard_grabbed: bool,
+    shortcut: bool,
     last_cursor: Option<(i32, i32)>,
 
     notch: Notch,
@@ -111,6 +112,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         pointer: None,
         keyboard: None,
         keyboard_grabbed: false,
+        shortcut: false,
         last_cursor: None,
         notch,
         text: Text::new(),
@@ -251,6 +253,24 @@ impl State {
     }
 
     fn palette_key(&mut self, event: &KeyEvent) {
+        if self.notch.settings_is_open() {
+            use settings_surface::KeyAction;
+            let action = match event.keysym {
+                Keysym::Escape => Some(KeyAction::Escape),
+                Keysym::Return | Keysym::KP_Enter => Some(KeyAction::Submit),
+                Keysym::BackSpace => Some(KeyAction::Backspace),
+                Keysym::a | Keysym::A if self.shortcut => Some(KeyAction::SelectAll),
+                Keysym::v | Keysym::V if self.shortcut => Some(KeyAction::Paste),
+                _ if !self.shortcut => event.utf8.as_ref().map(|text| KeyAction::Text(text.chars().filter(|character| !character.is_control()).collect())),
+                _ => None,
+            };
+            if let Some(action) = action {
+                let outcome = settings_surface::key(&mut self.notch, action, self.emit.as_ref());
+                self.run_outcome(outcome);
+            }
+            self.needs_draw = true;
+            return;
+        }
         if !self.notch.keyboard_active() {
             return;
         }
@@ -402,7 +422,11 @@ impl PointerHandler for State {
                     self.run_outcome(out);
                     self.needs_draw = true;
                 }
-                PointerEventKind::Release { button, .. } if button == BTN_LEFT => self.notch.end_drag(),
+                PointerEventKind::Release { button, .. } if button == BTN_LEFT => settings_surface::release(&mut self.notch),
+                PointerEventKind::Axis { vertical, .. } if self.notch.settings_is_open() => {
+                    settings_surface::scroll(&self.notch, vertical.absolute as f32);
+                    self.needs_draw = true;
+                }
                 PointerEventKind::Axis { vertical, .. } if self.notch.is_open() => {
                     self.scroll_accum += vertical.absolute;
                     if self.scroll_accum.abs() >= SCROLL_STEP {
@@ -432,7 +456,9 @@ impl KeyboardHandler for State {
 
     fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
 
-    fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: Modifiers, _: RawModifiers, _: u32) {}
+    fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, modifiers: Modifiers, _: RawModifiers, _: u32) {
+        self.shortcut = modifiers.ctrl || modifiers.logo;
+    }
 }
 
 impl ShmHandler for State {

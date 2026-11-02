@@ -29,11 +29,11 @@
       tabs.forEach((b) => b.classList.toggle("on", b === btn));
       img.classList.add("swap");
       setTimeout(() => {
-        img.src = `assets/shots/${btn.dataset.shot}.webp`;
+        img.onload = () => img.classList.remove("swap");
+        img.src = btn.dataset.src || `assets/shots/${btn.dataset.shot}.webp?v=${btn.dataset.v || "1.11.0"}`;
         img.width = btn.dataset.w;
         img.height = btn.dataset.h;
-        img.alt = `Visus ${btn.textContent.toLowerCase()}`;
-        img.onload = () => img.classList.remove("swap");
+        img.alt = btn.dataset.alt || `Visus ${btn.textContent.toLowerCase()}`;
       }, 220);
     };
     tabs.forEach((b) => b.addEventListener("click", () => show(b)));

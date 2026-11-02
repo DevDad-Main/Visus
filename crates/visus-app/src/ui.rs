@@ -7,6 +7,9 @@ use visus_core::{Alert, AppKind, ClockStyle, Radio, EyeMood, EyeState, EyeStyle,
 
 use crate::text::{Align, Text};
 
+#[path = "settings_ui.rs"]
+pub mod settings;
+
 const GREEN: [u8; 3] = [48, 209, 88];
 const BLUE: [u8; 3] = [90, 200, 250];
 const ORANGE: [u8; 3] = [255, 159, 10];
@@ -83,6 +86,77 @@ fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
     Rect { x, y, w, h }
 }
 
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+
+    #[test]
+    fn expanded_settings_is_not_clipped_by_the_pill_scale() {
+        for scale in [0.6, 1.25] {
+            let mut notch = Notch::new(960.0);
+            notch.update_settings(|settings| settings.scale = scale);
+            notch.open_settings();
+            for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+            assert_eq!(display_scale(&notch), 1.0);
+            assert_eq!(hit_rect(&notch).h, 720.0);
+            assert_eq!(to_logical(&notch, 480.0, 360.0), (480.0, 360.0));
+        }
+    }
+
+    #[test]
+    fn game_hud_settings_cycle_includes_compact() {
+        let mut notch = Notch::new(800.0);
+        notch.open_settings();
+        for _ in 0..600 {
+            notch.tick(std::time::Duration::from_millis(16));
+        }
+        let left = notch.shape().rect.x;
+        click(&mut notch, left + 50.0, 96.0 + 4.0 * 44.0 + 19.0);
+        for (index, expected) in [GameStyle::Pills, GameStyle::Bars, GameStyle::Card, GameStyle::Compact].into_iter().enumerate() {
+            click(&mut notch, left + 500.0 + (index as f32 + 0.5) * 81.0, 364.0);
+            assert_eq!(notch.settings().game_style, expected);
+        }
+        click(&mut notch, left + 800.0, 304.0);
+        assert!(!notch.settings().game_hud);
+    }
+
+    #[test]
+    fn side_navigation_stays_clear_of_page_controls() {
+        let mut notch = Notch::new(800.0);
+        notch.hover(true);
+        for _ in 0..600 {
+            notch.tick(std::time::Duration::from_millis(16));
+        }
+        for page in Page::ALL {
+            notch.page = page;
+            let bounds = notch.shape().rect;
+            let targets = buttons(&notch);
+            for (arrow, area) in page_navigation(bounds) {
+                assert!((area.y + area.h / 2.0 - (bounds.y + bounds.h / 2.0)).abs() < 0.01);
+                assert!(area.x >= bounds.x && area.x + area.w <= bounds.x + bounds.w);
+                for (button, other) in &targets {
+                    if *button == arrow {
+                        continue;
+                    }
+                    let overlaps = area.x < other.x + other.w && area.x + area.w > other.x
+                        && area.y < other.y + other.h && area.y + area.h > other.y;
+                    assert!(!overlaps, "{page:?}: {arrow:?} overlaps {button:?}");
+                }
+                notch.set_pointer(Some((area.x + area.w / 2.0, area.y + area.h / 2.0)));
+                assert_eq!(hovered(&notch).map(|(button, _)| button), Some(arrow));
+            }
+        }
+    }
+}
+
+fn page_navigation(bounds: Rect) -> [(Button, Rect); 2] {
+    let y = bounds.y + (bounds.h - 44.0) / 2.0;
+    [
+        (Button::PagePrev, rect(bounds.x + 4.0, y, 28.0, 44.0)),
+        (Button::PageNext, rect(bounds.x + bounds.w - 32.0, y, 28.0, 44.0)),
+    ]
+}
+
 /// Clickable regions in window-logical coordinates for the current frame.
 pub fn buttons(notch: &Notch) -> Vec<(Button, Rect)> {
     let s = notch.shape();
@@ -96,9 +170,7 @@ pub fn buttons(notch: &Notch) -> Vec<(Button, Rect)> {
     if notch.download().is_some() {
         btns.push((Button::Downloads, rect(x0 + 36.0, 12.0, 160.0, 28.0)));
     }
-    let (ay, off) = (s.rect.h - 26.0, Page::ALL.len() as f32 * 7.0 + 14.0);
-    btns.push((Button::PagePrev, rect(cx - off - 28.0, ay, 32.0, 24.0)));
-    btns.push((Button::PageNext, rect(cx + off - 4.0, ay, 32.0, 24.0)));
+    btns.extend(page_navigation(s.rect));
     btns
 }
 
@@ -359,6 +431,10 @@ fn control_buttons(notch: &Notch, x0: f32) -> Vec<(Button, Rect)> {
 
 /// Continues a slider drag; call on pointer motion with pill-logical coordinates.
 pub fn drag(notch: &mut Notch, x: f32) {
+    if notch.settings_is_open() {
+        crate::settings_surface::drag(notch, x);
+        return;
+    }
     let kind = notch.slider_dragging();
     if kind == 0 {
         return;
@@ -717,7 +793,7 @@ fn hash(s: &str) -> u32 {
 
 pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     let shape = notch.shape();
-    let user = notch.settings().scale;
+    let user = display_scale(notch);
     let centre = shape.rect.x + shape.rect.w / 2.0;
     let accent = notch.theme();
     let lum = 0.2126 * accent[0] as f32 + 0.7152 * accent[1] as f32 + 0.0722 * accent[2] as f32;
@@ -725,6 +801,28 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     let mut cx = Ctx { accent, ink, pm, text, scale: scale * user, ox: centre * (1.0 - user) * scale, oy: 0.0 };
 
     let r = shape.rect;
+    if notch.settings_is_visible() {
+        if let Some(path) = pill_path(&shape) {
+            let tint = notch.settings_progress().clamp(0.0, 1.0);
+            cx.fill(&path, color([(23.0 * tint) as u8, (24.0 * tint) as u8, (27.0 * tint) as u8], 1.0));
+            let alpha = ((r.h - 80.0) / 400.0).clamp(0.0, 1.0);
+            if alpha > 0.0 {
+                if let (Some(panel), Some(mut mask)) = (crate::settings_surface::render(text, notch, scale), tiny_skia::Mask::new(cx.pm.width(), cx.pm.height())) {
+                    mask.fill_path(&path, FillRule::Winding, true, cx.xf());
+                    let transform = Transform::from_row(
+                        r.w * scale * user / panel.width() as f32, 0.0,
+                        0.0, r.h * scale * user / panel.height() as f32,
+                        r.x * scale * user + cx.ox, r.y * scale * user,
+                    );
+                    let paint = tiny_skia::PixmapPaint { opacity: alpha * alpha * (3.0 - 2.0 * alpha), ..Default::default() };
+                    cx.pm.draw_pixmap(0, 0, panel.as_ref(), &paint, transform, Some(&mask));
+                }
+            }
+            let clock_alpha = (1.0 - (r.h - notch.settings().closed_height).max(0.0) / 48.0).clamp(0.0, 1.0);
+            if clock_alpha > 0.0 { draw_closed(&mut cx, notch, clock_alpha); }
+        }
+        return;
+    }
     if let Some(path) = pill_path(&shape) {
         cx.fill(&path, [0, 0, 0, 255]);
         // Album-art ambience: the pill's lower edge picks up the cover colour and breathes with the music.
@@ -839,6 +937,7 @@ fn hovered(notch: &Notch) -> Option<(Button, Rect)> {
 
 /// True when the pointer is over something clickable; hosts use it to show a hand cursor.
 pub fn over_clickable(notch: &Notch) -> bool {
+    if notch.settings_is_visible() { return crate::settings_surface::over_clickable(notch); }
     if hovered(notch).is_some() {
         return true;
     }
@@ -1340,6 +1439,9 @@ fn heat(frac: f32) -> [u8; 3] {
     }
 }
 
+/// The card's frame-time graph runs from 0 to 30 fps; slower frames clamp to the top.
+const FRAME_MS_MAX: f32 = 33.3;
+
 /// (label, 0..1 fill, text) for one HUD reading.
 fn game_reading(g: &GameStats, it: GameItem) -> (&'static str, f32, String) {
     match it {
@@ -1353,6 +1455,10 @@ fn game_reading(g: &GameStats, it: GameItem) -> (&'static str, f32, String) {
 
 /// In-game HUD in the chosen layout.
 fn draw_game(cx: &mut Ctx, notch: &Notch, a: f32) {
+    if notch.settings().game_style == GameStyle::Compact {
+        draw_game_compact(cx, notch, a);
+        return;
+    }
     if notch.settings().game_style == GameStyle::Card {
         draw_game_card(cx, notch, a);
         return;
@@ -1368,51 +1474,93 @@ fn draw_game(cx: &mut Ctx, notch: &Notch, a: f32) {
         let ix = x0 + i as f32 * GAME_ITEM_W;
         cx.rrect(rect(ix + 3.0, mid - 12.0, GAME_ITEM_W - 6.0, 24.0), 12.0, color(WHITE, 0.07 * a));
         let lw = cx.text_width(label, 10.0);
-        cx.t(label, ix + 14.0, mid + 3.5, 10.0, color(GRAY, a), Align::Left);
-        let gx = ix + 14.0 + lw + 10.0;
+        let vw = cx.text_width(&text, 14.0);
+        let gap = 6.0;
+        let meter_w = if bars { 14.0 } else { 13.0 };
+        let group_w = lw + 8.0 + meter_w + gap + vw;
+        let sx = ix + 3.0 + ((GAME_ITEM_W - 6.0 - group_w).max(0.0) / 2.0);
+        cx.t(label, sx, mid + 3.5, 10.0, color(GRAY, a), Align::Left);
+        let gx = sx + lw + 8.0;
+        let baseline = mid + 5.0;
         if bars {
             // Five stacked bars fill from the bottom like a level meter.
             let lit = (frac.clamp(0.0, 1.0) * 5.0).ceil() as usize;
             for k in 0..5usize {
                 let on = 4 - k < lit;
-                cx.rrect(rect(gx, mid - 8.4 + k as f32 * 3.6, 14.0, 2.4), 1.2, if on { color(heat(frac), a) } else { color(WHITE, 0.12 * a) });
+                cx.rrect(rect(gx, baseline - 16.8 + k as f32 * 3.6, 14.0, 2.4), 1.2, if on { color(heat(frac), a) } else { color(WHITE, 0.12 * a) });
             }
         } else {
             cx.ring(gx + 6.5, mid, 6.5, 2.4, frac.clamp(0.0, 1.0), heat(frac), a);
         }
-        cx.t(&text, ix + GAME_ITEM_W - 12.0, mid + 5.0, 14.0, color(WHITE, a), Align::Right);
+        cx.t(&text, gx + meter_w + gap, baseline, 14.0, color(WHITE, a), Align::Left);
     }
 }
 
-/// Stacked card: a load graph on top, then a row per component.
+fn draw_game_compact(cx: &mut Ctx, notch: &Notch, a: f32) {
+    let bounds = notch.shape().rect;
+    let mid = bounds.y + bounds.h / 2.0;
+    let stats = notch.game_stats();
+    let frame_time = |sample: &GameStats| {
+        sample.frame_ms.filter(|value| value.is_finite() && *value >= 0.0)
+            .or_else(|| sample.fps.filter(|value| value.is_finite() && *value > 0.0).map(|fps| 1000.0 / fps))
+    };
+    cx.t("FPS", bounds.x + 17.0, mid + 4.5, 12.0, color(GRAY, a), Align::Left);
+    let fps = stats.fps.filter(|value| value.is_finite() && *value >= 0.0)
+        .map(|value| format!("{value:.0}")).unwrap_or_else(|| "--".into());
+    let fps_size = if cx.text_width(&fps, 22.0) > 55.0 { 16.0 } else { 22.0 };
+    cx.t(&cx.fit(&fps, fps_size, 55.0), bounds.x + 56.0, mid + 7.0, fps_size, color(WHITE, a), Align::Left);
+    let milliseconds = frame_time(&stats).map(|value| format!("{value:.1} ms")).unwrap_or_else(|| "-- ms".into());
+    cx.t(&cx.fit(&milliseconds, 12.0, 64.0), bounds.x + bounds.w - 17.0, mid + 4.5, 12.0, color(GRAY, a), Align::Right);
+
+    let graph_x = bounds.x + 116.0;
+    let graph_width = (bounds.w - 202.0).max(1.0);
+    let history = notch.game_history();
+    let mut line = PathBuilder::new();
+    let mut connected = false;
+    for (index, sample) in history.iter().enumerate() {
+        let Some(milliseconds) = frame_time(sample) else {
+            connected = false;
+            continue;
+        };
+        let x = graph_x + graph_width * (GAME_HIST - history.len() + index) as f32 / (GAME_HIST - 1) as f32;
+        let y = mid + 3.0 - 12.0 * (milliseconds / FRAME_MS_MAX).clamp(0.0, 1.0);
+        if connected { line.line_to(x, y); } else { line.move_to(x, y); }
+        connected = true;
+    }
+    cx.rrect(rect(graph_x, mid + 3.0, graph_width, 0.6), 0.3, color(WHITE, 0.12 * a));
+    if let Some(path) = line.finish() {
+        cx.stroke(&path, color([224, 206, 207], 0.9 * a), 1.0);
+    }
+}
+
+/// Stacked card: FPS and a frame-time graph on top, then a row per component.
 fn draw_game_card(cx: &mut Ctx, notch: &Notch, a: f32) {
     let r = notch.shape().rect;
     let g = notch.game_stats();
     let hist = notch.game_history();
     let (x0, w) = (r.x, r.w);
-    let use_gpu = g.gpu.is_some();
-    let (label, cur) = if use_gpu { ("GPU", g.gpu.unwrap_or(0.0)) } else { ("CPU", g.cpu) };
-    cx.t(label, x0 + 22.0, 26.0, 11.0, color(GRAY, a), Align::Left);
-    cx.t(&format!("{:.0}", cur * 100.0), x0 + 22.0, 58.0, 30.0, color(WHITE, a), Align::Left);
-    let num_w = cx.text_width(&format!("{:.0}", cur * 100.0), 30.0);
-    cx.t("%", x0 + 24.0 + num_w, 58.0, 14.0, color(GRAY, a), Align::Left);
-    let sub = if use_gpu { g.gpu_temp.map(|t| format!("{t:.0}\u{b0}C")) } else { g.cpu_temp.map(|t| format!("{t:.0}\u{b0}C")) };
-    if let Some(t) = sub {
-        cx.t(&t, x0 + w - 22.0, 26.0, 12.0, color(GRAY, a), Align::Right);
-    }
-    // Load history, newest on the right.
+    let frame_ms = g.frame_ms.or_else(|| g.fps.filter(|fps| *fps > 0.0).map(|fps| 1000.0 / fps));
+    let fps_text = g.fps.map(|fps| format!("{fps:.0}")).unwrap_or_else(|| "--".into());
+    cx.t("FPS", x0 + 22.0, 26.0, 11.0, color(GRAY, a), Align::Left);
+    cx.t(&fps_text, x0 + 22.0, 58.0, 30.0, color(WHITE, a), Align::Left);
+    let frame_text = frame_ms.map(|ms| format!("{ms:.1} ms")).unwrap_or_else(|| "--".into());
+    cx.t(&frame_text, x0 + w - 22.0, 26.0, 12.0, color(GRAY, a), Align::Right);
+    // Frame-time history, newest on the right. Lower is smoother.
     let (gx, gw, gy, gh) = (x0 + 20.0, w - 40.0, 68.0, 28.0);
-    let tint = heat(cur);
+    let tint = heat(frame_ms.map_or(0.0, |ms| (ms / FRAME_MS_MAX).clamp(0.0, 1.0)));
     cx.rrect(rect(gx, gy + gh + 1.0, gw, 1.0), 0.5, color(WHITE, 0.10 * a));
-    if hist.len() >= 2 {
-        let pts: Vec<(f32, f32)> = hist
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                let v = if use_gpu { s.gpu.unwrap_or(0.0) } else { s.cpu };
-                (gx + gw * (GAME_HIST - hist.len() + i) as f32 / (GAME_HIST - 1) as f32, gy + gh * (1.0 - v.clamp(0.0, 1.0)))
-            })
-            .collect();
+    let pts: Vec<(f32, f32)> = hist
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            let ms = s.frame_ms.or_else(|| s.fps.filter(|fps| *fps > 0.0).map(|fps| 1000.0 / fps))?;
+            Some((
+                gx + gw * (GAME_HIST - hist.len() + i) as f32 / (GAME_HIST - 1) as f32,
+                gy + gh * (1.0 - (ms / FRAME_MS_MAX).clamp(0.0, 1.0)),
+            ))
+        })
+        .collect();
+    if pts.len() >= 2 {
         let mut line = PathBuilder::new();
         for (i, (px, py)) in pts.iter().enumerate() {
             if i == 0 { line.move_to(*px, *py) } else { line.line_to(*px, *py) }
@@ -1441,9 +1589,17 @@ fn draw_game_card(cx: &mut Ctx, notch: &Notch, a: f32) {
         let y = GAME_CARD_HEAD + i as f32 * GAME_CARD_ROW;
         cx.rrect(rect(x0 + 10.0, y, w - 20.0, GAME_CARD_ROW - 6.0), 12.0, color(WHITE, 0.07 * a));
         let mid = y + (GAME_CARD_ROW - 6.0) / 2.0;
-        cx.t(name, x0 + 24.0, mid + 3.5, 10.0, color(GRAY, a), Align::Left);
-        cx.ring(x0 + 84.0, mid, 6.5, 2.4, frac.clamp(0.0, 1.0), heat(*frac), a);
-        cx.t(text, x0 + 98.0, mid + 5.0, 14.0, color(WHITE, a), Align::Left);
+        // The last row has only one reading, so centre the whole label/ring/value group.
+        let (label_x, ring_x, value_x) = if temp.is_some() {
+            (x0 + 24.0, x0 + 84.0, x0 + 98.0)
+        } else {
+            let group_w = 98.0 + cx.text_width(text, 14.0) - 24.0;
+            let shift = 10.0 + (w - 20.0 - group_w) / 2.0 - 24.0;
+            (x0 + 24.0 + shift, x0 + 84.0 + shift, x0 + 98.0 + shift)
+        };
+        cx.t(name, label_x, mid + 3.5, 10.0, color(GRAY, a), Align::Left);
+        cx.ring(ring_x, mid, 6.5, 2.4, frac.clamp(0.0, 1.0), heat(*frac), a);
+        cx.t(text, value_x, mid + 5.0, 14.0, color(WHITE, a), Align::Left);
         if let Some((tf, tt)) = temp {
             cx.ring(x0 + 166.0, mid, 6.5, 2.4, tf.clamp(0.0, 1.0), heat(*tf), a);
             cx.t(tt, x0 + 180.0, mid + 5.0, 14.0, color(WHITE, a), Align::Left);
@@ -1466,6 +1622,11 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
         if charging {
             cx.triangle([(r.x + 29.5, mid - 4.5), (r.x + 25.0, mid + 0.5), (r.x + 28.5, mid + 0.5)], color(WHITE, a));
             cx.triangle([(r.x + 26.5, mid + 4.5), (r.x + 31.0, mid - 0.5), (r.x + 27.5, mid - 0.5)], color(WHITE, a));
+        } else {
+            if let Some(outline) = rrect(r.x + 23.5, mid - 2.5, 8.0, 5.0, 1.0) {
+                cx.stroke(&outline, color(WHITE, 0.9 * a), 1.0);
+            }
+            cx.rrect(rect(r.x + 32.0, mid - 1.0, 1.0, 2.0), 0.5, color(WHITE, 0.9 * a));
         }
     }
     // Thin progress line along the bottom edge: the focus timer, otherwise the playing track.
@@ -1483,7 +1644,8 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
         cx.rrect(rect(r.x + rad, r.h - 4.0, r.w - 2.0 * rad, 1.5), 0.75, color(WHITE, 0.10 * a));
         cx.rrect(rect(r.x + rad, r.h - 4.0, w, 1.5), 0.75, color(tint, 0.9 * a));
     }
-    draw_clock(cx, notch, r.x + r.w / 2.0, mid, 20.0, a);
+    let clock_offset = if notch.download().is_none() && !notch.wants_audio() { 14.0 } else { 0.0 };
+    draw_clock(cx, notch, r.x + r.w / 2.0 + clock_offset, mid, notch.settings().clock_size, a);
     if let Some(rate) = notch.download() {
         let txt = rate_fmt(rate, notch.settings().net_bits);
         let tw = cx.text_width(&txt, 12.0);
@@ -1671,10 +1833,10 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
     let now = chrono::Local::now();
     if notch.settings().clock_style == ClockStyle::Classic {
         let header = format!("{}  {}", now.format("%a %-d %b %Y"), now.format(clock_fmt(notch)));
-        cx.t(&header, mid, 44.0, 22.0, color(WHITE, a), Align::Center);
+        cx.t(&header, mid, 44.0, notch.settings().header_clock_size, color(WHITE, a), Align::Center);
     } else {
         cx.t(&now.format("%A %-d %B").to_string(), mid, 20.0, 12.0, color(GRAY, a), Align::Center);
-        draw_clock(cx, notch, mid, 40.0, 22.0, a);
+        draw_clock(cx, notch, mid, 40.0, notch.settings().header_clock_size, a);
     }
     if notch.download().is_none() {
         cx.t(&notch.page.title().to_uppercase(), r.x + 36.0, 44.0, 12.0, color(GRAY, a), Align::Left);
@@ -1719,12 +1881,14 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
             cx.circle(x, y, 3.0, color(WHITE, 0.4 * a));
         }
     }
-    let off = n * 7.0 + 14.0;
-    for (dir, x) in [(-1.0f32, mid - off - 12.0), (1.0, mid + off + 12.0)] {
+    for (button, bounds) in page_navigation(r) {
+        let dir = if button == Button::PagePrev { -1.0 } else { 1.0 };
+        let x = bounds.x + bounds.w / 2.0;
+        let y = bounds.y + bounds.h / 2.0;
         let mut pb = PathBuilder::new();
-        pb.move_to(x - 2.5 * dir, y - 4.5);
-        pb.line_to(x + 2.5 * dir, y);
-        pb.line_to(x - 2.5 * dir, y + 4.5);
+        pb.move_to(x - 3.5 * dir, y - 6.0);
+        pb.line_to(x + 3.5 * dir, y);
+        pb.line_to(x - 3.5 * dir, y + 6.0);
         if let Some(p) = pb.finish() {
             cx.stroke(&p, color(WHITE, 0.7 * a), 1.8);
         }
@@ -1923,6 +2087,7 @@ fn draw_timer(cx: &mut Ctx, notch: &Notch, a: f32) {
 /// Handles a left click at pill-logical coordinates; the host runs the returned outcome.
 pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
     use visus_core::MediaCommand;
+    if notch.settings_is_visible() { return crate::settings_surface::click(notch, x, y); }
     // Clicking the in-game HUD flips to the next layout.
     if notch.game_active() {
         notch.update_settings(|s| s.game_style = s.game_style.next());
@@ -2013,7 +2178,7 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                     if !s.game_hud {
                         s.game_hud = true;
                         s.game_style = GameStyle::Pills;
-                    } else if s.game_style == GameStyle::Card {
+                    } else if s.game_style == GameStyle::Compact {
                         s.game_hud = false;
                     } else {
                         s.game_style = s.game_style.next();
@@ -2146,7 +2311,7 @@ pub fn idle_wake(notch: &Notch) -> Option<std::time::Duration> {
 pub fn to_logical(notch: &Notch, x: f32, y: f32) -> (f32, f32) {
     let sh = notch.shape().rect;
     let centre = sh.x + sh.w / 2.0;
-    let k = notch.settings().scale;
+    let k = display_scale(notch);
     (centre + (x - centre) / k, y / k)
 }
 
@@ -2154,10 +2319,11 @@ pub fn to_logical(notch: &Notch, x: f32, y: f32) -> (f32, f32) {
 pub fn hit_rect(notch: &Notch) -> Rect {
     let s = notch.shape();
     let f = flare(&s);
-    let k = notch.settings().scale;
+    let k = display_scale(notch);
     let centre = s.rect.x + s.rect.w / 2.0;
     let half = s.rect.w / 2.0 + f;
     let pill = Rect { x: centre - half * k, y: 0.0, w: half * 2.0 * k, h: s.rect.h * k };
+    if notch.settings_is_visible() { return pill; }
     // While the launcher is visible the panel is part of the interactive area too.
     let extra = palette_layout(notch).map(|l| l.panel).or_else(|| settings_panel(notch));
     let Some(p) = extra else { return pill };
@@ -2557,7 +2723,7 @@ fn draw_art(cx: &mut Ctx, r: Rect, radius: f32, m: &visus_core::MediaInfo, angle
 pub fn region_rect(notch: &Notch) -> Rect {
     let now = hit_rect(notch);
     let (tw, th) = notch.target_size();
-    let k = notch.settings().scale;
+    let k = display_scale(notch);
     let s = notch.shape().rect;
     let centre = s.x + s.w / 2.0;
     let half = (tw / 2.0 + 14.0) * k;
@@ -2571,12 +2737,12 @@ pub fn region_rect(notch: &Notch) -> Rect {
         right = right.max(centre + PANEL_W / 2.0 * k);
         bottom = bottom.max((th + 10.0 + full) * k);
     }
-    if notch.settings_is_open() || notch.settings_progress() > 0.01 {
-        left = left.min(centre - SETTINGS_W / 2.0 * k);
-        right = right.max(centre + SETTINGS_W / 2.0 * k);
-        bottom = bottom.max((th + 10.0 + SETTINGS_H) * k);
-    }
     Rect { x: left, y: 0.0, w: right - left, h: bottom }
+}
+
+pub fn display_scale(notch: &Notch) -> f32 {
+    let progress = if notch.settings_is_visible() { notch.settings_progress().clamp(0.0, 1.0) } else { 0.0 };
+    notch.settings().scale + (1.0 - notch.settings().scale) * progress
 }
 
 /// Window-logical y below which nothing is drawn (shadow margin included); lets hosts skip empty rows.

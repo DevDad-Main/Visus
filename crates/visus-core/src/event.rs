@@ -40,6 +40,8 @@ pub enum Hud {
 /// Everything the OS layer can tell the notch about.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
+    SettingsChanged(Box<crate::Settings>),
+    SettingsPaste(String),
     Power { on_ac: bool, percent: u8 },
     Media(MediaInfo),
     Hud(Hud),

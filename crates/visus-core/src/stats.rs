@@ -22,6 +22,10 @@ pub struct GameStats {
     /// 0.0..=1.0
     pub ram: f32,
     pub ram_used_gb: f32,
+    /// Frames per second reported by the game's frame-time telemetry, when available.
+    pub fps: Option<f32>,
+    /// Milliseconds between frames, when available.
+    pub frame_ms: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

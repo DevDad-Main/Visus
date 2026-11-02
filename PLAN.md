@@ -66,11 +66,13 @@ Rule: `visus-core` must stay free of platform and rendering dependencies.
 
 - Closed pill (default 228x38, flared into the screen edge), hover to open, springs between states.
   Left ring = focus timer while one runs, otherwise battery level (bolt when charging).
+- Game HUD layouts: Pills, Bars, Card, and Compact (FPS, frame-time sparkline, milliseconds).
 - Pages (wheel/arrow keys): Music (art, progress, transport, synced lyrics via LRCLIB), Timer (presets,
   steppers, shrinking ring), Stats (CPU/RAM/network), Shelf (drop files onto the pill; click to open),
   To-do (`@14:30` suffix = reminder, saved to `todos.json`), Calendar (month grid), Weather (Open-Meteo,
-  search a city). Settings is a popup under the pill (gear button): toggles, size, eye colour/style/delay,
-  location, launcher drives/folders, update check. 
+  search a city). Settings inflates from the notch into a sidebar surface (gear button): registered sections and shared
+  controls, live closed/header/mascot/game previews, independent clock sizes, location, launcher folders,
+  startup and updates. Close/Escape reverses the morph into the pill; both hosts share the embedded UI.
 - Quick launcher / command palette beneath the pill: apps, Visus commands, arithmetic, URLs, web search,
   "Take screenshot", "Check for updates". Open via the magnifier in the open pill, **Alt+Space** or **Ctrl+Alt+Space** (Windows),
   or on Linux bind a key to `visus-app --toggle-palette`.

@@ -117,6 +117,14 @@ h2 { font-size: clamp(32px, 5vw, 56px); margin-bottom: 22px; }
 .eyes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 26px; max-width: 780px; margin: 0 auto; }
 .eyes img { display: block; width: 100%; max-width: 480px; height: auto; border-radius: 18px; border: 1px solid var(--line); }
 
+.settingssec { padding: 120px 0 20px; }
+.settings-show { aspect-ratio: 6 / 5; min-height: 0; max-width: 960px; background: #2f3136; }
+.settings-show img { max-height: 94%; max-width: 96%; object-fit: contain; }
+@media (min-width: 641px) and (max-width: 920px) {
+  .nav { gap: 16px; }
+  .nav nav { gap: 12px; font-size: 12px; }
+}
+
 .reactions { padding: 130px 0; text-align: center; }
 .reactions .wrap { width: min(1200px, 100% - 48px); }
 .rgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin: 60px auto 0; }

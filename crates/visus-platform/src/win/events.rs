@@ -12,7 +12,7 @@ use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::SystemServices::GUID_ACDC_POWER_SOURCE;
+use windows::Win32::System::SystemServices::{GUID_ACDC_POWER_SOURCE, GUID_BATTERY_PERCENTAGE_REMAINING};
 use windows::Win32::System::Power::{
     GetSystemPowerStatus, RegisterPowerSettingNotification,
     SYSTEM_POWER_STATUS,
@@ -105,6 +105,11 @@ unsafe fn run() {
         let _ = RegisterPowerSettingNotification(
             HANDLE(hwnd.0),
             &GUID_ACDC_POWER_SOURCE,
+            DEVICE_NOTIFY_WINDOW_HANDLE,
+        );
+        let _ = RegisterPowerSettingNotification(
+            HANDLE(hwnd.0),
+            &GUID_BATTERY_PERCENTAGE_REMAINING,
             DEVICE_NOTIFY_WINDOW_HANDLE,
         );
         let _ = windows::Win32::System::DataExchange::AddClipboardFormatListener(hwnd);

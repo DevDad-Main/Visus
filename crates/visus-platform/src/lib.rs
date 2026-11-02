@@ -11,7 +11,7 @@ pub use art::decode as decode_art;
 mod clipboard;
 mod pad;
 mod controls;
-pub use clipboard::set_clipboard;
+pub use clipboard::{clipboard_text, set_clipboard};
 
 /// Starts the game-controller watcher (Windows and Linux only).
 #[cfg(any(windows, target_os = "linux"))]

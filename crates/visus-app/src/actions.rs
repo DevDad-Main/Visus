@@ -16,6 +16,16 @@ pub fn pump(notch: &mut visus_core::Notch, emit: Option<&Emit>) {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
     static LAST_REFRESH: Mutex<Option<Instant>> = Mutex::new(None);
+    static LAST_FOLDERS: Mutex<Option<Vec<String>>> = Mutex::new(None);
+    if let Some(emit) = emit {
+        let mut previous = LAST_FOLDERS.lock().unwrap();
+        let folders = &notch.settings().app_folders;
+        if previous.as_ref().is_some_and(|previous| previous != folders) {
+            visus_platform::set_app_folders(folders.clone());
+            visus_platform::rescan_apps(emit.clone());
+        }
+        *previous = Some(folders.clone());
+    }
 
     static START: std::sync::Once = std::sync::Once::new();
     START.call_once(visus_platform::refresh_controls);

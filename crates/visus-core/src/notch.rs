@@ -116,7 +116,7 @@ pub const GAME_CARD_W: f32 = 270.0;
 pub const GAME_CARD_HEAD: f32 = 106.0;
 pub const GAME_CARD_ROW: f32 = 38.0;
 /// The idle pill drops the empty visualizer slot and tightens around battery and clock.
-const IDLE_TRIM: f32 = 16.0;
+const IDLE_TRIM: f32 = 32.0;
 const MOOD_PERIOD: f32 = 16.0;
 const MOOD_START: f32 = 11.0;
 const MOOD_LEN: f32 = 3.2;
@@ -175,6 +175,7 @@ pub struct Notch {
     palette_open: bool,
     palette_anim: Spring,
     settings_open: bool,
+    settings_surface: bool,
     settings_anim: Spring,
     folder_input: Option<String>,
     dirty: bool,
@@ -258,6 +259,7 @@ impl Notch {
             palette_open: false,
             palette_anim: Spring::snappy(0.0),
             settings_open: false,
+            settings_surface: false,
             settings_anim: Spring::new(0.0),
             folder_input: None,
             dirty: false,
@@ -306,6 +308,8 @@ impl Notch {
 
     pub fn handle(&mut self, ev: Event) {
         match ev {
+            Event::SettingsChanged(settings) => self.set_settings(*settings),
+            Event::SettingsPaste(_) => {}
             Event::Power { on_ac, percent } => {
                 // The first report is the initial state, not a plug/unplug.
                 let changed = self.on_ac.is_some_and(|prev| prev != on_ac);
@@ -375,6 +379,10 @@ impl Notch {
                 self.refresh_hidden();
             }
             Event::Game(g) => {
+                if g != self.game {
+                    self.game_hist.clear();
+                    self.game_stats = crate::GameStats::default();
+                }
                 self.game = g;
                 self.refresh_hidden();
                 if self.game_active() {
@@ -1003,7 +1011,11 @@ impl Notch {
         self.settings_open
     }
 
-    /// 0.0 (hidden) ..= 1.0 (fully shown) for the settings popup.
+    pub fn settings_is_visible(&self) -> bool {
+        self.settings_surface
+    }
+
+    /// 0.0 (collapsed) ..= 1.0 (expanded) for the settings morph.
     pub fn settings_progress(&self) -> f32 {
         self.settings_anim.value
     }
@@ -1015,12 +1027,11 @@ impl Notch {
         self.touch();
         self.close_palette();
         self.settings_open = true;
+        self.settings_surface = true;
         self.settings_anim.target = 1.0;
         self.leave_left = None;
-        if self.mode != Mode::Closed {
-            self.mode = Mode::Closed;
-            self.retarget();
-        }
+        self.mode = Mode::Closed;
+        self.retarget();
     }
 
     pub fn close_settings(&mut self) {
@@ -1028,6 +1039,7 @@ impl Notch {
         self.settings_anim.target = 0.0;
         self.location_input = None;
         self.folder_input = None;
+        self.retarget();
     }
 
     pub fn folder_input(&self) -> Option<&str> {
@@ -1207,7 +1219,7 @@ impl Notch {
 
     /// True while typing goes to the launcher or the to-do field.
     pub fn keyboard_active(&self) -> bool {
-        self.palette_open || self.todo_input.is_some() || self.location_input.is_some() || self.folder_input.is_some()
+        self.settings_open || self.palette_open || self.todo_input.is_some() || self.location_input.is_some() || self.folder_input.is_some()
     }
 
     pub fn key_text(&mut self, s: &str) {
@@ -1621,6 +1633,7 @@ impl Notch {
     }
 
     pub fn hover(&mut self, inside: bool) {
+        if self.settings_surface { return; }
         if self.game_active() || self.hidden || self.palette_open || self.settings_open || self.todo_input.is_some() || self.location_input.is_some() || self.folder_input.is_some() {
             return;
         }
@@ -1725,21 +1738,39 @@ impl Notch {
         self.look_y.step(s);
         self.palette_anim.step(s);
         self.settings_anim.step(s);
+        if !self.settings_open && self.settings_anim.is_settled() && self.w.is_settled() && self.h.is_settled() && self.r.is_settled() {
+            self.settings_surface = false;
+        }
     }
 
     fn retarget(&mut self) {
+        if self.settings_open || self.settings_anim.value > 0.001 {
+            let progress = self.settings_anim.value.clamp(0.0, 1.0);
+            let width = (progress / 0.55).clamp(0.0, 1.0);
+            let height = ((progress - 0.15) / 0.85).clamp(0.0, 1.0);
+            let closed_width = (self.settings.closed_width - IDLE_TRIM).max(140.0);
+            self.w.target = closed_width + (860.0 - closed_width) * width;
+            self.h.target = self.settings.closed_height + (720.0 - self.settings.closed_height) * height;
+            self.r.target = 14.0 + 14.0 * height;
+            return;
+        }
         let ((w, h), r) = match self.mode {
             Mode::Closed if self.game_active() => match self.settings.game_style {
                 crate::GameStyle::Card => ((GAME_CARD_W, GAME_CARD_HEAD + GAME_CARD_ROW * self.game_rows() as f32 + 8.0), 22.0),
+                crate::GameStyle::Compact => ((350.0, 40.0), 20.0),
                 _ => ((GAME_PAD * 2.0 + GAME_ITEM_W * self.game_items().len() as f32, self.settings.closed_height), self.settings.closed_height * 0.5),
             },
             Mode::Closed if self.settings.minimal => (MINIMAL, 3.0),
             Mode::Closed => {
+                let clock_extra = (self.settings.clock_size - 20.0).max(0.0)
+                    * if self.settings.clock_style == crate::ClockStyle::Flip { 3.8 } else { 4.5 };
+                let clock_height = self.settings.clock_size
+                    * if self.settings.clock_style == crate::ClockStyle::Flip { 1.3 } else { 1.0 } + 8.0;
                 // While the idle eye shows, the pill tightens around it; hovering grows it again.
                 let (w, h) = if self.eye_state() != EyeState::Hidden {
                     (EYE_PILL_W, self.settings.closed_height - 4.0)
                 } else {
-                    (self.settings.closed_width + if self.download.is_some() { DOWNLOAD_EXTRA } else if self.visualizer_active() { VISUALIZER_EXTRA } else { -IDLE_TRIM }, self.settings.closed_height)
+                    ((self.settings.closed_width + if self.download.is_some() { DOWNLOAD_EXTRA } else if self.visualizer_active() { VISUALIZER_EXTRA } else { -IDLE_TRIM }).max(140.0) + clock_extra, self.settings.closed_height.max(clock_height))
                 };
                 ((w, h), h * 0.42)
             }
@@ -1828,6 +1859,18 @@ mod tests {
     }
 
     #[test]
+    fn power_percentage_updates_without_charger_changes() {
+        for on_ac in [false, true] {
+            let mut notch = Notch::new(800.0);
+            for percent in [70, 69, 20, 0, 100] {
+                notch.handle(Event::Power { on_ac, percent });
+                assert_eq!(notch.battery(), Some((on_ac, percent)));
+                assert!(notch.alert_kind().is_none());
+            }
+        }
+    }
+
+    #[test]
     fn first_power_report_is_silent_then_plug_alerts() {
         let mut n = Notch::new(800.0);
         n.handle(Event::Power { on_ac: false, percent: 70 });
@@ -1843,6 +1886,72 @@ mod tests {
         assert_eq!(n.alert_kind(), Some(Alert::UpdateAvailable));
         n.handle(Event::Update(crate::UpdateStatus::Available { version: "v9.0.0".into() }));
         assert!(matches!(n.update_status(), crate::UpdateStatus::Available { .. }));
+    }
+
+    #[test]
+    fn settings_can_reverse_mid_animation_without_snapping() {
+        let mut notch = Notch::new(960.0);
+        settle(&mut notch);
+        notch.open_settings();
+        for _ in 0..10 { notch.tick(Duration::from_millis(16)); }
+        let opening = notch.shape().rect;
+        notch.close_settings();
+        assert_eq!(notch.shape().rect, opening);
+        notch.hover(true);
+        assert!(!notch.is_open());
+        for _ in 0..5 { notch.tick(Duration::from_millis(16)); }
+        let closing = notch.shape().rect;
+        notch.open_settings();
+        assert_eq!(notch.shape().rect, closing);
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.h, 720.0);
+    }
+
+    #[test]
+    fn settings_inflate_from_and_collapse_into_the_pill() {
+        let mut notch = Notch::new(960.0);
+        settle(&mut notch);
+        let closed = notch.shape().rect;
+        notch.open_settings();
+        notch.tick(Duration::from_millis(32));
+        let opening = notch.shape().rect;
+        assert!(opening.w >= closed.w);
+        assert!(opening.h < 720.0);
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.w, 860.0);
+        assert_eq!(notch.shape().rect.h, 720.0);
+        notch.close_settings();
+        assert!(notch.is_animating());
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.w, closed.w);
+        assert_eq!(notch.shape().rect.h, closed.h);
+        assert!(!notch.is_animating());
+        assert!(!notch.settings_is_visible());
+    }
+
+    #[test]
+    fn larger_clocks_keep_the_closed_pill_content_inside() {
+        let mut notch = Notch::new(800.0);
+        settle(&mut notch);
+        let original = notch.shape().rect;
+        notch.handle(Event::SettingsChanged(Box::new(Settings { clock_size: 32.0, clock_style: crate::ClockStyle::Flip, ..Default::default() })));
+        settle(&mut notch);
+        let enlarged = notch.shape().rect;
+        assert!(enlarged.w > original.w);
+        assert!(enlarged.h >= 32.0 * 1.3 + 8.0);
+        assert_eq!(notch.settings().scale, 1.0);
+    }
+
+    #[test]
+    fn compact_game_hud_has_fixed_slim_dimensions() {
+        let mut notch = Notch::new(800.0);
+        notch.update_settings(|settings| settings.game_style = crate::GameStyle::Compact);
+        notch.handle(Event::Game(true));
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.w, 350.0);
+        assert_eq!(notch.shape().rect.h, 40.0);
+        assert_eq!(crate::GameStyle::Card.next(), crate::GameStyle::Compact);
+        assert_eq!(crate::GameStyle::Compact.next(), crate::GameStyle::Pills);
     }
 
     #[test]
@@ -1902,6 +2011,28 @@ mod tests {
         n.end_drag();
         n.set_controls(Controls { volume: 0.2, has_volume: true, ..Controls::default() });
         assert!((n.controls().volume - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn closed_pill_grows_for_playback_and_shrinks_when_paused() {
+        let mut notch = Notch::new(800.0);
+        settle(&mut notch);
+        let idle_width = notch.settings().closed_width - IDLE_TRIM;
+        assert_eq!(notch.shape().rect.w, idle_width);
+        notch.handle(Event::Media(MediaInfo { has_session: true, playing: true, ..MediaInfo::default() }));
+        settle(&mut notch);
+        assert!(notch.wants_audio());
+        assert_eq!(notch.shape().rect.w, notch.settings().closed_width + VISUALIZER_EXTRA);
+        notch.handle(Event::Media(MediaInfo { has_session: true, playing: false, ..MediaInfo::default() }));
+        settle(&mut notch);
+        assert!(!notch.wants_audio());
+        assert_eq!(notch.shape().rect.w, idle_width);
+        notch.handle(Event::Media(MediaInfo::default()));
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.w, idle_width);
+        notch.update_settings(|settings| settings.closed_width = 140.0);
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.w, 140.0);
     }
 
     #[test]

@@ -11,6 +11,7 @@ mod stats;
 mod updater;
 mod weather;
 mod store;
+mod settings_surface;
 mod text;
 #[cfg(target_os = "linux")]
 mod wayland;
@@ -35,7 +36,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId, WindowLevel};
 
 const WIN_W: f32 = 960.0;
-const WIN_H: f32 = 520.0;
+const WIN_H: f32 = 800.0;
 const FRAME: Duration = Duration::from_millis(16);
 
 /// A user-facing setting changed from the tray (or later, a settings window).
@@ -92,6 +93,7 @@ struct App {
     next_frame: Instant,
     frame: Duration,
     shift: bool,
+    shortcut: bool,
     hand: bool,
     pending_click: Option<(f32, f32, Instant)>,
     #[cfg(windows)]
@@ -134,7 +136,7 @@ impl App {
         if self.hwnd != 0 {
             let animating = self.notch.is_animating();
             let r = if animating { ui::region_rect(&self.notch) } else { ui::hit_rect(&self.notch) };
-            let radius = self.notch.shape().bottom_radius * self.notch.settings().scale;
+            let radius = self.notch.shape().bottom_radius * ui::display_scale(&self.notch);
             let mut region = (
                 (r.x * scale).floor() as i32,
                 (r.w * scale).ceil() as i32,
@@ -253,6 +255,23 @@ impl App {
 
     /// Returns true when the key was consumed by the launcher.
     fn palette_key(&mut self, el: &ActiveEventLoop, ev: &winit::event::KeyEvent) -> bool {
+        if self.notch.settings_is_open() {
+            use settings_surface::KeyAction;
+            let action = match ev.logical_key.as_ref() {
+                Key::Named(NamedKey::Escape) => Some(KeyAction::Escape),
+                Key::Named(NamedKey::Enter) => Some(KeyAction::Submit),
+                Key::Named(NamedKey::Backspace) => Some(KeyAction::Backspace),
+                Key::Character(key) if self.shortcut && key.eq_ignore_ascii_case("a") => Some(KeyAction::SelectAll),
+                Key::Character(key) if self.shortcut && key.eq_ignore_ascii_case("v") => Some(KeyAction::Paste),
+                _ if !self.shortcut => ev.text.as_ref().map(|text| KeyAction::Text(text.chars().filter(|character| !character.is_control()).collect())),
+                _ => None,
+            };
+            if let Some(action) = action {
+                let outcome = settings_surface::key(&mut self.notch, action, self.emit.as_ref());
+                self.run_outcome(el, outcome);
+            }
+            return true;
+        }
         if !self.notch.keyboard_active() {
             return false;
         }
@@ -393,7 +412,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 self.click(el)
             }
-            WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => self.notch.end_drag(),
+            WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => settings_surface::release(&mut self.notch),
             WindowEvent::HoveredFileCancelled => {
                 self.notch.set_drop_hover(false);
                 self.notch.drag_cancelled();
@@ -407,8 +426,18 @@ impl ApplicationHandler<UserEvent> for App {
                 self.notch.shelf_add(path.to_string_lossy().into_owned());
                 self.notch.show_page(visus_core::Page::Shelf);
             }
-            WindowEvent::Focused(false) if self.notch.keyboard_active() => self.notch.key_escape(),
-            WindowEvent::ModifiersChanged(mods) => self.shift = mods.state().shift_key(),
+            WindowEvent::Focused(false) if self.notch.keyboard_active() && !self.notch.settings_is_open() => self.notch.key_escape(),
+            WindowEvent::ModifiersChanged(mods) => {
+                self.shift = mods.state().shift_key();
+                self.shortcut = mods.state().control_key() || mods.state().super_key();
+            }
+            WindowEvent::MouseWheel { delta, .. } if self.notch.settings_is_open() => {
+                let amount = match delta {
+                    MouseScrollDelta::LineDelta(_, amount) => -amount * 36.0,
+                    MouseScrollDelta::PixelDelta(position) => -position.y as f32,
+                };
+                settings_surface::scroll(&self.notch, amount);
+            }
             WindowEvent::MouseWheel { delta, .. } if self.notch.is_open() => {
                 let y = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
@@ -521,6 +550,10 @@ fn synth_cover() -> Vec<u8> {
 
 /// `visus-app --snapshot <music|timer|stats|shelf|todo> <out.png>`: renders the open pill headlessly.
 fn snapshot(page: &str, out: &str, query: Option<&str>) {
+    if page == "settings" {
+        settings_surface::snapshot(out, query);
+        return;
+    }
     let mut notch = Notch::new(WIN_W);
     notch.hover(true);
     for _ in 0..200 {
@@ -693,7 +726,18 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
     }
     if page == "closed" {
         notch.hover(false);
-        notch.handle(Event::Power { on_ac: true, percent: 76 });
+        if let Ok(playing) = std::env::var("VISUS_PLAYING") {
+            notch.handle(Event::Media(visus_core::MediaInfo {
+                has_session: true,
+                playing: playing == "1",
+                ..Default::default()
+            }));
+        }
+        let (state, percent) = query.and_then(|value| value.split_once(':')).unwrap_or(("charging", "76"));
+        notch.handle(Event::Power {
+            on_ac: state != "unplugged",
+            percent: percent.parse::<u8>().unwrap_or(76).min(100),
+        });
         for i in 0..400 {
             notch.set_audio_level(Some(0.25 + 0.2 * (i as f32 * 0.35).sin().abs() + 0.15 * (i as f32 * 0.9).cos().abs()));
             notch.tick(Duration::from_millis(16));
@@ -709,11 +753,12 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             notch.tick(Duration::from_millis(16));
         }
         notch.handle(Event::Game(true));
-        if let Some(st) = std::env::var("VISUS_HUD").ok().and_then(|v| [visus_core::GameStyle::Pills, visus_core::GameStyle::Bars, visus_core::GameStyle::Card].into_iter().find(|s| s.name().eq_ignore_ascii_case(&v))) {
+        if let Some(st) = std::env::var("VISUS_HUD").ok().and_then(|v| [visus_core::GameStyle::Pills, visus_core::GameStyle::Bars, visus_core::GameStyle::Card, visus_core::GameStyle::Compact].into_iter().find(|s| s.name().eq_ignore_ascii_case(&v))) {
             notch.update_settings(|s| s.game_style = st);
         }
         for i in 0..40 {
             let t = i as f32 / 39.0;
+            let fps = 110.0 + 18.0 * (t * 5.0).sin();
             notch.handle(Event::GameStats(visus_core::GameStats {
                 cpu: 0.45 + 0.1 * (t * 9.0).sin(),
                 cpu_temp: Some(71.0),
@@ -721,6 +766,8 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
                 gpu_temp: Some(76.0),
                 ram: 0.38,
                 ram_used_gb: 12.1,
+                fps: Some(fps),
+                frame_ms: Some(1000.0 / fps),
             }));
         }
         for _ in 0..300 {
@@ -793,6 +840,14 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--settings-preview") {
+        if let Some(out) = args.get(2) { settings_surface::preview(out, args.get(3).map(String::as_str)); }
+        return;
+    }
+    if args.get(1).map(String::as_str) == Some("--settings-morph-preview") {
+        if let Some(prefix) = args.get(2) { settings_surface::morph_preview(prefix); }
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("--toggle-palette") {
         std::process::exit(if platform::send_toggle() { 0 } else { 1 });
     }
@@ -842,6 +897,7 @@ fn main() {
         next_frame: Instant::now(),
         frame: FRAME,
         shift: false,
+        shortcut: false,
         hand: false,
         pending_click: None,
         #[cfg(windows)]

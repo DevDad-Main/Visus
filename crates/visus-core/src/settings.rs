@@ -8,6 +8,7 @@ pub enum GameStyle {
     Pills,
     Bars,
     Card,
+    Compact,
 }
 
 impl GameStyle {
@@ -16,6 +17,7 @@ impl GameStyle {
             GameStyle::Pills => "Pills",
             GameStyle::Bars => "Bars",
             GameStyle::Card => "Card",
+            GameStyle::Compact => "Compact",
         }
     }
 
@@ -23,7 +25,8 @@ impl GameStyle {
         match self {
             GameStyle::Pills => GameStyle::Bars,
             GameStyle::Bars => GameStyle::Card,
-            GameStyle::Card => GameStyle::Pills,
+            GameStyle::Card => GameStyle::Compact,
+            GameStyle::Compact => GameStyle::Pills,
         }
     }
 }
@@ -113,6 +116,8 @@ pub struct Settings {
     /// 24-hour clock in the pill; false shows 12-hour time.
     pub clock_24h: bool,
     pub clock_style: ClockStyle,
+    pub clock_size: f32,
+    pub header_clock_size: f32,
     /// Equalizer bars on the closed pill while music plays.
     pub visualizer: bool,
     /// Battery ring on the closed pill when the machine has a battery.
@@ -160,6 +165,8 @@ impl Settings {
     /// Keeps hand-edited values inside what the layout can render.
     pub fn clamped(mut self) -> Self {
         self.scale = self.scale.clamp(Self::SCALE_RANGE.0, Self::SCALE_RANGE.1);
+        self.clock_size = if self.clock_size.is_finite() { self.clock_size.clamp(12.0, 32.0) } else { 20.0 };
+        self.header_clock_size = if self.header_clock_size.is_finite() { self.header_clock_size.clamp(16.0, 30.0) } else { 22.0 };
         self.closed_width = self.closed_width.clamp(140.0, 400.0);
         self.closed_height = self.closed_height.clamp(24.0, 80.0);
         self.idle_secs = self.idle_secs.clamp(5, 3600);
@@ -175,6 +182,8 @@ impl Default for Settings {
             quiet: false,
             clock_24h: true,
             clock_style: ClockStyle::Classic,
+            clock_size: 20.0,
+            header_clock_size: 22.0,
             visualizer: true,
             show_battery: true,
             net_bits: false,
@@ -206,6 +215,17 @@ impl Default for Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clock_sizes_are_independent_and_bounded() {
+        let settings = Settings { clock_size: 28.0, header_clock_size: 18.0, ..Settings::default() }.clamped();
+        assert_eq!(settings.scale, 1.0);
+        assert_eq!(settings.clock_size, 28.0);
+        assert_eq!(settings.header_clock_size, 18.0);
+        let settings = Settings { clock_size: f32::NAN, header_clock_size: 90.0, ..settings }.clamped();
+        assert_eq!(settings.clock_size, 20.0);
+        assert_eq!(settings.header_clock_size, 30.0);
+    }
 
     #[test]
     fn rgb_round_trips_and_rejects_garbage() {
