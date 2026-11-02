@@ -1,7 +1,8 @@
 use windows::Win32::Foundation::{HWND, LPARAM};
+use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GWL_EXSTYLE, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW, IsIconic, IsWindowVisible, SW_RESTORE,
-    SetForegroundWindow, ShowWindow, WS_EX_TOOLWINDOW,
+    SetForegroundWindow, ShowWindow, WS_EX_TOOLWINDOW, BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsWindow,
 };
 use windows::core::BOOL;
 
@@ -35,9 +36,18 @@ pub fn list_windows() -> Vec<(isize, String)> {
 pub fn focus_window(h: isize) {
     unsafe {
         let hwnd = HWND(h as *mut _);
+        if !IsWindow(Some(hwnd)).as_bool() { return; }
+        let current = GetCurrentThreadId();
+        let foreground = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let target = GetWindowThreadProcessId(hwnd, None);
+        let attached_foreground = foreground != 0 && foreground != current && AttachThreadInput(current, foreground, true).as_bool();
+        let attached_target = target != 0 && target != current && target != foreground && AttachThreadInput(current, target, true).as_bool();
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         }
+        let _ = BringWindowToTop(hwnd);
         let _ = SetForegroundWindow(hwnd);
+        if attached_target { let _ = AttachThreadInput(current, target, false); }
+        if attached_foreground { let _ = AttachThreadInput(current, foreground, false); }
     }
 }

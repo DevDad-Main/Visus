@@ -9,6 +9,10 @@ use visus_platform::Emit;
 #[path = "game_gpu.rs"]
 mod gpu;
 
+#[cfg(any(target_os = "windows", test))]
+#[path = "game_fps.rs"]
+mod frame_log;
+
 #[cfg(target_os = "linux")]
 use std::io::{Read, Seek, SeekFrom};
 #[cfg(target_os = "linux")]
@@ -17,6 +21,22 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_frame_log(path: Option<&str>) {
+    #[cfg(any(target_os = "windows", test))]
+    frame_log::set_frame_log(path);
+    #[cfg(not(any(target_os = "windows", test)))]
+    let _ = path;
+}
+
+pub fn frame_source_note() -> String {
+    #[cfg(target_os = "windows")]
+    { frame_log::frame_source_note() }
+    #[cfg(target_os = "linux")]
+    { "MangoHud benchmark CSV (automatic discovery)".into() }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    { "Frame telemetry is unavailable on this platform".into() }
+}
 
 /// Called every frame; the sampler thread starts on first use and idles while no game is running.
 pub fn set_active(on: bool, emit: &Emit) {
@@ -66,9 +86,10 @@ fn run(emit: Emit) {
     }
 }
 
-/// Frame-rate telemetry for the HUD. On Linux this follows the most recent MangoHud benchmark
-/// log; when no log is being written the card shows `--` instead of inventing a frame rate.
+/// Frame-rate telemetry from MangoHud on Linux or a configured PresentMon CSV on Windows.
 struct FpsSource {
+    #[cfg(target_os = "windows")]
+    presentmon: frame_log::Source,
     #[cfg(target_os = "linux")]
     tail: Option<LogTail>,
     #[cfg(target_os = "linux")]
@@ -79,17 +100,25 @@ struct FpsSource {
 
 impl FpsSource {
     fn new() -> Self {
+        #[cfg(target_os = "windows")]
+        {
+            Self { presentmon: frame_log::Source::default() }
+        }
         #[cfg(target_os = "linux")]
         {
             Self { tail: None, next_scan: None, dirs: log_dirs() }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             Self {}
         }
     }
 
     fn reset(&mut self) {
+        #[cfg(target_os = "windows")]
+        {
+            self.presentmon = frame_log::Source::default();
+        }
         #[cfg(target_os = "linux")]
         {
             self.tail = None;
@@ -98,6 +127,10 @@ impl FpsSource {
     }
 
     fn poll(&mut self) -> Option<(f32, f32)> {
+        #[cfg(target_os = "windows")]
+        {
+            self.presentmon.poll()
+        }
         #[cfg(target_os = "linux")]
         {
             // A log that stopped growing is from a finished session; look for a fresh one.
@@ -109,7 +142,7 @@ impl FpsSource {
             }
             self.tail.as_mut().and_then(LogTail::read_latest)
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             None
         }

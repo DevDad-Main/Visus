@@ -13,6 +13,7 @@ pub fn request_icons(notch: &mut visus_core::Notch, emit: Option<&Emit>) {
 
 /// Per-frame housekeeping: icon requests, audio level for the visualizer, quick-control state.
 pub fn pump(notch: &mut visus_core::Notch, emit: Option<&Emit>) {
+    crate::game::set_frame_log(notch.settings().frame_time_csv.as_deref());
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
     static LAST_REFRESH: Mutex<Option<Instant>> = Mutex::new(None);

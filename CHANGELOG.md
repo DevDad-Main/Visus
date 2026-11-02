@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.13.0 - 2026-11-02
+
+- Add Windows DWM live thumbnails to open-window cards, preserving aspect ratio and title fallback. Previews are removed when the page is hidden. Protected/minimized windows may not provide a usable thumbnail; Linux retains title cards.
+- Route Windows-tab activation through the launcher's focus outcome and strengthen Windows foreground activation.
+- Add a persistent settings footer with running version and Visus's own CPU percentage and resident RAM in MB.
+- Use GitHub's latest stable release endpoint and show explicit Checking/Up to date/Available/Installing/Failed update feedback.
+- Reduce HUD bars, constrain wide HUD rows to their host window, and center paired Card GPU readings.
+- Add optional Windows PresentMon CSV ingestion for FPS/frame-time graphs. Configure a live capture path in Gaming settings or VISUS_PRESENTMON_CSV; Visus does not bundle or launch capture software. Missing/stale feeds show an unavailable-source hint.
+- Validate CSV parsing, stream selection, stale/incomplete files, window activation routing, HUD geometry, update fetching, and resource-footer behavior.
+
+Windows thumbnails, focus behavior, and PresentMon capture inside cloud rigs still need hands-on testing.
+GPU telemetry works independently of FPS. Provider restrictions may prevent presentation capture.
+
 ## 1.12.0 - 2026-11-02
 
 ### Added

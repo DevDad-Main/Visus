@@ -42,6 +42,7 @@ impl Field {
             "hide_in_fullscreen" => Some("Game HUD can remain visible during games"),
             "clipboard_history" => Some("Recent text stays in memory, not on disk"),
             "app_folders" => Some("Separate folder paths with semicolons"),
+            "frame_time_csv" => Some("Windows: a live PresentMon capture CSV"),
             "outer_padding" => Some("Space outside the closed ring and clock"),
             "accent_mode" => Some("Media artwork, mascot iris, or fixed color"),
             "accent_color" => Some("Used when Accent mode is Fixed"),
@@ -105,6 +106,7 @@ pub static SECTIONS: &[Section] = &[
     Section { title: "Gaming", fields: &[
         Field { key: "game_hud", label: "Game HUD", control: Control::Switch },
         Field { key: "game_style", label: "Layout", control: Control::Choice(&["Pills", "Bars", "Card", "Compact"]) },
+        Field { key: "frame_time_csv", label: "Frame-time CSV", control: Control::Text },
     ] },
     Section { title: "Integrations", fields: &[
         Field { key: "city", label: "Weather city", control: Control::Text },
@@ -132,6 +134,8 @@ pub static SECTIONS: &[Section] = &[
 
 #[derive(Clone, Default, PartialEq)]
 pub struct Panel {
+    pub usage: crate::app_usage::Usage,
+    pub frame_source: String,
     pub section: usize,
     pub scroll: f32,
     pub sidebar_scroll: f32,
@@ -141,6 +145,7 @@ pub struct Panel {
     pub status: String,
     pub preview_header: bool,
     pub update_available: bool,
+    pub update_status: UpdateStatus,
     pub battery: Option<(bool, u8)>,
     pub reaction_style: EyeStyle,
     pub media_accent: Option<[u8; 3]>,
@@ -225,7 +230,7 @@ impl Panel {
     pub fn scroll(&mut self, amount: f32, height: f32) {
         if self.pointer.is_some_and(|(x, _)| x < 188.0) {
             let content = 96.0 + SECTIONS.len() as f32 * 44.0;
-            self.sidebar_scroll = (self.sidebar_scroll + amount).clamp(0.0, (content - height + 16.0).max(0.0));
+            self.sidebar_scroll = (self.sidebar_scroll + amount).clamp(0.0, (content - height + 98.0).max(0.0));
             return;
         }
         let content = self.content_bottom();
@@ -264,7 +269,7 @@ impl Panel {
         if x < 188.0 {
             for index in 0..SECTIONS.len() {
                 let area = rect(16.0, 96.0 + index as f32 * 44.0 - self.sidebar_scroll, 156.0, 38.0);
-                if area.y >= 88.0 && area.y + area.h <= height - 12.0 && area.contains(x, y) {
+                if area.y >= 88.0 && area.y + area.h <= height - 98.0 && area.contains(x, y) {
                     self.section = index;
                     self.scroll = 0.0;
                 }
@@ -412,7 +417,7 @@ pub fn draw(pm: &mut Pixmap, text: &Text, panel: &Panel, settings: &Settings, sc
     if let Some(path) = close.finish() { cx.stroke(&path, color(if panel.close_hovered { WHITE } else { GRAY }, 1.0), 1.6); }
     for (index, section) in SECTIONS.iter().enumerate() {
         let row = rect(16.0, 96.0 + index as f32 * 44.0 - panel.sidebar_scroll, 156.0, 38.0);
-        if row.y < 88.0 || row.y + row.h > height - 12.0 { continue; }
+        if row.y < 88.0 || row.y + row.h > height - 98.0 { continue; }
         if index == panel.section {
             cx.rrect(row, 6.0, color(WHITE, 0.08));
             cx.rrect(rect(16.0, row.y + 10.0, 3.0, 18.0), 1.5, color(cx.accent, 1.0));
@@ -533,13 +538,33 @@ pub fn draw(pm: &mut Pixmap, text: &Text, panel: &Panel, settings: &Settings, sc
             Control::Action(action) => {
                 let label = if action == "autostart" {
                     if visus_platform::autostart_enabled() { "Disable" } else { "Enable" }
-                } else if panel.update_available { "Install" } else { "Check now" };
+                } else { match panel.update_status {
+                    UpdateStatus::Checking => "Checking...",
+                    UpdateStatus::UpToDate => "Check again",
+                    UpdateStatus::Available { .. } => "Install update",
+                    UpdateStatus::Installing => "Installing...",
+                    UpdateStatus::Failed(_) => "Try again",
+                    UpdateStatus::Idle => "Check now",
+                } };
                 cx.rrect(rect(RIGHT - 110.0, mid - 16.0, 110.0, 32.0), 5.0, color(WHITE, 0.08));
                 cx.t(label, RIGHT - 55.0, mid + 4.5, 13.0, color(WHITE, 1.0), Align::Center);
             }
         }
     }
     if SECTIONS[panel.section].title == "Mascot" { draw_reaction_guide(&mut cx, panel, settings, height); }
+    if SECTIONS[panel.section].title == "Gaming" {
+        let y = 274.0 + SECTIONS[panel.section].fields.len() as f32 * 60.0 - panel.scroll + 24.0;
+        if y >= 258.0 && y <= height - 76.0 {
+            let note = cx.fit(&panel.frame_source, 12.0, RIGHT - LEFT);
+            cx.t(&note, LEFT, y, 12.0, color(GRAY, 1.0), Align::Left);
+        }
+    }
+    cx.rrect(rect(16.0, height - 86.0, 156.0, 86.0), 0.0, color([0, 0, 0], 1.0));
+    cx.t(&format!("Visus v{}", env!("CARGO_PKG_VERSION")), 24.0, height - 62.0, 12.0, color(WHITE, 0.9), Align::Left);
+    let cpu = panel.usage.cpu.map_or_else(|| "CPU --".into(), |value| format!("CPU {value:.1}%"));
+    let memory = panel.usage.memory_mb.map_or_else(|| "RAM -- MB".into(), |value| format!("RAM {value:.1} MB"));
+    cx.t(&cpu, 24.0, height - 42.0, 11.0, color(GRAY, 1.0), Align::Left);
+    cx.t(&memory, 24.0, height - 24.0, 11.0, color(GRAY, 1.0), Align::Left);
     cx.rrect(rect(LEFT, height - 64.0, RIGHT - LEFT, 64.0), 0.0, color([0, 0, 0], 1.0));
     let remaining = panel.content_bottom() - panel.scroll - (height - 64.0);
     if remaining > 1.0 {

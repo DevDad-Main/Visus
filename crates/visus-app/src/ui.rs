@@ -91,6 +91,66 @@ mod navigation_tests {
     use super::*;
 
     #[test]
+    fn thumbnails_follow_card_scale_and_clear_off_page() {
+        let mut notch = Notch::new(960.0);
+        notch.update_settings(|settings| { settings.open_scale = 0.8; settings.pill_style = visus_core::PillStyle::Floating; });
+        notch.handle(visus_core::Event::Windows(std::sync::Arc::new(vec![(1234, "Window".into())])));
+        notch.show_page(Page::Windows);
+        notch.hover(true);
+        for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+        let targets = window_thumbnail_targets(&notch, 2.0);
+        assert_eq!(targets.len(), 1);
+        let (handle, area) = targets[0];
+        assert_eq!(handle, 1234);
+        assert!((area.w - 92.0 * 0.8 * 2.0).abs() < 0.01);
+        let logical = to_logical(&notch, area.x / 2.0, area.y / 2.0);
+        let card = win_card(notch.shape().rect.x, 0);
+        assert!((logical.0 - card.x - 8.0).abs() < 0.01);
+        assert!((logical.1 - card.y - 9.0).abs() < 0.01);
+        notch.show_page(Page::Music);
+        assert!(window_thumbnail_targets(&notch, 2.0).is_empty());
+        notch.open_settings();
+        assert!(window_thumbnail_targets(&notch, 2.0).is_empty());
+    }
+
+    #[test]
+    fn settings_resource_footer_refreshes_at_one_second() {
+        let mut notch = Notch::new(960.0);
+        notch.open_settings();
+        for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+        assert!(idle_wake(&notch).is_some_and(|delay| delay <= std::time::Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn windows_tab_click_returns_the_launcher_focus_action() {
+        let mut notch = Notch::new(960.0);
+        notch.handle(visus_core::Event::Windows(std::sync::Arc::new(vec![(1234, "Game window".into())])));
+        notch.show_page(Page::Windows);
+        notch.hover(true);
+        for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+        let (_, target) = buttons(&notch).into_iter().find(|(button, _)| *button == Button::WindowFocus(0)).unwrap();
+        assert!(matches!(click(&mut notch, target.x + target.w / 2.0, target.y + target.h / 2.0), Outcome::FocusWindow(1234)));
+    }
+
+    #[test]
+    fn wide_game_hud_fits_host_at_large_user_scale() {
+        let mut notch = Notch::new(960.0);
+        notch.update_settings(|settings| { settings.scale = 1.25; settings.game_style = GameStyle::Bars; });
+        notch.handle(visus_core::Event::Game(true));
+        notch.handle(visus_core::Event::GameStats(GameStats {
+            cpu_temp: Some(60.0), gpu: Some(0.98), gpu_temp: Some(66.0), gpu_vram_used_gb: Some(11.5), gpu_vram_total_gb: Some(48.0), ..Default::default()
+        }));
+        for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+        let hit = hit_rect(&notch);
+        assert!(hit.x >= 0.0);
+        assert!(hit.x + hit.w <= 960.0);
+        for row in 0..5 {
+            let top = 5.0 - 14.0 + row as f32 * 3.0;
+            assert!(top >= -10.0 && top + 2.0 <= 10.0);
+        }
+    }
+
+    #[test]
     fn pill_styles_have_distinct_outlines_and_floating_input_offset() {
         for style in [visus_core::PillStyle::Attached, visus_core::PillStyle::Floating, visus_core::PillStyle::Soft] {
             let mut notch = Notch::new(960.0);
@@ -586,6 +646,22 @@ fn win_card(x0: f32, i: usize) -> Rect {
     rect(x0 + 36.0 + col * 228.0, 62.0 + row * 78.0, 216.0, 70.0)
 }
 
+#[cfg(any(windows, test))]
+pub fn window_thumbnail_targets(notch: &Notch, dpi: f32) -> Vec<(isize, Rect)> {
+    if !notch.is_open() || notch.page != Page::Windows || notch.settings_is_visible()
+        || notch.palette_is_open() || notch.is_animating() || notch.is_hidden() {
+        return Vec::new();
+    }
+    let bounds = notch.shape().rect;
+    let center = bounds.x + bounds.w / 2.0;
+    let scale = display_scale(notch);
+    notch.windows().iter().skip(notch.win_page() * WIN_GRID).take(WIN_GRID).enumerate().map(|(index, (handle, _))| {
+        let card = win_card(bounds.x, index);
+        (*handle, rect((center + (card.x + 8.0 - center) * scale) * dpi,
+            (top_offset(notch) + (card.y + 9.0) * scale) * dpi, 92.0 * scale * dpi, 52.0 * scale * dpi))
+    }).collect()
+}
+
 /// Splits "document - Application" so the card can show both.
 fn split_title(title: &str) -> (&str, &str) {
     title.rsplit_once(" - ").or_else(|| title.rsplit_once(" \u{2014} ")).map_or((title, ""), |(doc, app)| (doc, app))
@@ -604,13 +680,19 @@ fn draw_windows(cx: &mut Ctx, notch: &Notch, a: f32) {
         let rc = win_card(x0, slot);
         let (doc, app) = split_title(title);
         cx.rrect(rc, 16.0, color(WHITE, 0.07 * a));
-        tile_letter(cx, rect(rc.x + 12.0, rc.y + 12.0, 46.0, 46.0), if app.is_empty() { doc } else { app }, a);
-        let tw = rc.w - 76.0;
+        let text_x = if cfg!(windows) { 108.0 } else { 68.0 };
+        if cfg!(windows) {
+            cx.rrect(rect(rc.x + 8.0, rc.y + 9.0, 92.0, 52.0), 4.0, color(WHITE, 0.035 * a));
+            cx.t("No preview", rc.x + 54.0, rc.y + 40.0, 10.0, color(GRAY, 0.7 * a), Align::Center);
+        } else {
+            tile_letter(cx, rect(rc.x + 12.0, rc.y + 12.0, 46.0, 46.0), if app.is_empty() { doc } else { app }, a);
+        }
+        let tw = rc.w - text_x - 8.0;
         let top = cx.fit(doc, 14.0, tw);
-        cx.t(&top, rc.x + 68.0, rc.y + if app.is_empty() { 40.0 } else { 33.0 }, 14.0, color(WHITE, a), Align::Left);
+        cx.t(&top, rc.x + text_x, rc.y + if app.is_empty() { 40.0 } else { 33.0 }, 14.0, color(WHITE, a), Align::Left);
         if !app.is_empty() {
             let sub = cx.fit(app, 12.0, tw);
-            cx.t(&sub, rc.x + 68.0, rc.y + 52.0, 12.0, color(GRAY, a), Align::Left);
+            cx.t(&sub, rc.x + text_x, rc.y + 52.0, 12.0, color(GRAY, a), Align::Left);
         }
     }
     if wins.len() > WIN_GRID {
@@ -1883,7 +1965,7 @@ fn draw_game(cx: &mut Ctx, notch: &Notch, a: f32) {
             let lit = (frac.clamp(0.0, 1.0) * 5.0).ceil() as usize;
             for k in 0..5usize {
                 let on = 4 - k < lit;
-                cx.rrect(rect(gx, baseline - 16.8 + k as f32 * 3.6, 14.0, 2.4), 1.2, if on { color(heat(frac), a) } else { color(WHITE, 0.12 * a) });
+                cx.rrect(rect(gx, baseline - 14.0 + k as f32 * 3.0, 14.0, 2.0), 1.0, if on { color(heat(frac), a) } else { color(WHITE, 0.12 * a) });
             }
         } else {
             cx.ring(gx + 6.5, mid, 6.5, 2.4, frac.clamp(0.0, 1.0), heat(frac), a);
@@ -1910,6 +1992,9 @@ fn draw_game_compact(cx: &mut Ctx, notch: &Notch, a: f32) {
 
     let graph_x = bounds.x + 116.0;
     let graph_width = (bounds.w - 202.0).max(1.0);
+    if stats.fps.is_none() && frame_time(&stats).is_none() {
+        cx.t("No frame source", graph_x + graph_width / 2.0, mid + 3.5, 10.0, color(GRAY, 0.8 * a), Align::Center);
+    }
     let history = notch.game_history();
     let mut line = PathBuilder::new();
     let mut connected = false;
@@ -1943,6 +2028,9 @@ fn draw_game_card(cx: &mut Ctx, notch: &Notch, a: f32) {
     cx.t(&frame_text, x0 + w - 22.0, 26.0, 12.0, color(GRAY, a), Align::Right);
     // Frame-time history, newest on the right. Lower is smoother.
     let (gx, gw, gy, gh) = (x0 + 20.0, w - 40.0, 68.0, 28.0);
+    if frame_ms.is_none() && g.fps.is_none() {
+        cx.t("No frame-time source", x0 + w / 2.0, gy + 17.0, 11.0, color(GRAY, 0.8 * a), Align::Center);
+    }
     let tint = heat(frame_ms.map_or(0.0, |ms| (ms / FRAME_MS_MAX).clamp(0.0, 1.0)));
     cx.rrect(rect(gx, gy + gh + 1.0, gw, 1.0), 0.5, color(WHITE, 0.10 * a));
     let pts: Vec<(f32, f32)> = hist
@@ -1990,20 +2078,20 @@ fn draw_game_card(cx: &mut Ctx, notch: &Notch, a: f32) {
         let y = GAME_CARD_HEAD + i as f32 * GAME_CARD_ROW;
         cx.rrect(rect(x0 + 10.0, y, w - 20.0, GAME_CARD_ROW - 6.0), 12.0, color(WHITE, 0.07 * a));
         let mid = y + (GAME_CARD_ROW - 6.0) / 2.0;
-        // The last row has only one reading, so centre the whole label/ring/value group.
-        let (label_x, ring_x, value_x) = if temp.is_some() {
-            (x0 + 24.0, x0 + 84.0, x0 + 98.0)
-        } else {
-            let group_w = 98.0 + cx.text_width(text, 14.0) - 24.0;
-            let shift = 10.0 + (w - 20.0 - group_w) / 2.0 - 24.0;
-            (x0 + 24.0 + shift, x0 + 84.0 + shift, x0 + 98.0 + shift)
-        };
+        let label_width = cx.text_width(name, 10.0);
+        let value_width = cx.text_width(text, 14.0);
+        let second_width = temp.as_ref().map_or(0.0, |(_, value)| 30.0 + cx.text_width(value, 14.0));
+        let group_width = label_width + 12.0 + 22.0 + value_width + second_width;
+        let label_x = x0 + (w - group_width) / 2.0;
+        let ring_x = label_x + label_width + 12.0 + 6.5;
+        let value_x = ring_x + 14.0;
         cx.t(name, label_x, mid + 3.5, 10.0, color(GRAY, a), Align::Left);
         cx.ring(ring_x, mid, 6.5, 2.4, frac.clamp(0.0, 1.0), heat(*frac), a);
         cx.t(text, value_x, mid + 5.0, 14.0, color(WHITE, a), Align::Left);
         if let Some((tf, tt)) = temp {
-            cx.ring(x0 + 166.0, mid, 6.5, 2.4, tf.clamp(0.0, 1.0), heat(*tf), a);
-            cx.t(tt, x0 + 180.0, mid + 5.0, 14.0, color(WHITE, a), Align::Left);
+            let second_ring_x = value_x + value_width + 16.0;
+            cx.ring(second_ring_x, mid, 6.5, 2.4, tf.clamp(0.0, 1.0), heat(*tf), a);
+            cx.t(tt, second_ring_x + 14.0, mid + 5.0, 14.0, color(WHITE, a), Align::Left);
         }
     }
 }
@@ -2651,8 +2739,9 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
                 }
             }
             Button::WindowFocus(i) => {
-                if let Some((h, _)) = notch.windows().get(i) {
-                    visus_platform::focus_window(*h);
+                if let Some((h, _)) = notch.windows().get(i).cloned() {
+                    notch.hover(false);
+                    return Outcome::FocusWindow(h);
                 }
             }
             Button::NewNote => notch.open_palette_with("note "),
@@ -2729,6 +2818,7 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
 pub fn idle_wake(notch: &Notch) -> Option<std::time::Duration> {
     use std::time::Duration;
     let mut wake = notch.refresh_interval();
+    if notch.settings_is_open() { wake = Some(wake.map_or(Duration::from_secs(1), |value| value.min(Duration::from_secs(1)))); }
     if !notch.is_hidden() {
         let secs = chrono::Timelike::second(&chrono::Local::now()) as u64;
         let minute = Duration::from_secs(60 - secs) + Duration::from_millis(20);
@@ -3173,6 +3263,11 @@ pub fn region_rect(notch: &Notch) -> Rect {
 pub fn display_scale(notch: &Notch) -> f32 {
     let progress = if notch.settings_is_visible() { notch.settings_progress().clamp(0.0, 1.0) } else { 0.0 };
     let settings = notch.settings();
+    if notch.game_active() && !notch.settings_is_visible() {
+        let shape = notch.shape();
+        let host_width = shape.rect.x * 2.0 + shape.rect.w;
+        return settings.scale.min((host_width - 8.0) / (shape.rect.w + flare(&shape) * 2.0));
+    }
     let open = if notch.settings_is_visible() || notch.game_active() { 0.0 } else {
         ((notch.shape().rect.h - 100.0) / 148.0).clamp(0.0, 1.0)
     };

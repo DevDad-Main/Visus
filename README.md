@@ -3,6 +3,10 @@
 A tiny always-on-top pill at the top of your screen that shows what matters at a glance and gets
 out of the way. Native Rust, no web engine, near-zero CPU when idle.
 
+Windows open-window cards include DWM live thumbnail previews without a screenshot polling loop.
+Cards keep their title if Windows cannot provide a preview (for example protected/minimized content).
+Previews are released when the Windows page is hidden; Linux retains its existing title cards.
+
 ## Features
 
 - **Music**: any player (Windows media sessions / Linux MPRIS), album art, transport controls, synced lyrics.
@@ -72,6 +76,18 @@ A Visus instance on your local streaming client can only measure the local machi
 and permission restrictions may still hide individual counters; Visus does not invent missing values.
 Pills/Bars/Card display VRAM when available; Compact remains the FPS-only layout. Linux keeps NVIDIA
 and AMD collection with dedicated VRAM where exposed. Real cloud-rig validation is still required.
+
+Windows FPS/frame-time collection accepts an existing live PresentMon CSV. Set its path under
+Settings -> Gaming -> Frame-time CSV, or set `VISUS_PRESENTMON_CSV`. Visus reads CPUFrameTime or
+MsBetweenPresents samples, groups PID/swapchain streams, and computes a recent mean frame time and
+reciprocal FPS. Use a game-filtered, continuously flushed capture where possible. Missing, invalid,
+or stale data shows `--` and a source status, not fabricated FPS. Visus does not bundle, launch, or
+elevate PresentMon; capture permissions and cloud-provider restrictions still apply. Capture timings
+are not guaranteed displayed-frame or frame-generation FPS. GPU temperature is not frame time.
+
+The settings sidebar footer always shows the running app version and Visus's own CPU/RAM usage.
+CPU is normalized to total machine capacity; RAM is resident memory in decimal MB. These readings
+refresh about once per second while settings is open, not as a background system-wide poll.
 Sauron has molten trails and lid flames clipped inside the notch. Cat has breathing, slow blinks and
 visual purring; Robot has a gentle bob and reply-light pulses. These effects are silent. Expressions
 controls the extra purr/reply flourishes; awake animated styles redraw at up to 20 FPS.

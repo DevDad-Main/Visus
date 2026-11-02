@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod actions;
+mod app_usage;
 mod artfetch;
 mod calendar;
 mod downloads;
@@ -78,6 +79,8 @@ struct App {
     window: Option<Rc<Window>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
     hwnd: isize,
+    #[cfg(windows)]
+    thumbnails: platform::WindowThumbnails,
     notch: Notch,
     text: text::Text,
     sampler: Option<stats::Sampler>,
@@ -132,6 +135,8 @@ impl App {
         buf[(rows * size.width) as usize..].fill(0);
         window.pre_present_notify();
         buf.present().unwrap();
+        #[cfg(windows)]
+        self.thumbnails.sync(self.hwnd, &ui::window_thumbnail_targets(&self.notch, scale));
 
         if self.hwnd != 0 {
             let animating = self.notch.is_animating();
@@ -907,6 +912,8 @@ fn main() {
         window: None,
         surface: None,
         hwnd: 0,
+        #[cfg(windows)]
+        thumbnails: platform::WindowThumbnails::default(),
         notch,
         text: text::Text::new(),
         sampler: stats::Sampler::new(),

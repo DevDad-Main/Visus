@@ -166,6 +166,7 @@ pub struct Settings {
     pub hide_in_fullscreen: bool,
     pub game_hud: bool,
     pub game_style: GameStyle,
+    pub frame_time_csv: Option<String>,
     /// Look for a newer release in the background (a few seconds after start, then twice a day).
     pub auto_update: bool,
     /// Show the idle eye when nothing has happened for a while.
@@ -256,6 +257,7 @@ impl Default for Settings {
             hide_in_fullscreen: true,
             game_hud: true,
             game_style: GameStyle::Pills,
+            frame_time_csv: None,
             auto_update: true,
             mascot: true,
             idle_secs: 45,

@@ -9,6 +9,8 @@ mod network;
 mod uninstall;
 mod window;
 mod winlist;
+mod thumbnails;
+pub use thumbnails::WindowThumbnails;
 pub use winlist::{focus_window, list_windows};
 
 pub use apps::{launch, open_path, open_url, screenshot};

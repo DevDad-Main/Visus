@@ -6,7 +6,7 @@ use std::time::Duration;
 use visus_core::{Event, UpdateStatus, is_newer};
 use visus_platform::Emit;
 
-const RELEASES: &str = "https://api.github.com/repos/DevDad-Main/Visus/releases?per_page=1";
+const RELEASES: &str = "https://api.github.com/repos/DevDad-Main/Visus/releases/latest";
 const USER_AGENT: &str = concat!("Visus/", env!("CARGO_PKG_VERSION"), " (https://github.com/DevDad-Main/Visus)");
 
 #[derive(Clone)]
@@ -43,8 +43,15 @@ pub fn http_get(url: &str) -> Result<Vec<u8>, String> {
 
 fn fetch_latest() -> Result<(String, Release), String> {
     let body = String::from_utf8(http_get(RELEASES).map_err(|e| format!("Update check failed: {e}"))?).map_err(|e| e.to_string())?;
+    parse_release(&body)
+}
+
+fn parse_release(body: &str) -> Result<(String, Release), String> {
     let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-    let rel = json.get(0).ok_or("No releases found")?;
+    let rel = &json;
+    if rel["draft"].as_bool() == Some(true) || rel["prerelease"].as_bool() == Some(true) {
+        return Err("The update response is not a stable published release".into());
+    }
     let tag = rel["tag_name"].as_str().ok_or("Release has no tag")?.to_string();
     let asset = |name: &str| {
         rel["assets"].as_array()?.iter().find(|a| a["name"].as_str() == Some(name))?["browser_download_url"].as_str().map(String::from)
@@ -62,6 +69,7 @@ fn fetch_latest() -> Result<(String, Release), String> {
 }
 
 pub fn check(emit: Emit) {
+    emit(Event::Update(UpdateStatus::Checking));
     check_inner(emit, false);
 }
 
@@ -93,6 +101,29 @@ pub fn install(emit: Emit) {
         Ok(()) => std::process::exit(0),
         Err(e) => emit(Event::Update(UpdateStatus::Failed(e))),
     });
+}
+
+#[cfg(test)]
+mod release_tests {
+    use super::*;
+
+    #[test]
+    fn stable_update_response_reads_version_and_installer() {
+        let body = r#"{"tag_name":"v99.0.0","html_url":"https://github.com/DevDad-Main/Visus/releases/tag/v99.0.0","assets":[{"name":"Visus-Setup.exe","browser_download_url":"https://example.com/Visus-Setup.exe"},{"name":"Visus-Setup.exe.sha256","browser_download_url":"https://example.com/Visus-Setup.exe.sha256"}]}"#;
+        let (version, release) = parse_release(body).unwrap();
+        assert_eq!(version, "v99.0.0");
+        assert!(is_newer(&version, env!("CARGO_PKG_VERSION")));
+        assert!(release.setup.is_some() && release.setup_sha.is_some());
+        assert!(parse_release(r#"{"tag_name":"v99.0.0","prerelease":true}"#).is_err());
+        assert!(parse_release(r#"{"message":"rate limited"}"#).is_err());
+    }
+
+    #[test]
+    #[ignore]
+    fn live_update_check_fetches_latest_without_installing() {
+        let (latest, _) = fetch_latest().expect("read-only GitHub release check");
+        eprintln!("Installed: {}; GitHub latest: {}; update available: {}", env!("CARGO_PKG_VERSION"), latest, is_newer(&latest, env!("CARGO_PKG_VERSION")));
+    }
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]

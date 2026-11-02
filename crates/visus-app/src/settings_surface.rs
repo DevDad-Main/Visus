@@ -31,6 +31,8 @@ pub enum KeyAction {
 
 pub fn render(text: &crate::text::Text, notch: &Notch, scale: f32) -> Option<Rc<Pixmap>> {
     PANEL.with_borrow_mut(|panel| {
+        panel.usage = crate::app_usage::sample();
+        panel.frame_source = crate::game::frame_source_note();
         panel.close_hovered = ready(notch) && notch.pointer().is_some_and(|(x, y)| {
             let (x, y) = point(notch, x, y);
             settings::CLOSE.contains(x, y)
@@ -40,11 +42,12 @@ pub fn render(text: &crate::text::Text, notch: &Notch, scale: f32) -> Option<Rc<
         panel.battery = notch.battery();
         panel.scroll(0.0, settings::HEIGHT);
         panel.update_available = matches!(notch.update_status(), UpdateStatus::Available { .. });
-        if settings::SECTIONS[panel.section].title == "Updates" {
+        if panel.update_status != *notch.update_status() || settings::SECTIONS[panel.section].title == "Updates" {
+            panel.update_status = notch.update_status().clone();
             panel.status = match notch.update_status() {
                 UpdateStatus::Idle => String::new(),
                 UpdateStatus::Checking => "Checking for updates...".into(),
-                UpdateStatus::UpToDate => "Visus is up to date".into(),
+                UpdateStatus::UpToDate => format!("Visus {} is up to date", env!("CARGO_PKG_VERSION")),
                 UpdateStatus::Available { version } => format!("Update available: {version}"),
                 UpdateStatus::Installing => "Installing update...".into(),
                 UpdateStatus::Failed(error) => format!("Update failed: {error}"),
@@ -96,6 +99,7 @@ fn apply(notch: &mut Notch, command: Option<Command>) -> Outcome {
             Outcome::None
         }
         Some(Command::Action("updates")) => {
+            if matches!(notch.update_status(), UpdateStatus::Checking | UpdateStatus::Installing) { return Outcome::None; }
             if matches!(notch.update_status(), UpdateStatus::Available { .. }) {
                 notch.set_update_status(UpdateStatus::Installing);
                 Outcome::InstallUpdate
@@ -324,6 +328,22 @@ mod tests {
         assert!(!Rc::ptr_eq(&initial, &changed));
         PANEL.with_borrow_mut(|panel| panel.section = 1);
         assert!(!Rc::ptr_eq(&changed, &render(&text, &notch, 1.0).unwrap()));
+    }
+
+    #[test]
+    fn updater_feedback_and_resource_footer_survive_tab_changes() {
+        let mut notch = opened();
+        let text = crate::text::Text::new();
+        notch.set_update_status(UpdateStatus::UpToDate);
+        for section in 0..settings::SECTIONS.len() {
+            PANEL.with_borrow_mut(|panel| { panel.section = section; panel.scroll = 500.0; });
+            let pixels = render(&text, &notch, 1.0).unwrap();
+            PANEL.with_borrow(|panel| {
+                assert!(panel.status.contains(env!("CARGO_PKG_VERSION")));
+                assert!(panel.usage.memory_mb.is_some());
+            });
+            assert!((630..710).any(|y| (24..176).any(|x| pixels.pixel(x, y).unwrap().red() > 150)));
+        }
     }
 
     #[test]

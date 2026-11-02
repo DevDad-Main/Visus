@@ -80,7 +80,7 @@
           <button data-shot="hud_compact" data-w="376" data-h="40">Compact</button>
         </div>
       </div>
-      <p class="fine">Windows GPU collection tries NVAPI, NVIDIA-SMI, and WMI/CIM performance counters, with independent GPU-load, temperature, and VRAM availability. Linux supports NVIDIA-SMI and AMD sysfs; FPS comes from active MangoHud logs. Missing values stay unavailable, not invented.</p>
+      <p class="fine">Windows GPU collection tries NVAPI, NVIDIA-SMI, and WMI/CIM performance counters. Windows FPS/frame-time graphs require a live PresentMon CSV configured in Gaming settings; Visus does not launch a capture tool. Linux FPS comes from active MangoHud logs. Missing or stale frame data stays unavailable, not invented.</p>
       <p class="fine"><strong>GeForce NOW / SalsaNow:</strong> run Visus inside the cloud rig to read its GPU and VRAM. The fallback strategy is adapted from SalsaStats; SalsaStats is not changed or required. A local streaming client cannot report the remote rig's counters. Provider-specific runtime validation is ongoing.</p>
     </div>
   </section>
@@ -98,7 +98,7 @@
     <div class="wrap center">
       <p class="eyebrow">A closer look</p>
       <h2>One pill. Every page.</h2>
-      <p class="sub">Move through pages with the side arrows, wheel, or arrow keys. These are captured straight from the app.</p>
+      <p class="sub">Move through pages with the side arrows, wheel, or arrow keys. Windows open-app cards include native live thumbnails where supported, with title fallback for unavailable previews. These captures come straight from the app.</p>
       <div class="showcase">
       <div class="show">
         <div class="show-bg" aria-hidden="true"></div>
@@ -181,7 +181,7 @@
           <button data-shot="settings_alerts" data-w="888" data-h="722">Alerts</button>
         </div>
       </div>
-      <p class="fine">Closed clock and battery ring: 12-32 px. Header clock: 16-30 px. Closed/open scales: 0.60-1.25x independently. Includes ring-height matching, custom gaps/padding, live charging previews, reduced motion, hover timing, and per-alert toggles. Scrollbars and More below reveal longer sections.</p>
+      <p class="fine">Closed clock and battery ring: 12-32 px. Header clock: 16-30 px. Closed/open scales: 0.60-1.25x independently. Includes ring-height matching, custom padding, live charging previews, reduced motion, hover timing, and per-alert toggles. A fixed footer shows the running version and Visus CPU/RAM usage on every tab.</p>
       <h3 class="pill-styles-title">Three shapes. Your choice.</h3>
       <div class="showcase">
         <div class="show pill-style-show">
@@ -240,6 +240,6 @@
   </div>
 </footer>
 
-<script src="script.js?v=1.12.0"></script>
+<script src="script.js?v=1.13.0"></script>
 </body>
 </html>
