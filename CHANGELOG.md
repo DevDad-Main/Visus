@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.12.0 - 2026-11-02
+
+### Added
+
+- Attached, Floating, and Soft pill styles with matching previews and input regions.
+- Independent closed-pill and open-page scale, battery ring diameter, automatic clock/ring height matching, ring-clock gap, and outer padding.
+- Optional dim clock, accent modes (Media/Mascot/Fixed), animation intensity, reduced motion, hover-open/close delays, and per-category alert switches.
+- Scrollbars, clickable More below cues, contextual setting hints, automatic preview switching, and a top-right close button with hover feedback.
+- Mascot reaction guide, cat breathing/slow blinks, robot reply lights, and a fiery Sauron iris with molten trails and framing arches. Effects remain silent.
+- Windows GPU telemetry fallbacks adapted from SalsaStats: NVAPI, NVIDIA-SMI, and WMI/CIM counters. SalsaStats itself is unchanged.
+- Optional dedicated VRAM in Pills/Bars/Card HUDs. GPU load no longer depends on temperature availability, and collection failures are retried.
+- Local rebuild-on-save tooling with an optimized incremental development profile.
+
+### Fixed
+
+- Large clocks no longer dim accidentally; hidden battery rings reclaim their slot and center the clock.
+- Idle pill width follows measured clock content rather than leaving unused visualizer space.
+- Settings now uses the black pill surface and its outline; its cached renderer avoids repeated expensive rasterization.
+- Settings previews use live battery status and media-derived accents.
+
+### Testing And Limitations
+
+- Linux regression tests cover geometry, hit testing, persistence, mascot clipping, telemetry parsing, command deadlines, and GPU/VRAM without temperatures.
+- Windows build/tests run in CI. GeForce NOW/SalsaNow provider-specific telemetry still needs a real session test.
+- Visus must run inside the cloud rig to read its GPU. A local streaming client cannot expose remote GPU/VRAM counters to Visus.
+- Driver/provider restrictions may leave individual readings unavailable; no synthetic values are substituted. Windows FPS remains unavailable without a frame-time source.
+- Linux builds through v1.11.0 require a one-time manual upgrade before in-pill updating is available.
+
 ## 1.11.1 - 2026-11-02
 
 - Implement Linux in-pill updates for user-writable x86_64 installations, with archive checksum

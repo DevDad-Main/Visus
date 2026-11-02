@@ -17,8 +17,13 @@ pub struct GameStats {
     /// 0.0..=1.0
     pub cpu: f32,
     pub cpu_temp: Option<f32>,
+    /// Host-local GPU utilization, 0.0..=1.0, independent of temperature availability.
     pub gpu: Option<f32>,
+    /// GPU temperature in degrees Celsius.
     pub gpu_temp: Option<f32>,
+    /// Dedicated GPU memory in GiB; unavailable counters remain `None`.
+    pub gpu_vram_used_gb: Option<f32>,
+    pub gpu_vram_total_gb: Option<f32>,
     /// 0.0..=1.0
     pub ram: f32,
     pub ram_used_gb: f32,
@@ -34,5 +39,6 @@ pub enum GameItem {
     CpuTemp,
     Gpu,
     GpuTemp,
+    Vram,
     Ram,
 }

@@ -23,7 +23,8 @@ pub fn prepare_window(h: isize) {
 pub fn set_window_region(h: isize, x: i32, y: i32, w: i32, height: i32, radius: i32) {
     unsafe {
         // Start above the window so only the bottom corners are rounded.
-        let rgn = CreateRoundRectRgn(x, y - radius * 2, x + w, y + height, radius * 2, radius * 2);
+        let top = if y > 0 { y } else { y - radius * 2 };
+        let rgn = CreateRoundRectRgn(x, top, x + w, y + height, radius * 2, radius * 2);
         // The system owns the region after a successful call.
         SetWindowRgn(hwnd(h), Some(rgn), true);
     }

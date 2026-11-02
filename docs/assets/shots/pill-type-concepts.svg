@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="920" viewBox="0 0 1100 920">
+  <rect width="1100" height="920" fill="#242628"/>
+  <g font-family="DejaVu Sans, sans-serif" fill="#f1f1f1">
+    <text x="44" y="53" font-size="25" font-weight="bold">Visus / Pill Shape Studies</text>
+    <text x="44" y="82" font-size="14" fill="#aeb4b6">Concepts only. Same content, different silhouettes. Closed at left, expanded at right.</text>
+    <text x="44" y="146" font-size="19">01  Attached</text>
+    <text x="44" y="170" font-size="13" fill="#aeb4b6">Current identity: melts into the screen edge.</text>
+    <text x="44" y="346" font-size="19">02  Floating</text>
+    <text x="44" y="370" font-size="13" fill="#aeb4b6">Detached capsule with room above it.</text>
+    <text x="44" y="546" font-size="19">03  Soft Notch</text>
+    <text x="44" y="570" font-size="13" fill="#aeb4b6">No flares. Broad, gently rounded lower corners.</text>
+    <text x="44" y="746" font-size="19">04  Rail</text>
+    <text x="44" y="770" font-size="13" fill="#aeb4b6">Very quiet while closed; unfolds into a compact console.</text>
+  </g>
+  <g stroke="#6a6d70" stroke-width="1">
+    <path d="M44 190H1056M44 390H1056M44 590H1056M44 790H1056"/>
+  </g>
+  <g fill="#000">
+    <path d="M180 190H420Q406 190 406 204V218Q406 232 392 232H208Q194 232 194 218V204Q194 190 180 190Z"/>
+    <path d="M598 190H1040Q1026 190 1026 204V282Q1026 306 1002 306H636Q612 306 612 282V204Q612 190 598 190Z"/>
+    <rect x="194" y="404" width="212" height="42" rx="21"/>
+    <rect x="612" y="404" width="414" height="116" rx="22"/>
+    <path d="M194 590H406V602Q406 634 374 634H226Q194 634 194 602Z"/>
+    <path d="M612 590H1026V658Q1026 706 978 706H660Q612 706 612 658Z"/>
+    <rect x="216" y="790" width="168" height="8" rx="4"/>
+    <path d="M612 790H1026V894H612Z"/>
+  </g>
+  <g font-family="DejaVu Sans, sans-serif">
+    <g fill="none" stroke="#55ce91" stroke-width="2.5">
+      <circle cx="221" cy="211" r="8"/><circle cx="221" cy="425" r="8"/><circle cx="221" cy="612" r="8"/>
+    </g>
+    <g fill="#fff" font-size="21">
+      <text x="247" y="219">18:24</text><text x="247" y="433">18:24</text><text x="247" y="620">18:24</text>
+    </g>
+    <g fill="#92999c" font-size="11">
+      <text x="637" y="214">MUSIC</text><text x="637" y="428">MUSIC</text><text x="637" y="614">MUSIC</text><text x="637" y="814">MUSIC</text>
+    </g>
+    <g fill="#efefef" font-size="18">
+      <text x="637" y="246">Midnight City</text><text x="637" y="460">Midnight City</text><text x="637" y="646">Midnight City</text><text x="637" y="846">Midnight City</text>
+    </g>
+    <g fill="#92999c" font-size="12">
+      <text x="637" y="267">M83</text><text x="637" y="481">M83</text><text x="637" y="667">M83</text><text x="637" y="867">M83</text>
+    </g>
+    <g stroke="#ddd" stroke-width="2" fill="none" stroke-linecap="round">
+      <path d="M925 237L917 245L925 253M976 237L984 245L976 253M946 237V253M954 237V253"/>
+      <path d="M925 451L917 459L925 467M976 451L984 459L976 467M946 451V467M954 451V467"/>
+      <path d="M925 637L917 645L925 653M976 637L984 645L976 653M946 637V653M954 637V653"/>
+      <path d="M925 837L917 845L925 853M976 837L984 845L976 853M946 837V853M954 837V853"/>
+    </g>
+    <g stroke="#55ce91" stroke-width="2">
+      <path d="M637 285H777M637 499H777M637 685H777M637 885H777"/>
+    </g>
+    <g fill="#aeb4b6" font-size="11">
+      <text x="469" y="218">EXPAND</text><text x="469" y="432">EXPAND</text><text x="469" y="620">EXPAND</text><text x="469" y="817">EXPAND</text>
+    </g>
+  </g>
+</svg>

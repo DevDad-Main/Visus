@@ -6,6 +6,9 @@ use sysinfo::System;
 use visus_core::{Event, GameStats};
 use visus_platform::Emit;
 
+#[path = "game_gpu.rs"]
+mod gpu;
+
 #[cfg(target_os = "linux")]
 use std::io::{Read, Seek, SeekFrom};
 #[cfg(target_os = "linux")]
@@ -29,9 +32,8 @@ pub fn set_active(on: bool, emit: &Emit) {
 
 fn run(emit: Emit) {
     let Ok(mut sys) = System::new() else { return };
-    let mut gpu: Option<(f32, f32)> = None;
+    let mut gpu = gpu::Metrics::default();
     let mut fps = FpsSource::new();
-    let mut smi_ok = true;
     let mut tick = 0u32;
     loop {
         std::thread::sleep(Duration::from_millis(1000));
@@ -43,7 +45,7 @@ fn run(emit: Emit) {
         sys.refresh_cpu_usage();
         sys.refresh_memory();
         if tick % 2 == 0 {
-            gpu = if smi_ok { nvidia().or_else(|| { smi_ok = false; None }) } else { None }.or_else(amd);
+            gpu = gpu::poll();
         }
         tick += 1;
         let frame = fps.poll();
@@ -52,8 +54,10 @@ fn run(emit: Emit) {
         emit(Event::GameStats(GameStats {
             cpu: (sys.global_cpu_usage() / 100.0).clamp(0.0, 1.0),
             cpu_temp: cpu_temp(),
-            gpu: gpu.map(|g| (g.0 / 100.0).clamp(0.0, 1.0)),
-            gpu_temp: gpu.map(|g| g.1),
+            gpu: gpu.usage.map(|usage| usage / 100.0),
+            gpu_temp: gpu.temperature,
+            gpu_vram_used_gb: gpu.used_gb,
+            gpu_vram_total_gb: gpu.total_gb,
             ram: if total > 0.0 { (used / total).clamp(0.0, 1.0) } else { 0.0 },
             ram_used_gb: used / GB,
             fps: frame.map(|(fps, _)| fps),
@@ -282,34 +286,6 @@ mod tests {
         assert_eq!(tail.read_latest(), Some((90.0, 11.1)));
         let _ = std::fs::remove_file(path);
     }
-}
-
-/// (utilisation %, temperature C) from the NVIDIA driver tool, if installed.
-fn nvidia() -> Option<(f32, f32)> {
-    let mut cmd = std::process::Command::new("nvidia-smi");
-    cmd.args(["--query-gpu=utilization.gpu,temperature.gpu", "--format=csv,noheader,nounits"]);
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
-    let out = cmd.output().ok()?;
-    let text = String::from_utf8(out.stdout).ok()?;
-    let mut it = text.lines().next()?.split(',').map(|v| v.trim().parse::<f32>());
-    Some((it.next()?.ok()?, it.next()?.ok()?))
-}
-
-#[cfg(target_os = "linux")]
-fn amd() -> Option<(f32, f32)> {
-    for card in std::fs::read_dir("/sys/class/drm").ok()?.flatten() {
-        let dev = card.path().join("device");
-        let Ok(busy) = std::fs::read_to_string(dev.join("gpu_busy_percent")) else { continue };
-        let temp = std::fs::read_dir(dev.join("hwmon")).ok()?.flatten().find_map(|h| std::fs::read_to_string(h.path().join("temp1_input")).ok())?;
-        return Some((busy.trim().parse().ok()?, temp.trim().parse::<f32>().ok()? / 1000.0));
-    }
-    None
-}
-
-#[cfg(not(target_os = "linux"))]
-fn amd() -> Option<(f32, f32)> {
-    None
 }
 
 #[cfg(target_os = "linux")]

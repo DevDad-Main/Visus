@@ -91,6 +91,243 @@ mod navigation_tests {
     use super::*;
 
     #[test]
+    fn pill_styles_have_distinct_outlines_and_floating_input_offset() {
+        for style in [visus_core::PillStyle::Attached, visus_core::PillStyle::Floating, visus_core::PillStyle::Soft] {
+            let mut notch = Notch::new(960.0);
+            notch.update_settings(|settings| { settings.pill_style = style; settings.mascot = false; });
+            for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+            let shape = notch.shape();
+            assert_eq!(flare(&shape) > 0.0, style == visus_core::PillStyle::Attached);
+            let outline = pill_path(&shape).unwrap();
+            let bounds = outline.bounds();
+            assert!((bounds.width() - shape.rect.w - 2.0 * flare(&shape)).abs() < 0.01);
+            let mut pixels = Pixmap::new(960, 100).unwrap();
+            draw(&mut pixels, &Text::new(), &notch, 1.0);
+            let gap = top_offset(&notch);
+            if gap > 0.0 {
+                assert!(pixels.pixels()[..gap as usize * 960].iter().all(|pixel| pixel.alpha() == 0));
+                assert!(!hit_rect(&notch).contains(480.0, gap - 1.0));
+            }
+            let logical = to_logical(&notch, 480.0, gap + 10.0);
+            assert_eq!(logical, (480.0, 10.0));
+            assert!(hit_rect(&notch).contains(480.0, gap + 10.0));
+            assert!(content_bottom(&notch) >= gap + shape.rect.h);
+        }
+    }
+
+    #[test]
+    fn cloud_gpu_without_temperature_keeps_load_and_vram_in_hud() {
+        let mut notch = Notch::new(960.0);
+        notch.handle(visus_core::Event::Game(true));
+        notch.handle(visus_core::Event::GameStats(GameStats {
+            gpu: Some(0.73), gpu_vram_used_gb: Some(6.5), gpu_vram_total_gb: Some(24.0), ..Default::default()
+        }));
+        assert!(notch.game_items().contains(&GameItem::Gpu));
+        assert!(notch.game_items().contains(&GameItem::Vram));
+        assert!(!notch.game_items().contains(&GameItem::GpuTemp));
+        assert_eq!(notch.game_rows(), 4);
+        let (label, fraction, value) = game_reading(&notch.game_stats(), GameItem::Vram);
+        assert_eq!(label, "VRAM");
+        assert_eq!(value, "6.5GB");
+        assert!((fraction - 6.5 / 24.0).abs() < 0.001);
+        for style in [GameStyle::Pills, GameStyle::Bars, GameStyle::Card] {
+            notch.update_settings(|settings| settings.game_style = style);
+            for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+            let mut pixels = Pixmap::new(960, 520).unwrap();
+            draw(&mut pixels, &Text::new(), &notch, 1.0);
+            assert!(pixels.pixels().iter().any(|pixel| pixel.red() > 200));
+        }
+    }
+
+    #[test]
+    fn reduced_motion_keeps_decorative_mascots_static() {
+        let text = Text::new();
+        for style in [EyeStyle::Sauron, EyeStyle::Cat, EyeStyle::Robot] {
+            let mut captures = Vec::new();
+            for time in [2.0, 7.0] {
+                let mut notch = Notch::new(960.0);
+                notch.update_settings(|settings| { settings.eye_style = style; settings.reduced_motion = true; });
+                notch.rewind_activity(std::time::Duration::from_secs_f32(notch.settings().idle_secs as f32 + time));
+                for _ in 0..300 { notch.tick(std::time::Duration::from_millis(16)); }
+                let mut pixels = Pixmap::new(960, 100).unwrap();
+                let mut cx = Ctx { accent: notch.theme(), ink: WHITE, pm: &mut pixels, text: &text, scale: 1.0, ox: 0.0, oy: 0.0 };
+                draw_eye(&mut cx, &notch, 1.0);
+                captures.push(pixels.data().to_vec());
+            }
+            assert_eq!(captures[0], captures[1], "{style:?} should stay still");
+        }
+    }
+
+    #[test]
+    fn living_mascots_animate_inside_the_notch() {
+        let text = Text::new();
+        for style in [EyeStyle::Sauron, EyeStyle::Cat, EyeStyle::Robot] {
+            let mut captures = Vec::new();
+            for time in [2.0, 7.0, 10.5] {
+                let mut notch = Notch::new(960.0);
+                notch.update_settings(|settings| settings.eye_style = style);
+                notch.rewind_activity(std::time::Duration::from_secs_f32(notch.settings().idle_secs as f32 + time));
+                for _ in 0..300 { notch.tick(std::time::Duration::from_millis(16)); }
+                let mut pixels = Pixmap::new(960, 100).unwrap();
+                let mut cx = Ctx { accent: notch.theme(), ink: WHITE, pm: &mut pixels, text: &text, scale: 1.0, ox: 0.0, oy: 0.0 };
+                draw_eye(&mut cx, &notch, 1.0);
+                let bounds = notch.shape().rect;
+                let bottom = bounds.h.ceil() as usize;
+                assert!(pixels.pixels()[bottom * 960..].iter().all(|pixel| pixel.alpha() == 0));
+                assert!(pixels.pixels().iter().any(|pixel| pixel.alpha() > 0));
+                captures.push(pixels.data().to_vec());
+            }
+            assert_ne!(captures[0], captures[1], "{style:?}");
+            assert_ne!(captures[1], captures[2], "{style:?}");
+        }
+    }
+
+    #[test]
+    fn matched_ring_height_tracks_each_clock_face() {
+        let text = Text::new();
+        for style in ClockStyle::ALL {
+            for size in [20.0, 32.0] {
+                let mut notch = Notch::new(960.0);
+                notch.update_settings(|settings| {
+                    settings.clock_style = style;
+                    settings.clock_size = size;
+                    settings.battery_match_clock = true;
+                });
+                notch.handle(visus_core::Event::Power { on_ac: true, percent: 64 });
+                sync_closed_layout(&mut notch, &text);
+                let expected = match style {
+                    ClockStyle::Classic => {
+                        let clock = chrono::Local::now().format(clock_fmt(&notch)).to_string();
+                        let (top, bottom) = text.vertical_bounds(&clock, size);
+                        bottom - top
+                    }
+                    ClockStyle::Flip => size * 1.3,
+                    ClockStyle::Led => size,
+                };
+                assert!((notch.closed_ring_width() - expected).abs() < 0.001);
+                assert_eq!(notch.settings().battery_ring_size, 16.0);
+            }
+        }
+    }
+
+    #[test]
+    fn measured_idle_layout_has_exact_gap_and_right_padding() {
+        let text = Text::new();
+        for style in ClockStyle::ALL {
+            let mut notch = Notch::new(960.0);
+            notch.update_settings(|settings| {
+                settings.clock_style = style;
+                settings.clock_size = 32.0;
+                settings.battery_ring_size = 32.0;
+                settings.mascot = false;
+            });
+            notch.handle(visus_core::Event::Power { on_ac: false, percent: 72 });
+            sync_closed_layout(&mut notch, &text);
+            let mut widths = Vec::new();
+            for gap in [4.0, 32.0] {
+                notch.update_settings(|settings| settings.ring_clock_gap = gap);
+                sync_closed_layout(&mut notch, &text);
+                for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+                let bounds = notch.shape().rect;
+                let clock_width = notch.closed_clock_width().unwrap();
+                let clock_left = closed_clock_x(&notch) - clock_width / 2.0;
+                let ring_right = bounds.x + 16.0 + notch.closed_ring_width();
+                assert!((clock_left - ring_right - gap).abs() < 0.001);
+                assert!((bounds.x + bounds.w - closed_clock_x(&notch) - clock_width / 2.0 - 16.0).abs() < 0.001);
+                widths.push(bounds.w);
+            }
+            assert!((widths[1] - widths[0] - 28.0).abs() < 0.001);
+            notch.update_settings(|settings| settings.show_battery = false);
+            sync_closed_layout(&mut notch, &text);
+            for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+            let bounds = notch.shape().rect;
+            assert!((closed_clock_x(&notch) - bounds.x - bounds.w / 2.0).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn battery_ring_pixels_follow_the_configured_diameter() {
+        let text = Text::new();
+        for charging in [false, true] {
+            let mut heights = Vec::new();
+            for diameter in [12.0, 32.0] {
+                let mut notch = Notch::new(960.0);
+                notch.update_settings(|settings| { settings.battery_ring_size = diameter; settings.clock_size = 32.0; settings.mascot = false; });
+                notch.handle(visus_core::Event::Power { on_ac: charging, percent: 100 });
+                for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+                let mut pixels = Pixmap::new(960, 100).unwrap();
+                draw(&mut pixels, &text, &notch, 1.0);
+                let rows: Vec<usize> = pixels.pixels().iter().enumerate()
+                    .filter(|(_, pixel)| pixel.green() > 150 && pixel.red() < 100 && pixel.blue() < 130)
+                    .map(|(index, _)| index / 960).collect();
+                let top = *rows.iter().min().expect("visible green battery ring");
+                let bottom = *rows.iter().max().unwrap();
+                assert!(top > 0);
+                assert!((bottom as f32) < notch.shape().rect.h);
+                heights.push(bottom - top + 1);
+            }
+            assert!(heights[1] > heights[0] * 2);
+        }
+    }
+
+    #[test]
+    fn large_clocks_stay_bright_until_dimming_is_enabled() {
+        let text = Text::new();
+        for style in ClockStyle::ALL {
+            for size in [20.0, 32.0] {
+                let mut notch = Notch::new(960.0);
+                notch.update_settings(|settings| {
+                    settings.mascot = false;
+                    settings.show_battery = false;
+                    settings.clock_style = style;
+                    settings.clock_size = size;
+                });
+                for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+                let mut bright = Pixmap::new(960, 100).unwrap();
+                draw(&mut bright, &text, &notch, 1.0);
+                notch.update_settings(|settings| settings.clock_dimmed = true);
+                let mut dimmed = Pixmap::new(960, 100).unwrap();
+                draw(&mut dimmed, &text, &notch, 1.0);
+                let peak = |pixels: &Pixmap| pixels.pixels().iter()
+                    .map(|pixel| pixel.red().max(pixel.green()).max(pixel.blue())).max().unwrap();
+                assert!(peak(&bright) >= 220, "{style:?} {size}: {}", peak(&bright));
+                assert!(peak(&dimmed) < 160, "{style:?} {size}: {}", peak(&dimmed));
+            }
+        }
+    }
+
+    #[test]
+    fn clock_is_centered_when_battery_is_hidden() {
+        let mut notch = Notch::new(960.0);
+        notch.handle(visus_core::Event::Power { on_ac: false, percent: 72 });
+        notch.update_settings(|settings| settings.show_battery = false);
+        for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+        let bounds = notch.shape().rect;
+        assert_eq!(closed_clock_x(&notch), bounds.x + bounds.w / 2.0);
+    }
+
+    #[test]
+    fn closed_and_open_scales_follow_their_own_settings() {
+        for (closed, open) in [(1.25, 0.6), (0.6, 1.25)] {
+            let mut notch = Notch::new(960.0);
+            notch.update_settings(|settings| { settings.scale = closed; settings.open_scale = open; });
+            for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+            assert!((display_scale(&notch) - closed).abs() < 0.001);
+            notch.hover(true);
+            for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+            assert!((display_scale(&notch) - open).abs() < 0.001);
+            let bounds = notch.shape().rect;
+            let screen_x = 480.0 + (bounds.x + 40.0 - 480.0) * open;
+            let logical = to_logical(&notch, screen_x, 100.0 * open);
+            assert!((logical.0 - bounds.x - 40.0).abs() < 0.001);
+            assert!((logical.1 - 100.0).abs() < 0.001);
+            notch.hover(false);
+            for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
+            assert!((display_scale(&notch) - closed).abs() < 0.001);
+        }
+    }
+
+    #[test]
     fn expanded_settings_is_not_clipped_by_the_pill_scale() {
         for scale in [0.6, 1.25] {
             let mut notch = Notch::new(960.0);
@@ -636,13 +873,18 @@ const FLARE: f32 = 14.0;
 
 /// Horizontal overhang of the flares on each side; used to size the input region.
 pub fn flare(s: &Shape) -> f32 {
+    if s.style != visus_core::PillStyle::Attached { return 0.0; }
     let r = s.bottom_radius.min(s.rect.w / 2.0).min(s.rect.h);
     FLARE.min((s.rect.h - r).max(0.0))
 }
 
 pub fn pill_path(s: &Shape) -> Option<Path> {
+    if s.style == visus_core::PillStyle::Floating {
+        return rrect(s.rect.x, s.rect.y, s.rect.w, s.rect.h, s.bottom_radius.max(16.0).min(s.rect.h / 2.0));
+    }
     const K: f32 = 0.5523;
-    let r = s.bottom_radius.min(s.rect.w / 2.0).min(s.rect.h);
+    let radius = if s.style == visus_core::PillStyle::Soft { s.bottom_radius * 1.5 } else { s.bottom_radius };
+    let r = radius.min(s.rect.w / 2.0).min(s.rect.h);
     let f = flare(s);
     let (x, y, w, h) = (s.rect.x, s.rect.y, s.rect.w, s.rect.h);
     let mut p = PathBuilder::new();
@@ -798,13 +1040,12 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
     let accent = notch.theme();
     let lum = 0.2126 * accent[0] as f32 + 0.7152 * accent[1] as f32 + 0.0722 * accent[2] as f32;
     let ink = if lum > 150.0 { [0, 0, 0] } else { [255, 255, 255] };
-    let mut cx = Ctx { accent, ink, pm, text, scale: scale * user, ox: centre * (1.0 - user) * scale, oy: 0.0 };
+    let mut cx = Ctx { accent, ink, pm, text, scale: scale * user, ox: centre * (1.0 - user) * scale, oy: top_offset(notch) * scale };
 
     let r = shape.rect;
     if notch.settings_is_visible() {
         if let Some(path) = pill_path(&shape) {
-            let tint = notch.settings_progress().clamp(0.0, 1.0);
-            cx.fill(&path, color([(23.0 * tint) as u8, (24.0 * tint) as u8, (27.0 * tint) as u8], 1.0));
+            cx.fill(&path, color([0, 0, 0], 1.0));
             let alpha = ((r.h - 80.0) / 400.0).clamp(0.0, 1.0);
             if alpha > 0.0 {
                 if let (Some(panel), Some(mut mask)) = (crate::settings_surface::render(text, notch, scale), tiny_skia::Mask::new(cx.pm.width(), cx.pm.height())) {
@@ -812,13 +1053,13 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
                     let transform = Transform::from_row(
                         r.w * scale * user / panel.width() as f32, 0.0,
                         0.0, r.h * scale * user / panel.height() as f32,
-                        r.x * scale * user + cx.ox, r.y * scale * user,
+                        r.x * scale * user + cx.ox, r.y * scale * user + cx.oy,
                     );
                     let paint = tiny_skia::PixmapPaint { opacity: alpha * alpha * (3.0 - 2.0 * alpha), ..Default::default() };
-                    cx.pm.draw_pixmap(0, 0, panel.as_ref(), &paint, transform, Some(&mask));
+                    cx.pm.draw_pixmap(0, 0, panel.as_ref().as_ref(), &paint, transform, Some(&mask));
                 }
             }
-            let clock_alpha = (1.0 - (r.h - notch.settings().closed_height).max(0.0) / 48.0).clamp(0.0, 1.0);
+            let clock_alpha = (1.0 - (r.h - closed_content_height(notch)).max(0.0) / 48.0).clamp(0.0, 1.0);
             if clock_alpha > 0.0 { draw_closed(&mut cx, notch, clock_alpha); }
         }
         return;
@@ -849,7 +1090,7 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
             if let Some(mut mask) = tiny_skia::Mask::new(cx.pm.width(), cx.pm.height()) {
                 let xf = cx.xf();
                 mask.fill_path(&path, FillRule::Winding, true, xf);
-                let t = anim_secs();
+                let t = if notch.settings().reduced_motion { 0.0 } else { anim_secs() };
                 let open = notch.is_open();
                 let (base, amp) = if open { (r.h * 0.80, 11.0) } else { (r.h * 0.64, 3.0) };
                 for (phase, speed, alpha, drop) in [(0.0f32, 0.96f32, 0.55f32, 0.0f32), (2.1, -0.96, 0.35, r.h * 0.06)] {
@@ -892,7 +1133,7 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
         }
     }
 
-    let ch = notch.settings().closed_height;
+    let ch = closed_content_height(notch);
     let closed_a = if notch.game_active() { 1.0 } else if notch.settings().minimal { 0.0 } else { (1.0 - (r.h - ch) / 20.0).clamp(0.0, 1.0) };
     let peek_a = ((r.h - (ch + 12.0)) / 24.0).clamp(0.0, 1.0) * (1.0 - ((r.h - 100.0) / 60.0).clamp(0.0, 1.0));
     let open_a = ((r.h - 150.0) / 70.0).clamp(0.0, 1.0);
@@ -915,7 +1156,8 @@ pub fn draw(pm: &mut Pixmap, text: &Text, notch: &Notch, scale: f32) {
             },
             _ => notch.alert_event().map(|e| e.title.as_str()),
         };
-        draw_alert(&mut cx, &shape, alert, text, (notch.settings().eye_style, notch.settings().eye_moods, notch.alert_age().unwrap_or(1.0)), peek_a);
+        let reaction_age = if notch.settings().reduced_motion { 1.0 } else { notch.alert_age().unwrap_or(1.0) };
+        draw_alert(&mut cx, &shape, alert, text, (notch.settings().eye_style, notch.settings().eye_moods, reaction_age), peek_a);
     }
     if open_a > 0.0 && !notch.game_active() {
         draw_open(&mut cx, notch, open_a);
@@ -979,54 +1221,67 @@ fn draw_hover(cx: &mut Ctx, notch: &Notch) {
 
 /// An almond-shaped eye with iris, pupil and highlight; blinks, looks around and dozes off.
 fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
+    let shape = notch.shape();
+    let overhang = flare(&shape);
+    let left = shape.rect.x - overhang;
+    let width = ((shape.rect.w + overhang * 2.0) * cx.scale).ceil() as u32;
+    let height = (shape.rect.h * cx.scale).ceil() as u32;
+    let (Some(mut pixels), Some(mut mask), Some(outline)) = (Pixmap::new(width, height), tiny_skia::Mask::new(width, height), pill_path(&shape)) else { return };
+    let transform = Transform::from_row(cx.scale, 0.0, 0.0, cx.scale, -left * cx.scale, -shape.rect.y * cx.scale);
+    mask.fill_path(&outline, FillRule::Winding, true, transform);
+    let mut local = Ctx { accent: cx.accent, ink: cx.ink, pm: &mut pixels, text: cx.text, scale: cx.scale, ox: -left * cx.scale, oy: -shape.rect.y * cx.scale };
+    draw_eye_sample(&mut local, notch, a, None);
+    pixels.apply_mask(&mask);
+    let position = Transform::from_translate(left * cx.scale + cx.ox, shape.rect.y * cx.scale + cx.oy);
+    cx.pm.draw_pixmap(0, 0, pixels.as_ref(), &tiny_skia::PixmapPaint::default(), position, None);
+}
+
+fn draw_eye_sample(cx: &mut Ctx, notch: &Notch, a: f32, sample: Option<(EyeMood, bool, bool)>) {
     let r = notch.shape().rect;
-    let fade = notch.eye_fade() * a;
-    let asleep = notch.eye_state() == EyeState::Asleep;
-    let (lx, ly) = notch.eye_look();
-    let ey = r.h * 0.23;
-    let ex = ey * 1.9;
-    let (x, y) = (r.x + r.w / 2.0 + lx * 5.0, r.h / 2.0 + ly * 1.5);
-    let open = notch.eye_openness();
+    let fade = if sample.is_some() { a } else { notch.eye_fade() * a };
+    let asleep = sample.map_or(notch.eye_state() == EyeState::Asleep, |(_, asleep, _)| asleep);
     let style = notch.settings().eye_style;
     let (cat, robot) = (style == EyeStyle::Cat, style == EyeStyle::Robot);
+    let motion = notch.settings().animation_intensity;
+    let t = if sample.is_some() || notch.settings().reduced_motion { 1.6 } else { notch.awake_time() * motion };
+    let expressive = notch.settings().eye_moods && !notch.settings().reduced_motion;
+    let purr = if cat && expressive && !asleep {
+        (1.0 - ((t.rem_euclid(12.0) - 7.0) / 2.0).abs()).max(0.0)
+    } else { 0.0 };
+    let (lx, ly) = if notch.settings().reduced_motion { (0.0, 0.0) }
+        else if sample.is_some_and(|(mood, _, _)| mood == EyeMood::Scan) { (0.65, 0.0) } else {
+            let (x, y) = notch.eye_look(); (x * motion.min(1.3), y * motion.min(1.3))
+        };
+    let breath = if cat { 1.0 + (t * 1.8).sin() * if asleep { 0.015 } else { 0.035 } } else { 1.0 };
+    let ey = r.h * 0.23 * breath;
+    let ex = ey * 1.9;
+    let (x, y) = (r.x + r.w / 2.0 + lx * 5.0, r.h / 2.0 + ly * 1.5 + (t * 19.0).sin() * 0.3 * purr);
+    let mut open = sample.map_or(notch.eye_openness(), |(mood, _, blink)| {
+        if blink { 0.06 } else if mood == EyeMood::Squint { 0.3 } else if mood == EyeMood::Surprised { 1.15 } else { 1.0 }
+    });
+    if cat && expressive && !asleep && sample.is_none() {
+        let slow_blink = ((t.rem_euclid(14.0) - 10.0) / 1.8).clamp(0.0, 1.0);
+        open *= 1.0 - (slow_blink * std::f32::consts::PI).sin().powi(2) * 0.94;
+    }
+    if notch.settings().reduced_motion && sample.is_none() { open = 1.0; }
     let iris_rgb = if cat { Rgb([170, 210, 60]) } else { notch.settings().eye_iris };
     let sclera = notch.settings().eye_sclera.0;
     let sauron = notch.settings().eye_style == EyeStyle::Sauron;
     let [gr, gg, gb] = if sauron { [255, 95, 20] } else { iris_rgb.0 };
-    let t = notch.awake_time();
-
-    let (mood, mood_ph) = notch.eye_mood();
+    let (mood, mood_ph) = sample.map_or_else(|| notch.eye_mood(), |(mood, _, _)| (mood, 0.5));
     let mood_e = (mood_ph * std::f32::consts::PI).sin();
-    let pulse = notch.eye_pulse();
+    let pulse = if notch.settings().reduced_motion { 0.0 } else { notch.eye_pulse() * motion };
     if robot {
-        draw_robot_eye(cx, x, y, ex, ey, open, t, fade, asleep, r.h, (mood, mood_e), pulse);
+        draw_robot_eye(cx, x, y, ex, ey, open, t, fade, asleep, r.h, (mood, mood_e), pulse, expressive);
         return;
+    }
+    if cat {
+        draw_cat_whiskers(cx, x, y, ex, ey, fade, purr, t);
     }
     let flick = if sauron { 0.8 + 0.2 * (t * 11.0).sin().abs() * (t * 5.3).cos().abs().max(0.4) } else { 1.0 };
 
-    // Sauron's gaze: a soft beam sweeping across the inside of the pill like a searchlight.
     if sauron && !asleep {
-        let bx = r.x + r.w / 2.0 + (t * 0.8).sin() * r.w * 0.34;
-        let beam = LinearGradient::new(
-            Point::from_xy(bx - 46.0, 0.0),
-            Point::from_xy(bx + 46.0, 0.0),
-            vec![
-                GradientStop::new(0.0, Color::from_rgba8(255, 120, 30, 0)),
-                GradientStop::new(0.5, Color::from_rgba8(255, 130, 40, (fade * 70.0) as u8)),
-                GradientStop::new(1.0, Color::from_rgba8(255, 120, 30, 0)),
-            ],
-            SpreadMode::Pad,
-            Transform::identity(),
-        );
-        if let (Some(shader), Some(pill), Some(mut mask)) = (beam, pill_path(&notch.shape()), tiny_skia::Mask::new(cx.pm.width(), cx.pm.height())) {
-            mask.fill_path(&pill, FillRule::Winding, true, cx.xf());
-            let mut p = Paint::default();
-            p.shader = shader;
-            if let Some(band) = tiny_skia::Rect::from_xywh(bx - 46.0, 0.0, 92.0, r.h) {
-                let t = cx.xf();
-                cx.pm.fill_rect(band, &p, t, Some(&mask));
-            }
-        }
+        draw_molten_eye(cx, &notch.shape(), x, y, ex, ey, t, fade);
     }
 
     // Soft glow behind the eye, kept inside the pill.
@@ -1084,9 +1339,11 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
             Point::from_xy(x, y),
             ex,
             vec![
-                GradientStop::new(0.0, Color::from_rgba8(255, 225, 110, (fade * 255.0) as u8)),
-                GradientStop::new(0.55, Color::from_rgba8(255, 120, 20, (fade * 255.0) as u8)),
-                GradientStop::new(1.0, Color::from_rgba8(140, 20, 0, (fade * 255.0) as u8)),
+                GradientStop::new(0.0, Color::from_rgba8(255, 208, 65, (fade * 255.0) as u8)),
+                GradientStop::new(0.22, Color::from_rgba8(190, 39, 3, (fade * 255.0) as u8)),
+                GradientStop::new(0.52, Color::from_rgba8(83, 8, 2, (fade * 255.0) as u8)),
+                GradientStop::new(0.78, Color::from_rgba8(255, 125, 12, (fade * 255.0) as u8)),
+                GradientStop::new(1.0, Color::from_rgba8(137, 21, 3, (fade * 255.0) as u8)),
             ],
             SpreadMode::Pad,
             Transform::identity(),
@@ -1106,24 +1363,45 @@ fn draw_eye(cx: &mut Ctx, notch: &Notch, a: f32) {
     let Some(mut mask) = tiny_skia::Mask::new(cx.pm.width(), cx.pm.height()) else { return };
     mask.fill_path(&almond, FillRule::Winding, true, cx.xf());
     if sauron {
-        // Vertical slit pupil that follows the gaze.
-        let (px, ry) = (x + lx * ex * 0.7, h * 0.62);
+        let (px, ry) = (x + lx * ex * 0.45, ey * open.min(1.15) * 0.98);
         let py = y + ly * h * 0.2;
-        let slit = ey * 0.06 * (1.0 + 1.6 * pulse + 1.2 * if mood == EyeMood::Surprised { mood_e } else { 0.0 });
-        // A hot rim around the slit makes it read as a burning gap rather than a hole.
-        if let Some(rim) = tiny_skia::Rect::from_xywh(px - slit * 2.4, py - ry * 1.05, slit * 4.8, ry * 2.1).and_then(PathBuilder::from_oval) {
-            let mut glow = Paint::default();
-            glow.anti_alias = true;
-            glow.set_color(Color::from_rgba8(255, 200, 70, (fade * 200.0) as u8));
-            let t = cx.xf();
-            cx.pm.fill_path(&rim, &glow, FillRule::Winding, t, Some(&mask));
+        let slit = ey * (0.19 + 0.04 * pulse + if mood == EyeMood::Surprised { 0.08 * mood_e } else { 0.0 });
+        let transform = cx.xf();
+        for index in 0..72 {
+            let seed = index as f32;
+            let angle = seed / 72.0 * std::f32::consts::TAU;
+            let (sin, cos) = angle.sin_cos();
+            let flicker = ((seed * 2.39 + t * 2.7).sin() + (seed * 0.87 - t * 4.1).cos()) * 0.5;
+            let inner = 0.16 + 0.05 * (seed * 1.37).sin().abs();
+            let outer = 0.65 + 0.28 * (seed * 2.17 + t * 1.2).sin().abs();
+            let mut filament = PathBuilder::new();
+            filament.move_to(px + cos * ex * inner, py + sin * ey * inner);
+            filament.quad_to(px + cos * ex * 0.48 - sin * flicker * 1.2,
+                py + sin * ey * 0.48 + cos * flicker * 0.7,
+                px + cos * ex * outer, py + sin * ey * outer);
+            if let Some(path) = filament.finish() {
+                let hot = index % 4 == 0;
+                let tint = if hot { [255, 191, 55] } else if index % 3 == 0 { [35, 2, 0] } else { [239, 62, 4] };
+                let stroke = Stroke { width: if hot { 0.65 } else { 0.9 }, line_cap: LineCap::Round, ..Default::default() };
+                cx.pm.stroke_path(&path, &Ctx::paint(color(tint, fade * (0.55 + flicker.abs() * 0.35))), &stroke, transform, Some(&mask));
+            }
         }
-        if let Some(oval) = tiny_skia::Rect::from_xywh(px - slit, py - ry, slit * 2.0, ry * 2.0).and_then(PathBuilder::from_oval) {
-            let mut ink = Paint::default();
-            ink.anti_alias = true;
-            ink.set_color(Color::from_rgba8(0, 0, 0, (fade * 255.0) as u8));
-            let t = cx.xf();
-            cx.pm.fill_path(&oval, &ink, FillRule::Winding, t, Some(&mask));
+        let mut pupil = PathBuilder::new();
+        pupil.move_to(px, py - ry);
+        pupil.line_to(px - slit * 0.65, py - ry * 0.58);
+        pupil.line_to(px - slit * 0.45, py - ry * 0.32);
+        pupil.line_to(px - slit, py - ry * 0.06);
+        pupil.line_to(px - slit * 0.58, py + ry * 0.43);
+        pupil.line_to(px, py + ry);
+        pupil.line_to(px + slit * 0.68, py + ry * 0.48);
+        pupil.line_to(px + slit * 0.5, py + ry * 0.17);
+        pupil.line_to(px + slit * 0.95, py - ry * 0.19);
+        pupil.line_to(px + slit * 0.58, py - ry * 0.57);
+        pupil.close();
+        if let Some(path) = pupil.finish() {
+            let rim = Stroke { width: 1.5, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+            cx.pm.stroke_path(&path, &Ctx::paint(color([255, 180, 39], fade)), &rim, transform, Some(&mask));
+            cx.pm.fill_path(&path, &Ctx::paint(color([3, 0, 0], fade)), FillRule::Winding, transform, Some(&mask));
         }
         return;
     }
@@ -1193,10 +1471,111 @@ fn draw_zs(cx: &mut Ctx, x: f32, y: f32, ex: f32, pill_h: f32, t: f32, fade: f32
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn draw_cat_whiskers(cx: &mut Ctx, x: f32, y: f32, ex: f32, ey: f32, alpha: f32, purr: f32, time: f32) {
+    for direction in [-1.0, 1.0] {
+        for whisker in [-1.0, 1.0] {
+            let root_x = x + direction * (ex + 2.0);
+            let root_y = y + ey * 0.35;
+            let tip_x = root_x + direction * (7.0 + purr * 2.0);
+            let tip_y = root_y + whisker * (2.0 + purr * 1.0) + (time * 18.0).sin() * purr * 0.55;
+            let mut path = PathBuilder::new();
+            path.move_to(root_x, root_y);
+            path.quad_to(root_x + direction * 4.0, root_y, tip_x, tip_y);
+            if let Some(path) = path.finish() {
+                cx.stroke(&path, color([190, 210, 145], alpha * (0.35 + purr * 0.25)), 0.8);
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_molten_eye(cx: &mut Ctx, shape: &Shape, x: f32, y: f32, ex: f32, ey: f32, time: f32, alpha: f32) {
+    let Some(pill) = pill_path(shape) else { return };
+    let Some(mut mask) = tiny_skia::Mask::new(cx.pm.width(), cx.pm.height()) else { return };
+    let transform = cx.xf();
+    mask.fill_path(&pill, FillRule::Winding, true, transform);
+    let bounds = shape.rect;
+    let bottom = bounds.y + bounds.h;
+    for direction in [-1.0f32, 1.0] {
+        let tip_x = x + direction * ex * 1.85;
+        let tip_y = bounds.y + 2.0;
+        let root_x = x + direction * ex * 1.04;
+        let root_y = bottom - 2.0;
+        let mut arch = PathBuilder::new();
+        arch.move_to(tip_x, tip_y);
+        arch.cubic_to(tip_x + direction * 1.0, y + ey * 0.6,
+            root_x + direction * ex * 0.5, root_y, root_x, root_y);
+        arch.line_to(root_x - direction * 3.0, root_y);
+        arch.cubic_to(root_x + direction * ex * 0.35, y + ey * 0.6,
+            tip_x - direction * 2.0, y - ey * 0.6, tip_x, tip_y);
+        arch.close();
+        if let Some(path) = arch.finish() {
+            cx.pm.fill_path(&path, &Ctx::paint(color([90, 29, 9], alpha * 0.9)), FillRule::Winding, transform, Some(&mask));
+            let stroke = Stroke { width: 0.7, ..Default::default() };
+            cx.pm.stroke_path(&path, &Ctx::paint(color([237, 111, 24], alpha * 0.55)), &stroke, transform, Some(&mask));
+        }
+        let start = (tip_x - direction * 1.0, tip_y + 3.0);
+        let end = (x + direction * ex * 0.85, y + ey * 0.1);
+        let control = (x + direction * ex * 1.6, y + ey * 0.95);
+        let mut stream = PathBuilder::new();
+        stream.move_to(start.0, start.1);
+        stream.quad_to(control.0, control.1, end.0, end.1);
+        if let Some(path) = stream.finish() {
+            let stroke = Stroke { width: 1.2, line_cap: LineCap::Round, ..Default::default() };
+            cx.pm.stroke_path(&path, &Ctx::paint(color([245, 69, 6], alpha * 0.35)), &stroke, transform, Some(&mask));
+        }
+        for ember in 0..4 {
+            let phase = (time * 0.45 + ember as f32 * 0.25 + if direction > 0.0 { 0.12 } else { 0.0 }).fract();
+            let inverse = 1.0 - phase;
+            let px = inverse * inverse * start.0 + 2.0 * inverse * phase * control.0 + phase * phase * end.0;
+            let py = inverse * inverse * start.1 + 2.0 * inverse * phase * control.1 + phase * phase * end.1;
+            if let Some(spark) = PathBuilder::from_circle(px, py, 0.55 + phase * 0.35) {
+                let glow = alpha * (phase * std::f32::consts::PI).sin();
+                cx.pm.fill_path(&spark, &Ctx::paint(color([255, 176, 49], glow)), FillRule::Winding, transform, Some(&mask));
+            }
+        }
+    }
+    let mut molten = PathBuilder::new();
+    for index in 0..=48 {
+        let fraction = index as f32 / 48.0;
+        let px = bounds.x + fraction * bounds.w;
+        let wave = (fraction * 16.0 + time * 1.8).sin() * 0.8
+            + (fraction * 31.0 - time * 1.1).sin() * 0.4;
+        let py = bottom - 2.5 - wave;
+        if index == 0 { molten.move_to(px, py); } else { molten.line_to(px, py); }
+    }
+    molten.line_to(bounds.x + bounds.w, bottom);
+    molten.line_to(bounds.x, bottom);
+    molten.close();
+    if let Some(path) = molten.finish() {
+        cx.pm.fill_path(&path, &Ctx::paint(color([225, 49, 7], alpha * 0.7)), FillRule::Winding, transform, Some(&mask));
+    }
+    for index in 0..5 {
+        let seed = index as f32;
+        let phase = (time * (0.18 + seed * 0.013) + seed * 0.23).fract();
+        let root_x = x + (seed - 2.0) * ex * 0.37;
+        let root_y = y + ey * (0.7 - ((seed - 2.0) * 0.5).powi(2) * 0.12);
+        let end_y = root_y + (bottom - root_y - 2.0) * phase;
+        let opacity = alpha * (phase * std::f32::consts::PI).sin();
+        let mut drip = PathBuilder::new();
+        drip.move_to(root_x, root_y);
+        drip.cubic_to(root_x - 0.8, root_y + 2.0, root_x + 0.8, end_y - 1.0, root_x, end_y);
+        if let Some(path) = drip.finish() {
+            let stroke = Stroke { width: 1.4 - phase * 0.5, line_cap: LineCap::Round, ..Default::default() };
+            cx.pm.stroke_path(&path, &Ctx::paint(color([255, 103, 13], opacity)), &stroke, transform, Some(&mask));
+        }
+        if let Some(drop) = PathBuilder::from_circle(root_x, end_y, 0.7 + phase * 0.5) {
+            cx.pm.fill_path(&drop, &Ctx::paint(color([255, 174, 45], opacity)), FillRule::Winding, transform, Some(&mask));
+        }
+    }
+}
+
 /// A little robot: a glowing visor with a scanning bar; blinks by squashing, sleeps as a dim line.
 #[allow(clippy::too_many_arguments)]
-fn draw_robot_eye(cx: &mut Ctx, x: f32, y: f32, ex: f32, ey: f32, open: f32, t: f32, fade: f32, asleep: bool, pill_h: f32, mood: (EyeMood, f32), pulse: f32) {
+fn draw_robot_eye(cx: &mut Ctx, x: f32, y: f32, ex: f32, ey: f32, open: f32, t: f32, fade: f32, asleep: bool, pill_h: f32, mood: (EyeMood, f32), pulse: f32, expressive: bool) {
     let w = ex * 1.9;
+    let y = y + if asleep { 0.0 } else { (t * 1.7).sin() * 0.35 };
     let (m, e) = mood;
     let glitch = m == EyeMood::Glitch;
     let x = if glitch { x + (t * 41.0).sin() * 2.0 } else { x };
@@ -1224,7 +1603,16 @@ fn draw_robot_eye(cx: &mut Ctx, x: f32, y: f32, ex: f32, ey: f32, open: f32, t: 
         }
     }
     for dx in [-1.0f32, 1.0] {
-        cx.circle(x + dx * (w / 2.0 + 6.0), y, 1.4, color(tint, fade * 0.7));
+        let response = (t + if dx < 0.0 { 0.0 } else { 0.3 }).rem_euclid(11.0);
+        let flash = if expressive && response < 1.8 { (response * 9.0).sin().max(0.0) } else { 0.0 };
+        cx.circle(x + dx * (w / 2.0 + 6.0), y - ey * 0.35, 1.4 + flash * 0.35, color(tint, fade * (0.55 + flash * 0.45)));
+    }
+    if expressive && !glitch && t.rem_euclid(11.0) < 1.8 {
+        for index in 0..3 {
+            let level = (t * 12.0 - index as f32 * 1.1).sin().max(0.0);
+            let height = 1.0 + level * 2.5;
+            cx.rrect(rect(x - 5.5 + index as f32 * 4.0, y + h / 2.0 + 2.0, 2.5, height), 1.0, color(tint, fade * (0.25 + 0.55 * level)));
+        }
     }
 }
 
@@ -1350,13 +1738,16 @@ fn flip_card(cx: &mut Ctx, x: f32, y: f32, w: f32, h: f32, old: Option<u8>, new:
 
 /// The pill's clock in the chosen style, centred on (xm, ym); `size` is the font size or digit height.
 fn draw_clock(cx: &mut Ctx, notch: &Notch, xm: f32, ym: f32, size: f32, a: f32) {
+    let a = a * if notch.settings().clock_dimmed { 0.55 } else { 1.0 };
     use chrono::Timelike;
     let now = chrono::Local::now();
     let (h, m, s) = (now.hour(), now.minute(), now.second());
-    let frac = now.timestamp_subsec_millis() as f32 / 1000.0;
+    let frac = if notch.settings().reduced_motion { 0.75 } else { now.timestamp_subsec_millis() as f32 / 1000.0 };
     match notch.settings().clock_style {
         ClockStyle::Classic => {
-            cx.t(&now.format(clock_fmt(notch)).to_string(), xm, ym + size * 0.35, size, color(WHITE, a), Align::Center);
+            let clock = now.format(clock_fmt(notch)).to_string();
+            let (top, bottom) = cx.text.vertical_bounds(&clock, size);
+            cx.t(&clock, xm, ym - (top + bottom) / 2.0, size, color(WHITE, a), Align::Center);
         }
         ClockStyle::Flip => {
             let (cw, ch, gap, pair) = (size * 0.76, size * 1.3, 2.0, 9.0);
@@ -1449,6 +1840,11 @@ fn game_reading(g: &GameStats, it: GameItem) -> (&'static str, f32, String) {
         GameItem::CpuTemp => ("CPU", g.cpu_temp.unwrap_or(0.0) / 100.0, format!("{:.0}\u{b0}C", g.cpu_temp.unwrap_or(0.0))),
         GameItem::Gpu => ("GPU", g.gpu.unwrap_or(0.0), format!("{:.0}%", g.gpu.unwrap_or(0.0) * 100.0)),
         GameItem::GpuTemp => ("GPU", g.gpu_temp.unwrap_or(0.0) / 100.0, format!("{:.0}\u{b0}C", g.gpu_temp.unwrap_or(0.0))),
+        GameItem::Vram => {
+            let used = g.gpu_vram_used_gb.unwrap_or(0.0);
+            let fraction = g.gpu_vram_total_gb.filter(|total| *total > 0.0).map_or(0.0, |total| used / total);
+            ("VRAM", fraction, format!("{used:.1}GB"))
+        }
         GameItem::Ram => ("RAM", g.ram, format!("{:.1}GB", g.ram_used_gb)),
     }
 }
@@ -1581,8 +1977,13 @@ fn draw_game_card(cx: &mut Ctx, notch: &Notch, a: f32) {
     }
     // One row per component: load ring + value, then temperature.
     let mut rows: Vec<(&str, f32, String, Option<(f32, String)>)> = vec![("CPU", g.cpu, format!("{:.0}%", g.cpu * 100.0), g.cpu_temp.map(|t| (t / 100.0, format!("{t:.0}\u{b0}C"))))];
-    if let Some(gp) = g.gpu {
-        rows.push(("GPU", gp, format!("{:.0}%", gp * 100.0), g.gpu_temp.map(|t| (t / 100.0, format!("{t:.0}\u{b0}C")))));
+    if g.gpu.is_some() || g.gpu_temp.is_some() {
+        rows.push(("GPU", g.gpu.unwrap_or(0.0), g.gpu.map(|load| format!("{:.0}%", load * 100.0)).unwrap_or_else(|| "--".into()), g.gpu_temp.map(|t| (t / 100.0, format!("{t:.0}\u{b0}C")))));
+    }
+    if let Some(used) = g.gpu_vram_used_gb {
+        let fraction = g.gpu_vram_total_gb.filter(|total| *total > 0.0).map_or(0.0, |total| used / total);
+        let value = g.gpu_vram_total_gb.map_or_else(|| format!("{used:.1}GB"), |total| format!("{used:.1}/{total:.0}GB"));
+        rows.push(("VRAM", fraction, value, None));
     }
     rows.push(("RAM", g.ram, format!("{:.1}GB", g.ram_used_gb), None));
     for (i, (name, frac, text, temp)) in rows.iter().enumerate() {
@@ -1607,6 +2008,24 @@ fn draw_game_card(cx: &mut Ctx, notch: &Notch, a: f32) {
     }
 }
 
+fn closed_clock_x(notch: &Notch) -> f32 {
+    let bounds = notch.shape().rect;
+    if let Some(width) = notch.closed_clock_width() {
+        let right = if notch.download().is_some() { 84.0 } else if notch.wants_audio() { 76.0 } else { 0.0 };
+        return bounds.x + bounds.w - notch.settings().outer_padding - right - width / 2.0;
+    }
+    let timer = notch.timer();
+    let has_left = timer.is_running() || timer.progress() > 0.0
+        || (notch.settings().show_battery && notch.battery().is_some());
+    let has_right = notch.download().is_some() || notch.wants_audio();
+    let offset = match (has_left, has_right) {
+        (true, false) => 14.0,
+        (false, true) => -14.0,
+        _ => 0.0,
+    };
+    bounds.x + bounds.w / 2.0 + offset
+}
+
 fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     let r = notch.shape().rect;
     let mid = r.y + r.h / 2.0;
@@ -1615,8 +2034,18 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
     // Left slot: the focus timer while one is active, otherwise the battery level.
     if timer_active {
         let left = timer.remaining().as_secs_f32() / timer.total().as_secs_f32();
-        cx.ring(r.x + 28.0, mid, 8.0, 2.5, left, cx.accent, a);
+        let ring_x = if notch.closed_clock_width().is_some() { r.x + notch.settings().outer_padding + notch.closed_ring_width() / 2.0 } else { r.x + 28.0 };
+        cx.ring(ring_x, mid, 8.0, 2.5, left, cx.accent, a);
     } else if let Some((charging, pct)) = notch.battery().filter(|_| notch.settings().show_battery) {
+        let ring_scale = notch.battery_ring_diameter() / 16.0;
+        let ring_x = r.x + 28.0;
+        let shift = if notch.closed_clock_width().is_some() {
+            notch.settings().outer_padding + notch.closed_ring_width() / 2.0 - 28.0
+        } else { (notch.battery_ring_diameter() - 16.0).max(0.0) / 2.0 };
+        let original = (cx.scale, cx.ox, cx.oy);
+        cx.scale *= ring_scale;
+        cx.ox += (ring_x * (1.0 - ring_scale) + shift) * original.0;
+        cx.oy += mid * (1.0 - ring_scale) * original.0;
         let tint = if charging || pct > 20 { GREEN } else { ORANGE };
         cx.ring(r.x + 28.0, mid, 8.0, 2.5, pct as f32 / 100.0, tint, a);
         if charging {
@@ -1628,6 +2057,7 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
             }
             cx.rrect(rect(r.x + 32.0, mid - 1.0, 1.0, 2.0), 0.5, color(WHITE, 0.9 * a));
         }
+        (cx.scale, cx.ox, cx.oy) = original;
     }
     // Thin progress line along the bottom edge: the focus timer, otherwise the playing track.
     let rad = (r.h * 0.4).min(r.w / 4.0);
@@ -1644,15 +2074,14 @@ fn draw_closed(cx: &mut Ctx, notch: &Notch, a: f32) {
         cx.rrect(rect(r.x + rad, r.h - 4.0, r.w - 2.0 * rad, 1.5), 0.75, color(WHITE, 0.10 * a));
         cx.rrect(rect(r.x + rad, r.h - 4.0, w, 1.5), 0.75, color(tint, 0.9 * a));
     }
-    let clock_offset = if notch.download().is_none() && !notch.wants_audio() { 14.0 } else { 0.0 };
-    draw_clock(cx, notch, r.x + r.w / 2.0 + clock_offset, mid, notch.settings().clock_size, a);
+    draw_clock(cx, notch, closed_clock_x(notch), mid, notch.settings().clock_size, a);
     if let Some(rate) = notch.download() {
         let txt = rate_fmt(rate, notch.settings().net_bits);
         let tw = cx.text_width(&txt, 12.0);
         let rx = r.x + r.w - 22.0;
         cx.t(&txt, rx, mid + 4.5, 12.0, color(WHITE, a), Align::Right);
         let ax = rx - tw - 11.0;
-        let bob = (anim_secs() * 3.33).sin() * 1.6;
+        let bob = if notch.settings().reduced_motion { 0.0 } else { (anim_secs() * 3.33).sin() * 1.6 };
         cx.rrect(rect(ax - 1.0, mid - 7.0 + bob, 2.0, 7.0), 1.0, color(cx.accent, a));
         cx.triangle([(ax - 4.5, mid - 1.0 + bob), (ax + 4.5, mid - 1.0 + bob), (ax, mid + 5.0 + bob)], color(cx.accent, a));
     }
@@ -1833,7 +2262,8 @@ fn draw_open(cx: &mut Ctx, notch: &Notch, a: f32) {
     let now = chrono::Local::now();
     if notch.settings().clock_style == ClockStyle::Classic {
         let header = format!("{}  {}", now.format("%a %-d %b %Y"), now.format(clock_fmt(notch)));
-        cx.t(&header, mid, 44.0, notch.settings().header_clock_size, color(WHITE, a), Align::Center);
+        let clock_alpha = a * if notch.settings().clock_dimmed { 0.55 } else { 1.0 };
+        cx.t(&header, mid, 44.0, notch.settings().header_clock_size, color(WHITE, clock_alpha), Align::Center);
     } else {
         cx.t(&now.format("%A %-d %B").to_string(), mid, 20.0, 12.0, color(GRAY, a), Align::Center);
         draw_clock(cx, notch, mid, 40.0, notch.settings().header_clock_size, a);
@@ -2312,7 +2742,7 @@ pub fn to_logical(notch: &Notch, x: f32, y: f32) -> (f32, f32) {
     let sh = notch.shape().rect;
     let centre = sh.x + sh.w / 2.0;
     let k = display_scale(notch);
-    (centre + (x - centre) / k, y / k)
+    (centre + (x - centre) / k, (y - top_offset(notch)) / k)
 }
 
 /// Area the pill (including flares) covers on screen, in window-logical pixels.
@@ -2322,14 +2752,14 @@ pub fn hit_rect(notch: &Notch) -> Rect {
     let k = display_scale(notch);
     let centre = s.rect.x + s.rect.w / 2.0;
     let half = s.rect.w / 2.0 + f;
-    let pill = Rect { x: centre - half * k, y: 0.0, w: half * 2.0 * k, h: s.rect.h * k };
+    let pill = Rect { x: centre - half * k, y: top_offset(notch), w: half * 2.0 * k, h: s.rect.h * k };
     if notch.settings_is_visible() { return pill; }
     // While the launcher is visible the panel is part of the interactive area too.
     let extra = palette_layout(notch).map(|l| l.panel).or_else(|| settings_panel(notch));
     let Some(p) = extra else { return pill };
     let (px, pw) = (centre + (p.x - centre) * k, p.w * k);
     let (x, right) = (pill.x.min(px), (pill.x + pill.w).max(px + pw));
-    Rect { x, y: 0.0, w: right - x, h: (p.y + p.h) * k }
+    Rect { x, y: top_offset(notch), w: right - x, h: (p.y + p.h) * k }
 }
 
 const PANEL_W: f32 = 520.0;
@@ -2726,7 +3156,7 @@ pub fn region_rect(notch: &Notch) -> Rect {
     let k = display_scale(notch);
     let s = notch.shape().rect;
     let centre = s.x + s.w / 2.0;
-    let half = (tw / 2.0 + 14.0) * k;
+    let half = (tw / 2.0 + if notch.settings().pill_style == visus_core::PillStyle::Attached { 14.0 } else { 0.0 }) * k;
     let mut left = now.x.min(centre - half);
     let mut right = (now.x + now.w).max(centre + half);
     let mut bottom = now.y + now.h.max(th * k);
@@ -2735,14 +3165,54 @@ pub fn region_rect(notch: &Notch) -> Rect {
         let full = PANEL_TOP_PAD + n * ROW_H + PANEL_FOOTER;
         left = left.min(centre - PANEL_W / 2.0 * k);
         right = right.max(centre + PANEL_W / 2.0 * k);
-        bottom = bottom.max((th + 10.0 + full) * k);
+        bottom = bottom.max(top_offset(notch) + (th + 10.0 + full) * k);
     }
-    Rect { x: left, y: 0.0, w: right - left, h: bottom }
+    Rect { x: left, y: top_offset(notch), w: right - left, h: bottom - top_offset(notch) }
 }
 
 pub fn display_scale(notch: &Notch) -> f32 {
     let progress = if notch.settings_is_visible() { notch.settings_progress().clamp(0.0, 1.0) } else { 0.0 };
-    notch.settings().scale + (1.0 - notch.settings().scale) * progress
+    let settings = notch.settings();
+    let open = if notch.settings_is_visible() || notch.game_active() { 0.0 } else {
+        ((notch.shape().rect.h - 100.0) / 148.0).clamp(0.0, 1.0)
+    };
+    let scale = settings.scale + (settings.open_scale - settings.scale) * open;
+    scale + (1.0 - scale) * progress
+}
+
+pub fn top_offset(notch: &Notch) -> f32 {
+    if notch.settings().pill_style == visus_core::PillStyle::Floating { 12.0 } else { 0.0 }
+}
+
+pub fn sync_closed_layout(notch: &mut Notch, text: &Text) {
+    let size = notch.settings().clock_size;
+    let height = match notch.settings().clock_style {
+        ClockStyle::Classic => {
+            let clock = chrono::Local::now().format(clock_fmt(notch)).to_string();
+            let (top, bottom) = text.vertical_bounds(&clock, size);
+            bottom - top
+        }
+        ClockStyle::Flip => size * 1.3,
+        ClockStyle::Led => size,
+    };
+    notch.set_closed_clock_height(height);
+    let width = match notch.settings().clock_style {
+        ClockStyle::Classic => text.width(&chrono::Local::now().format(clock_fmt(notch)).to_string(), size),
+        ClockStyle::Flip => size * 3.04 + 13.0,
+        ClockStyle::Led => size * 3.1 + 2.4,
+    };
+    notch.set_closed_clock_width(width);
+}
+
+fn closed_content_height(notch: &Notch) -> f32 {
+    let settings = notch.settings();
+    let clock_height = settings.clock_size
+        * if settings.clock_style == ClockStyle::Flip { 1.3 } else { 1.0 } + 8.0;
+    let timer = notch.timer();
+    let battery_height = if settings.show_battery && !timer.is_running() && timer.progress() == 0.0 {
+        notch.battery_ring_diameter() * 1.15625 + 8.0
+    } else { 0.0 };
+    settings.closed_height.max(clock_height).max(battery_height)
 }
 
 /// Window-logical y below which nothing is drawn (shadow margin included); lets hosts skip empty rows.

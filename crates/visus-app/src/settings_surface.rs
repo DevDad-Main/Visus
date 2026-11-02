@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use tiny_skia::Pixmap;
 use visus_core::{Notch, Outcome, Settings, UpdateStatus};
@@ -8,6 +9,15 @@ use crate::ui::settings::{self, Command, Panel};
 thread_local! {
     static PANEL: RefCell<Panel> = RefCell::new(Panel::default());
     static SELECTED_ALL: RefCell<bool> = const { RefCell::new(false) };
+    static CACHE: RefCell<Option<RenderedPanel>> = const { RefCell::new(None) };
+}
+
+struct RenderedPanel {
+    settings: Settings,
+    panel: Panel,
+    scale: f32,
+    minute: i64,
+    pixels: Rc<Pixmap>,
 }
 
 pub enum KeyAction {
@@ -19,11 +29,18 @@ pub enum KeyAction {
     Paste,
 }
 
-pub fn render(text: &crate::text::Text, notch: &Notch, scale: f32) -> Option<Pixmap> {
-    let mut pixmap = Pixmap::new((settings::WIDTH * scale).ceil() as u32, (settings::HEIGHT * scale).ceil() as u32)?;
+pub fn render(text: &crate::text::Text, notch: &Notch, scale: f32) -> Option<Rc<Pixmap>> {
     PANEL.with_borrow_mut(|panel| {
+        panel.close_hovered = ready(notch) && notch.pointer().is_some_and(|(x, y)| {
+            let (x, y) = point(notch, x, y);
+            settings::CLOSE.contains(x, y)
+        });
+        panel.media_accent = Some(notch.theme());
+        panel.reaction_style = notch.settings().eye_style;
+        panel.battery = notch.battery();
+        panel.scroll(0.0, settings::HEIGHT);
         panel.update_available = matches!(notch.update_status(), UpdateStatus::Available { .. });
-        if panel.section == settings::SECTIONS.len() - 1 {
+        if settings::SECTIONS[panel.section].title == "Updates" {
             panel.status = match notch.update_status() {
                 UpdateStatus::Idle => String::new(),
                 UpdateStatus::Checking => "Checking for updates...".into(),
@@ -33,9 +50,24 @@ pub fn render(text: &crate::text::Text, notch: &Notch, scale: f32) -> Option<Pix
                 UpdateStatus::Failed(error) => format!("Update failed: {error}"),
             };
         }
-        settings::draw(&mut pixmap, text, panel, notch.settings(), scale);
-    });
-    Some(pixmap)
+        let minute = chrono::Local::now().timestamp().div_euclid(60);
+        let mut visual = panel.clone();
+        visual.pointer = None;
+        visual.dragging = None;
+        CACHE.with_borrow_mut(|cached| {
+            if let Some(previous) = cached.as_ref() {
+                if previous.settings == *notch.settings() && previous.panel == visual
+                    && previous.scale == scale && previous.minute == minute {
+                    return Some(previous.pixels.clone());
+                }
+            }
+            let mut pixmap = Pixmap::new((settings::WIDTH * scale).ceil() as u32, (settings::HEIGHT * scale).ceil() as u32)?;
+            settings::draw(&mut pixmap, text, panel, notch.settings(), scale);
+            let pixels = Rc::new(pixmap);
+            *cached = Some(RenderedPanel { settings: notch.settings().clone(), panel: visual, scale, minute, pixels: pixels.clone() });
+            Some(pixels)
+        })
+    })
 }
 
 fn ready(notch: &Notch) -> bool {
@@ -82,7 +114,7 @@ pub fn click(notch: &mut Notch, x: f32, y: f32) -> Outcome {
     SELECTED_ALL.with_borrow_mut(|selected| *selected = false);
     let pending = PANEL.with_borrow_mut(|panel| panel.commit(notch.settings()));
     let pending = apply(notch, pending);
-    if (140.0..176.0).contains(&x) && (20.0..56.0).contains(&y) {
+    if settings::CLOSE.contains(x, y) {
         release(notch);
         notch.close_settings();
         return pending;
@@ -117,8 +149,9 @@ pub fn over_clickable(notch: &Notch) -> bool {
     if !ready(notch) { return false; }
     let Some((x, y)) = notch.pointer() else { return false };
     let (x, y) = point(notch, x, y);
-    (x < 188.0 && y >= 88.0) || ((140.0..176.0).contains(&x) && (20.0..56.0).contains(&y))
-        || ((674.0..824.0).contains(&x) && (22.0..54.0).contains(&y))
+    (x < 188.0 && y >= 88.0) || settings::CLOSE.contains(x, y)
+        || ((638.0..788.0).contains(&x) && (22.0..54.0).contains(&y))
+        || ((224.0..364.0).contains(&x) && (settings::HEIGHT - 58.0..settings::HEIGHT - 20.0).contains(&y))
         || ((500.0..824.0).contains(&x) && y >= 258.0)
 }
 
@@ -172,9 +205,12 @@ pub fn location_result(city: Option<&str>) {
 pub fn preview(out: &str, section: Option<&str>) {
     let (name, mode) = section.unwrap_or("Clock").split_once(':').unwrap_or((section.unwrap_or("Clock"), "closed"));
     let section = settings::SECTIONS.iter().position(|section| section.title.eq_ignore_ascii_case(name)).unwrap_or(1);
-    let panel = Panel { section, preview_header: mode == "header", ..Default::default() };
+    let style = match mode { "robot" => visus_core::EyeStyle::Robot, "cat" => visus_core::EyeStyle::Cat, "sauron" => visus_core::EyeStyle::Sauron, _ => visus_core::EyeStyle::Classic };
+    let pill_style = match mode { "floating" => visus_core::PillStyle::Floating, "soft" => visus_core::PillStyle::Soft, _ => visus_core::PillStyle::Attached };
+    let panel = Panel { section, preview_header: mode == "header", reaction_style: style,
+        scroll: if matches!(mode, "robot" | "cat" | "sauron") { 420.0 } else { 0.0 }, ..Default::default() };
     let mut pixmap = Pixmap::new(settings::WIDTH as u32, settings::HEIGHT as u32).expect("settings preview");
-    settings::draw(&mut pixmap, &crate::text::Text::new(), &panel, &Settings::default(), 1.0);
+    settings::draw(&mut pixmap, &crate::text::Text::new(), &panel, &Settings { eye_style: style, pill_style, ..Default::default() }, 1.0);
     pixmap.save_png(out).expect("settings preview png");
 }
 
@@ -210,12 +246,84 @@ pub fn morph_preview(prefix: &str) {
 mod tests {
     use super::*;
 
+    #[test]
+    #[ignore]
+    fn benchmark_settings_animation_frames() {
+        let mut notch = opened();
+        let text = crate::text::Text::new();
+        let start = std::time::Instant::now();
+        for _ in 0..30 {
+            let mut pixmap = Pixmap::new(960, 800).unwrap();
+            crate::ui::draw(&mut pixmap, &text, &notch, 1.0);
+            notch.tick(std::time::Duration::from_millis(16));
+        }
+        eprintln!("Settings draw: {:.2} ms/frame", start.elapsed().as_secs_f64() * 1000.0 / 30.0);
+    }
+
     fn opened() -> Notch {
         PANEL.with_borrow_mut(|panel| *panel = Panel::default());
         let mut notch = Notch::new(960.0);
         notch.open_settings();
         for _ in 0..600 { notch.tick(std::time::Duration::from_millis(16)); }
         notch
+    }
+
+    #[test]
+    fn settings_surface_is_black_and_preserves_top_flares() {
+        let notch = opened();
+        let mut pixels = Pixmap::new(960, 800).unwrap();
+        crate::ui::draw(&mut pixels, &crate::text::Text::new(), &notch, 1.0);
+        let black = pixels.pixel(480, 680).unwrap();
+        assert_eq!((black.red(), black.green(), black.blue(), black.alpha()), (0, 0, 0, 255));
+        let left = notch.shape().rect.x as u32;
+        let flare = pixels.pixel(left - 4, 1).unwrap();
+        assert_eq!((flare.red(), flare.green(), flare.blue(), flare.alpha()), (0, 0, 0, 255));
+        assert_eq!(pixels.pixel(left - 4, 20).unwrap().alpha(), 0);
+    }
+
+    #[test]
+    fn settings_highlights_follow_media_theme_on_black() {
+        let mut notch = opened();
+        let text = crate::text::Text::new();
+        let before = render(&text, &notch, 1.0).unwrap();
+        notch.handle(visus_core::Event::Media(visus_core::MediaInfo {
+            has_session: true, playing: true, title: "Theme test".into(),
+            art: Some(std::sync::Arc::new(visus_core::Art { size: 2, rgba: [230, 60, 40, 255].repeat(4), id: 987 })),
+            ..Default::default()
+        }));
+        for _ in 0..120 { notch.tick(std::time::Duration::from_millis(16)); }
+        let after = render(&text, &notch, 1.0).unwrap();
+        PANEL.with_borrow(|panel| assert_eq!(panel.media_accent, Some(notch.theme())));
+        assert_ne!(before.data(), after.data());
+        let background = after.pixel(480, 680).unwrap();
+        assert_eq!((background.red(), background.green(), background.blue()), (0, 0, 0));
+    }
+
+    #[test]
+    fn preview_battery_tracks_real_state_and_invalidates_cached_pixels() {
+        let mut notch = opened();
+        let text = crate::text::Text::new();
+        notch.handle(visus_core::Event::Power { on_ac: false, percent: 45 });
+        let unplugged = render(&text, &notch, 1.0).unwrap();
+        PANEL.with_borrow(|panel| assert_eq!(panel.battery, Some((false, 45))));
+        notch.handle(visus_core::Event::Power { on_ac: true, percent: 46 });
+        let charging = render(&text, &notch, 1.0).unwrap();
+        PANEL.with_borrow(|panel| assert_eq!(panel.battery, Some((true, 46))));
+        assert!(!Rc::ptr_eq(&unplugged, &charging));
+        assert_ne!(unplugged.data(), charging.data());
+    }
+
+    #[test]
+    fn settings_render_cache_reuses_pixels_and_invalidates_on_changes() {
+        let mut notch = opened();
+        let text = crate::text::Text::new();
+        let initial = render(&text, &notch, 1.0).unwrap();
+        assert!(Rc::ptr_eq(&initial, &render(&text, &notch, 1.0).unwrap()));
+        notch.update_settings(|settings| settings.clock_size = 24.0);
+        let changed = render(&text, &notch, 1.0).unwrap();
+        assert!(!Rc::ptr_eq(&initial, &changed));
+        PANEL.with_borrow_mut(|panel| panel.section = 1);
+        assert!(!Rc::ptr_eq(&changed, &render(&text, &notch, 1.0).unwrap()));
     }
 
     #[test]
@@ -229,10 +337,40 @@ mod tests {
     }
 
     #[test]
+    fn close_hover_updates_pixels_without_overlapping_preview_tabs() {
+        let mut notch = opened();
+        let text = crate::text::Text::new();
+        let normal = render(&text, &notch, 1.0).unwrap();
+        let bounds = notch.shape().rect;
+        notch.set_pointer(Some((bounds.x + settings::CLOSE.x + 18.0, settings::CLOSE.y + 18.0)));
+        assert!(over_clickable(&notch));
+        let hovered = render(&text, &notch, 1.0).unwrap();
+        assert_ne!(normal.data(), hovered.data());
+        PANEL.with_borrow(|panel| assert!(panel.close_hovered));
+        notch.set_pointer(None);
+        render(&text, &notch, 1.0);
+        PANEL.with_borrow(|panel| assert!(!panel.close_hovered));
+        assert!(settings::CLOSE.x > 788.0);
+    }
+
+    #[test]
+    fn all_styles_map_the_settings_close_target_correctly() {
+        for style in [visus_core::PillStyle::Attached, visus_core::PillStyle::Floating, visus_core::PillStyle::Soft] {
+            let mut notch = opened();
+            notch.update_settings(|settings| settings.pill_style = style);
+            let bounds = notch.shape().rect;
+            let screen = (bounds.x + settings::CLOSE.x + 18.0, crate::ui::top_offset(&notch) + settings::CLOSE.y + 18.0);
+            let logical = crate::ui::to_logical(&notch, screen.0, screen.1);
+            click(&mut notch, logical.0, logical.1);
+            assert!(!notch.settings_is_open());
+        }
+    }
+
+    #[test]
     fn embedded_close_button_reverses_the_morph() {
         let mut notch = opened();
         let bounds = notch.shape().rect;
-        click(&mut notch, bounds.x + 158.0, 38.0);
+        click(&mut notch, bounds.x + settings::CLOSE.x + 18.0, settings::CLOSE.y + 18.0);
         assert!(!notch.settings_is_open());
         assert!(notch.is_animating());
     }

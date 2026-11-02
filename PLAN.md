@@ -1,4 +1,9 @@
 # Visus
+Latest development milestone: v1.12.0 adds three selectable pill silhouettes, independent sizing,
+motion/accent/alert customization, black cached settings with live previews, livelier mascots, and
+optional cloud-rig GPU/VRAM fallback telemetry adapted from SalsaStats (reference-only, unchanged).
+Windows/GeForce NOW/SalsaNow runtime checks remain a release validation task for real rigs.
+
 
 "To see, to have vision." A tiny always-on-top notch/pill at the top of the screen that shows
 what matters at a glance (music, lyrics, timers, files, alerts) and gets out of the way. Stable and

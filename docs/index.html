@@ -7,7 +7,7 @@
 <meta name="description" content="Visus is a native desktop notch for Windows and Linux: music, timers, four game HUD layouts, independent clock sizing, and expanding modular settings.">
 <meta name="theme-color" content="#050507">
 <link rel="icon" href="assets/icon.png">
-<link rel="stylesheet" href="style.css?v=1.11.0">
+<link rel="stylesheet" href="style.css?v=1.12.0">
 </head>
 <body>
 <div class="grain" aria-hidden="true"></div>
@@ -30,10 +30,10 @@
   <section class="hero">
     <div class="glow" aria-hidden="true"></div>
     <div class="stage">
-      <img class="p on" data-cap="Idle: battery and time" src="assets/shots/pill_idle.webp?v=1.11.0" alt="Visus idle pill showing unplugged battery and clock" style="--w:266px" width="332" height="64">
-      <img class="p" data-cap="Playing music: a live visualiser appears" src="assets/shots/pill_music.webp?v=1.11.0" alt="Visus pill while music plays" style="--w:438px" width="548" height="64">
-      <img class="p" data-cap="Downloading: speed readout slides in" src="assets/shots/pill_download.webp?v=1.11.0" alt="Visus pill during a download" style="--w:451px" width="564" height="64">
-      <img class="p" data-cap="In a game: live CPU, GPU and RAM" src="assets/shots/pill_game.webp?v=1.11.0" alt="Visus pill as a game HUD" style="--w:1072px" width="1340" height="64">
+      <img class="p on" data-cap="Idle: battery and time" src="assets/shots/pill_idle.webp?v=1.12.0" alt="Visus idle pill showing unplugged battery and clock" style="--w:208px" width="260" height="64">
+      <img class="p" data-cap="Playing music: a live visualiser appears" src="assets/shots/pill_music.webp?v=1.12.0" alt="Visus pill while music plays" style="--w:330px" width="412" height="64">
+      <img class="p" data-cap="Downloading: speed readout slides in" src="assets/shots/pill_download.webp?v=1.12.0" alt="Visus pill during a download" style="--w:451px" width="564" height="64">
+      <img class="p" data-cap="In a game: CPU, GPU, VRAM and RAM" src="assets/shots/pill_game.webp?v=1.12.0" alt="Visus pill as a game HUD with dedicated VRAM" style="--w:1072px" width="1588" height="64">
     </div>
     <p class="stagecap" id="stagecap">Idle: battery and time</p>
     <p class="eyebrow">Windows &amp; Linux · free · native</p>
@@ -67,20 +67,21 @@
     <div class="wrap center">
       <p class="eyebrow">Game mode</p>
       <h2>When the game starts,<br>the pill becomes a HUD.</h2>
-      <p class="sub">Visus notices when a game takes the screen and turns into a quiet HUD. Pills and Bars show load, temperatures, and memory; Card adds an FPS graph, while Compact keeps just FPS, a frame-time sparkline, and milliseconds. Click the HUD to cycle through all four layouts.</p>
+      <p class="sub">Visus notices when a game takes the screen and turns into a quiet HUD. Pills, Bars, and Card show available CPU/GPU load, temperatures, RAM, and dedicated VRAM. Compact keeps FPS, a frame-time sparkline, and milliseconds. Click the HUD to cycle through all four layouts.</p>
       <div class="showcase">
         <div class="scene">
           <div class="scene-bg" aria-hidden="true"></div>
-          <img src="assets/shots/hud_pills.webp?v=1.11.0" alt="Visus game HUD showing CPU, GPU, temperature and RAM" width="670" height="32" loading="lazy">
+          <img src="assets/shots/hud_pills.webp?v=1.12.0" alt="Visus game HUD showing CPU, GPU, temperature, VRAM and RAM" width="794" height="32" loading="lazy">
         </div>
         <div class="tabs">
-          <button class="on" data-shot="hud_pills" data-w="670" data-h="32">Pills</button>
-          <button data-shot="hud_bars" data-w="670" data-h="32">Bars</button>
-          <button data-shot="hud_card" data-w="296" data-h="228">Card</button>
+          <button class="on" data-shot="hud_pills" data-w="794" data-h="32">Pills</button>
+          <button data-shot="hud_bars" data-w="794" data-h="32">Bars</button>
+          <button data-shot="hud_card" data-w="296" data-h="260">Card</button>
           <button data-shot="hud_compact" data-w="376" data-h="40">Compact</button>
         </div>
       </div>
-      <p class="fine">Readings vary by hardware and driver: NVIDIA GPU stats use <code>nvidia-smi</code>; AMD GPU stats use sysfs on Linux. Linux FPS and frame time come from active MangoHud logs. Card and Compact show placeholders when no frame data is available.</p>
+      <p class="fine">Windows GPU collection tries NVAPI, NVIDIA-SMI, and WMI/CIM performance counters, with independent GPU-load, temperature, and VRAM availability. Linux supports NVIDIA-SMI and AMD sysfs; FPS comes from active MangoHud logs. Missing values stay unavailable, not invented.</p>
+      <p class="fine"><strong>GeForce NOW / SalsaNow:</strong> run Visus inside the cloud rig to read its GPU and VRAM. The fallback strategy is adapted from SalsaStats; SalsaStats is not changed or required. A local streaming client cannot report the remote rig's counters. Provider-specific runtime validation is ongoing.</p>
     </div>
   </section>
 
@@ -89,7 +90,7 @@
       <p class="eyebrow">Music</p>
       <h2>Album art, on a spinning record.</h2>
       <p class="sub">Whatever is playing, Visus picks up the title, artist and cover, spins it on a vinyl, and tints the whole interface with the colour of the artwork. Synced lyrics, seeking and media keys are built in.</p>
-      <figure class="frame"><img src="assets/music.gif?v=1.11.0" alt="Visus playing Midnight City, with the album cover spinning on a vinyl record and side navigation arrows" width="1000" height="337" loading="lazy"></figure>
+      <figure class="frame"><img src="assets/music.gif?v=1.12.0" alt="Visus playing Midnight City, with the album cover spinning on a vinyl record and side navigation arrows" width="1000" height="337" loading="lazy"></figure>
     </div>
   </section>
 
@@ -101,7 +102,7 @@
       <div class="showcase">
       <div class="show">
         <div class="show-bg" aria-hidden="true"></div>
-        <img src="assets/shots/timer.webp?v=1.11.0" alt="Visus focus timer" width="1004" height="323">
+        <img src="assets/shots/timer.webp?v=1.12.0" alt="Visus focus timer" width="1004" height="323">
       </div>
       <div class="tabs" role="tablist">
         <button class="on" data-shot="timer" data-w="1004" data-h="323">Timer</button>
@@ -138,11 +139,11 @@
     <div class="wrap">
       <p class="eyebrow">Make it yours</p>
       <h2>Three clocks. Four characters.</h2>
-      <p class="sub">Pick Classic, Flip, or LED, with separate closed-clock and header sizes. Then pick who looks back at you when nothing is going on.</p>
+      <p class="sub">Pick Classic, Flip, or LED, with separate closed-clock and header sizes, optional dimming, and a battery ring that can match the clock height. Then pick who looks back at you when nothing is going on.</p>
       <div class="showcase">
         <div class="show">
           <div class="show-bg" aria-hidden="true"></div>
-          <img src="assets/shots/open_classic.webp?v=1.11.0" alt="Visus with the classic clock" width="1004" height="323" loading="lazy">
+          <img src="assets/shots/open_classic.webp?v=1.12.0" alt="Visus with the classic clock" width="1004" height="323" loading="lazy">
         </div>
         <div class="tabs">
           <button class="on" data-shot="open_classic" data-w="1004" data-h="323">Classic</button>
@@ -152,10 +153,10 @@
       </div>
       <p class="sub eyes-lead">And while nothing is happening, someone is watching.</p>
       <div class="eyes">
-        <figure><img src="assets/gifs/eye.gif" alt="Classic eye blinking and looking around" width="480" height="136" loading="lazy"><figcaption>Classic</figcaption></figure>
-        <figure><img src="assets/gifs/sauron.gif" alt="Sauron eye burning" width="480" height="112" loading="lazy"><figcaption>Sauron</figcaption></figure>
-        <figure><img src="assets/gifs/cat.gif" alt="Cat eye" width="480" height="112" loading="lazy"><figcaption>Cat</figcaption></figure>
-        <figure><img src="assets/gifs/robot.gif" alt="Robot visor" width="480" height="112" loading="lazy"><figcaption>Robot</figcaption></figure>
+        <figure><img src="assets/gifs/eye.gif?v=1.12.0" alt="Classic eye blinking and looking around" width="560" height="140" loading="lazy"><figcaption>Classic</figcaption></figure>
+        <figure><img src="assets/gifs/sauron.gif?v=1.12.0" alt="Fiery Sauron iris with molten trails and framing arches" width="560" height="140" loading="lazy"><figcaption>Sauron</figcaption></figure>
+        <figure><img src="assets/gifs/cat.gif?v=1.12.0" alt="Cat eye with breathing and gentle whisker movement" width="560" height="140" loading="lazy"><figcaption>Cat</figcaption></figure>
+        <figure><img src="assets/gifs/robot.gif?v=1.12.0" alt="Robot visor with alternating reply lights" width="560" height="140" loading="lazy"><figcaption>Robot</figcaption></figure>
       </div>
     </div>
   </section>
@@ -164,21 +165,34 @@
     <div class="wrap center">
       <p class="eyebrow">Customization</p>
       <h2>Settings, straight from the notch.</h2>
-      <p class="sub">The pill widens and unfolds into seven settings sections, then shrinks back when you close it. Adjust clock text independently from pill scale, choose a mascot and HUD, or connect your calendar. Changes save locally as you make them.</p>
+      <p class="sub">The pill unfolds into eight modular settings sections, then shrinks back when you close it. Size the closed pill and expanded pages independently, tune the clock and battery ring, choose media-following or fixed accents, and control motion and individual alerts. Changes save locally as you make them.</p>
       <div class="showcase">
         <div class="show settings-show">
-          <img src="assets/gifs/settings_morph.gif?v=1.11.0" alt="Visus settings inflating from the notch and collapsing back" width="720" height="600" loading="lazy">
+          <img src="assets/gifs/settings_morph.gif?v=1.12.0" alt="Visus settings inflating from the notch and collapsing back" width="720" height="600" loading="lazy">
         </div>
         <div class="tabs">
-          <button class="on" data-src="assets/gifs/settings_morph.gif?v=1.11.0" data-w="720" data-h="600" data-alt="Settings expanding from and collapsing into the notch">Animation</button>
+          <button class="on" data-src="assets/gifs/settings_morph.gif?v=1.12.0" data-w="720" data-h="600" data-alt="Settings expanding from and collapsing into the notch">Animation</button>
           <button data-shot="settings_clock" data-w="888" data-h="722">Clock</button>
           <button data-shot="settings_appearance" data-w="888" data-h="722">Appearance</button>
           <button data-shot="settings_mascot" data-w="888" data-h="722">Mascot</button>
           <button data-shot="settings_gaming" data-w="888" data-h="722">Gaming</button>
           <button data-shot="settings_integrations" data-w="888" data-h="722">Integrations</button>
+          <button data-shot="settings_behavior" data-w="888" data-h="722">Behavior</button>
+          <button data-shot="settings_alerts" data-w="888" data-h="722">Alerts</button>
         </div>
       </div>
-      <p class="fine">Closed clock: 12-32 px. Header clock: 16-30 px. Pill scale: 0.60-1.25x. Includes live previews, typed numeric values, color swatches, and per-section reset. Font families, page text sizes, and individual button dimensions remain fixed.</p>
+      <p class="fine">Closed clock and battery ring: 12-32 px. Header clock: 16-30 px. Closed/open scales: 0.60-1.25x independently. Includes ring-height matching, custom gaps/padding, live charging previews, reduced motion, hover timing, and per-alert toggles. Scrollbars and More below reveal longer sections.</p>
+      <h3 class="pill-styles-title">Three shapes. Your choice.</h3>
+      <div class="showcase">
+        <div class="show pill-style-show">
+          <img src="assets/shots/style_attached.webp?v=1.12.0" alt="Attached pill blending into the screen edge" width="720" height="160" loading="lazy">
+        </div>
+        <div class="tabs">
+          <button class="on" data-shot="style_attached" data-w="720" data-h="160">Attached</button>
+          <button data-shot="style_floating" data-w="720" data-h="160">Floating</button>
+          <button data-shot="style_soft" data-w="720" data-h="160">Soft Notch</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -226,6 +240,6 @@
   </div>
 </footer>
 
-<script src="script.js?v=1.11.0"></script>
+<script src="script.js?v=1.12.0"></script>
 </body>
 </html>

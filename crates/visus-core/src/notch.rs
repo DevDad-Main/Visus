@@ -95,6 +95,7 @@ impl Rect {
 pub struct Shape {
     pub rect: Rect,
     pub bottom_radius: f32,
+    pub style: crate::PillStyle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -128,7 +129,6 @@ const VISUALIZER_REFRESH: Duration = Duration::from_millis(33);
 const PEEK: (f32, f32) = (500.0, 92.0);
 const OPEN: (f32, f32) = (744.0, 248.0);
 const PEEK_TIME: Duration = Duration::from_millis(2800);
-const HOVER_CLOSE_DELAY: Duration = Duration::from_millis(250);
 const VINYL_DEG_PER_SEC: f32 = 110.0;
 const WAVE_REFRESH: Duration = Duration::from_millis(66);
 const PROGRESS_REFRESH: Duration = Duration::from_millis(200);
@@ -147,10 +147,13 @@ pub struct Notch {
     r: Spring,
     peek_left: Duration,
     leave_left: Option<Duration>,
+    enter_left: Option<Duration>,
     media: MediaInfo,
     media_at: Instant,
     on_ac: Option<bool>,
     battery: Option<(bool, u8)>,
+    closed_clock_width: Option<f32>,
+    closed_clock_height: Option<f32>,
     hidden: bool,
     fullscreen: bool,
     game: bool,
@@ -231,10 +234,13 @@ impl Notch {
             r: Spring::new(16.0),
             peek_left: Duration::ZERO,
             leave_left: None,
+            enter_left: None,
             media: MediaInfo::default(),
             media_at: Instant::now(),
             on_ac: None,
             battery: None,
+            closed_clock_width: None,
+            closed_clock_height: None,
             hidden: false,
             fullscreen: false,
             game: false,
@@ -447,7 +453,8 @@ impl Notch {
 
     /// Rows in the card layout: CPU, GPU when available, RAM.
     pub fn game_rows(&self) -> usize {
-        2 + self.game_stats.gpu.is_some() as usize
+        2 + (self.game_stats.gpu.is_some() || self.game_stats.gpu_temp.is_some()) as usize
+            + self.game_stats.gpu_vram_used_gb.is_some() as usize
     }
 
     pub fn game_stats(&self) -> crate::GameStats {
@@ -468,11 +475,25 @@ impl Notch {
         if g.gpu_temp.is_some() {
             v.push(GpuTemp);
         }
+        if g.gpu_vram_used_gb.is_some() { v.push(Vram); }
         v.push(Ram);
         v
     }
 
     pub fn alert(&mut self, a: Alert) {
+        let enabled = match a {
+            Alert::Charging { .. } | Alert::Unplugged { .. } => self.settings.alert_power,
+            Alert::Online | Alert::Offline => self.settings.alert_network,
+            Alert::Headphones => self.settings.alert_headphones,
+            Alert::Controller(_) => self.settings.alert_controller,
+            Alert::DownloadDone => self.settings.alert_downloads,
+            Alert::TimerDone => self.settings.alert_timer,
+            Alert::TodoDue => self.settings.alert_tasks,
+            Alert::Meeting { .. } => self.settings.alert_meetings,
+            Alert::UpdateAvailable => self.settings.alert_updates,
+            _ => self.settings.alert_controls,
+        };
+        if !enabled { return; }
         if self.game_active() || self.hidden || self.mode == Mode::Open || self.palette_open || self.settings_open {
             return;
         }
@@ -798,6 +819,7 @@ impl Notch {
 
     /// Bright tint taken from the album art; white when there is none.
     pub fn accent(&self) -> [u8; 3] {
+        if self.settings.accent_mode != "media" { return self.theme(); }
         let Some(art) = &self.media.art else { return [255, 255, 255] };
         let (mut sum, mut n) = ([0u32; 3], 0u32);
         for px in art.rgba.chunks_exact(4).step_by(7) {
@@ -850,6 +872,11 @@ impl Notch {
     }
 
     fn theme_target(&self) -> [f32; 3] {
+        match self.settings.accent_mode.as_str() {
+            "fixed" => return self.settings.accent_color.0.map(f32::from),
+            "mascot" => return self.settings.eye_iris.0.map(f32::from),
+            _ => {}
+        }
         match (self.media.has_session && self.media.playing, self.art_theme()) {
             (true, Some(c)) => c.map(f32::from),
             _ => self.settings.eye_iris.0.map(f32::from),
@@ -968,10 +995,40 @@ impl Notch {
         &self.settings
     }
 
+    pub fn closed_clock_width(&self) -> Option<f32> {
+        self.closed_clock_width
+    }
+
+    pub fn set_closed_clock_width(&mut self, width: f32) {
+        if width.is_finite() && width > 0.0 && self.closed_clock_width != Some(width) {
+            self.closed_clock_width = Some(width);
+            self.retarget();
+        }
+    }
+
+    pub fn closed_ring_width(&self) -> f32 {
+        if self.timer.is_running() || self.timer.progress() > 0.0 { 18.5 }
+        else if self.settings.show_battery && self.battery.is_some() { self.battery_ring_diameter() * 1.15625 }
+        else { 0.0 }
+    }
+
+    pub fn set_closed_clock_height(&mut self, height: f32) {
+        if height.is_finite() && height > 0.0 && self.closed_clock_height != Some(height) {
+            self.closed_clock_height = Some(height);
+            self.retarget();
+        }
+    }
+
+    pub fn battery_ring_diameter(&self) -> f32 {
+        if self.settings.battery_match_clock {
+            self.closed_clock_height.unwrap_or(self.settings.clock_size * 0.7) / 1.15625
+        } else { self.settings.battery_ring_size }
+    }
+
     pub fn set_settings(&mut self, s: Settings) {
         self.settings = s.clamped();
         if !(self.media.has_session && self.media.playing) {
-            self.theme = self.settings.eye_iris.0.map(f32::from);
+            self.theme = self.theme_target();
         }
         let total = Duration::from_secs(self.settings.timer_minutes as u64 * 60);
         if !self.timer.is_running() && self.timer.total() != total {
@@ -1028,6 +1085,7 @@ impl Notch {
         self.close_palette();
         self.settings_open = true;
         self.settings_surface = true;
+        self.enter_left = None;
         self.settings_anim.target = 1.0;
         self.leave_left = None;
         self.mode = Mode::Closed;
@@ -1248,7 +1306,7 @@ impl Notch {
         if self.palette_open {
             self.close_palette();
         } else if self.todo_input.take().is_some() || self.location_input.take().is_some() || self.folder_input.take().is_some() {
-            self.leave_left = Some(HOVER_CLOSE_DELAY);
+            self.leave_left = Some(Duration::from_millis(self.settings.hover_close_ms as u64));
         } else if self.settings_open {
             self.close_settings();
         }
@@ -1267,7 +1325,7 @@ impl Notch {
             return Outcome::None;
         }
         if let Some(q) = self.location_input.take() {
-            self.leave_left = Some(HOVER_CLOSE_DELAY);
+            self.leave_left = Some(Duration::from_millis(self.settings.hover_close_ms as u64));
             if !q.trim().is_empty() {
                 return Outcome::Geocode(q.trim().to_string());
             }
@@ -1278,7 +1336,7 @@ impl Notch {
                 self.todos.push(task);
                 self.todos_dirty = true;
             }
-            self.leave_left = Some(HOVER_CLOSE_DELAY);
+            self.leave_left = Some(Duration::from_millis(self.settings.hover_close_ms as u64));
         }
         Outcome::None
     }
@@ -1461,7 +1519,7 @@ impl Notch {
 
     /// Current expression and how far through it the eye is (0..1).
     pub fn eye_mood(&self) -> (EyeMood, f32) {
-        if !self.settings.eye_moods || self.eye_state() != EyeState::Awake {
+        if self.settings.reduced_motion || !self.settings.eye_moods || self.eye_state() != EyeState::Awake {
             return (EyeMood::None, 0.0);
         }
         let t = self.awake_secs();
@@ -1502,6 +1560,7 @@ impl Notch {
     }
 
     pub fn set_eye_target(&mut self, dx: f32, dy: f32) {
+        if self.settings.reduced_motion { return; }
         self.look_x.target = dx.clamp(-1.0, 1.0);
         self.look_y.target = dy.clamp(-1.0, 1.0);
     }
@@ -1575,7 +1634,7 @@ impl Notch {
 
     /// Picks a new glance direction every couple of seconds when the cursor is unknown.
     fn wander(&mut self) {
-        if self.tracking || self.eye_state() != EyeState::Awake {
+        if self.settings.reduced_motion || self.tracking || self.eye_state() != EyeState::Awake {
             return;
         }
         let h = hash((self.awake_secs() / WANDER_EVERY) as u32 + 1000);
@@ -1590,14 +1649,14 @@ impl Notch {
             return None;
         }
         let idle = self.idle_for();
+        if self.settings.reduced_motion { return Some(Duration::from_secs(1)); }
         let wake = Duration::from_secs(self.settings.idle_secs as u64);
         match self.eye_state() {
             EyeState::Hidden => Some(wake.saturating_sub(idle) + Duration::from_millis(20)),
             EyeState::Awake => {
                 let t = self.awake_secs();
                 let mut next = blink_at(t).1;
-                if self.settings.eye_style == crate::EyeStyle::Sauron {
-                    // Flames flicker and the gaze sweeps, so keep animating while it watches.
+                if matches!(self.settings.eye_style, crate::EyeStyle::Sauron | crate::EyeStyle::Robot | crate::EyeStyle::Cat) {
                     next = next.min(0.05);
                 }
                 if self.tracking {
@@ -1641,11 +1700,18 @@ impl Notch {
             self.touch();
             self.leave_left = None;
             if self.mode != Mode::Open {
-                self.mode = Mode::Open;
-                self.retarget();
+                if self.settings.hover_open_ms == 0 {
+                    self.mode = Mode::Open;
+                    self.retarget();
+                } else if self.enter_left.is_none() {
+                    self.enter_left = Some(Duration::from_millis(self.settings.hover_open_ms as u64));
+                }
             }
-        } else if self.mode == Mode::Open && self.leave_left.is_none() {
-            self.leave_left = Some(HOVER_CLOSE_DELAY);
+        } else {
+            self.enter_left = None;
+            if self.mode == Mode::Open && self.leave_left.is_none() {
+                self.leave_left = Some(Duration::from_millis(self.settings.hover_close_ms as u64));
+            }
         }
     }
 
@@ -1658,7 +1724,7 @@ impl Notch {
 
     pub fn shape(&self) -> Shape {
         // Squash and stretch: the pill gets slightly shorter while it widens quickly, and taller while it narrows.
-        let squash = (self.w.velocity() * 0.000012).clamp(-0.04, 0.04);
+        let squash = if self.settings.reduced_motion { 0.0 } else { (self.w.velocity() * 0.000012 * self.settings.animation_intensity).clamp(-0.04, 0.04) };
         Shape {
             rect: Rect {
                 x: (self.window_w - self.w.value) / 2.0,
@@ -1667,6 +1733,7 @@ impl Notch {
                 h: self.h.value * (1.0 - squash),
             },
             bottom_radius: self.r.value,
+            style: self.settings.pill_style,
         }
     }
 
@@ -1679,13 +1746,24 @@ impl Notch {
             || !self.settings_anim.is_settled()
             || self.peek_left > Duration::ZERO
             || self.leave_left.is_some()
+            || self.enter_left.is_some()
     }
 
     pub fn tick(&mut self, dt: Duration) {
+        if let Some(left) = self.enter_left {
+            let left = left.saturating_sub(dt);
+            if left.is_zero() {
+                self.enter_left = None;
+                if !self.settings_surface && !self.palette_open && !self.hidden && !self.game_active() {
+                    self.mode = Mode::Open;
+                    self.retarget();
+                }
+            } else { self.enter_left = Some(left); }
+        }
         self.wander();
         {
             // The record spins up and down smoothly with playback.
-            let target = if self.media.has_session && self.media.playing { VINYL_DEG_PER_SEC } else { 0.0 };
+            let target = if !self.settings.reduced_motion && self.media.has_session && self.media.playing { VINYL_DEG_PER_SEC } else { 0.0 };
             let s = dt.as_secs_f32();
             self.vinyl_speed += (target - self.vinyl_speed) * (1.0 - (-2.5 * s).exp());
             self.vinyl_angle = (self.vinyl_angle + self.vinyl_speed * s) % 360.0;
@@ -1693,7 +1771,7 @@ impl Notch {
         {
             let (t, k) = (self.theme_target(), 1.0 - (-5.0 * dt.as_secs_f32()).exp());
             for i in 0..3 {
-                self.theme[i] += (t[i] - self.theme[i]) * k;
+                self.theme[i] += (t[i] - self.theme[i]) * if self.settings.reduced_motion { 1.0 } else { k };
             }
         }
         if let Some((k, at)) = &self.art_pending {
@@ -1731,6 +1809,14 @@ impl Notch {
             }
         }
         let s = dt.as_secs_f32();
+        if self.settings.reduced_motion {
+            self.settings_anim = Spring::new(self.settings_anim.target);
+            self.palette_anim = Spring::new(self.palette_anim.target);
+            self.retarget();
+            self.w = Spring::new(self.w.target);
+            self.h = Spring::new(self.h.target);
+            self.r = Spring::new(self.r.target);
+        }
         self.w.step(s);
         self.h.step(s);
         self.r.step(s);
@@ -1766,11 +1852,20 @@ impl Notch {
                     * if self.settings.clock_style == crate::ClockStyle::Flip { 3.8 } else { 4.5 };
                 let clock_height = self.settings.clock_size
                     * if self.settings.clock_style == crate::ClockStyle::Flip { 1.3 } else { 1.0 } + 8.0;
+                let timer_active = self.timer.is_running() || self.timer.progress() > 0.0;
+                let battery_size = if self.settings.show_battery && !timer_active { self.battery_ring_diameter() } else { 0.0 };
+                let battery_extra = (battery_size - 16.0).max(0.0) * 2.0;
+                let empty_left = if !self.settings.show_battery && !timer_active { 28.0 } else { 0.0 };
                 // While the idle eye shows, the pill tightens around it; hovering grows it again.
                 let (w, h) = if self.eye_state() != EyeState::Hidden {
                     (EYE_PILL_W, self.settings.closed_height - 4.0)
+                } else if let Some(clock_width) = self.closed_clock_width {
+                    let ring = self.closed_ring_width();
+                    let gap = if ring > 0.0 { self.settings.ring_clock_gap } else { 0.0 };
+                    let right = if self.download.is_some() { DOWNLOAD_EXTRA } else if self.visualizer_active() { VISUALIZER_EXTRA } else { 0.0 };
+                    (self.settings.outer_padding * 2.0 + ring + gap + clock_width + right, self.settings.closed_height.max(clock_height).max(ring + 8.0))
                 } else {
-                    ((self.settings.closed_width + if self.download.is_some() { DOWNLOAD_EXTRA } else if self.visualizer_active() { VISUALIZER_EXTRA } else { -IDLE_TRIM }).max(140.0) + clock_extra, self.settings.closed_height.max(clock_height))
+                    ((self.settings.closed_width + if self.download.is_some() { DOWNLOAD_EXTRA } else if self.visualizer_active() { VISUALIZER_EXTRA } else { -IDLE_TRIM }).max(140.0) + clock_extra + battery_extra - empty_left, self.settings.closed_height.max(clock_height).max(battery_size * 1.15625 + 8.0))
                 };
                 ((w, h), h * 0.42)
             }
@@ -1823,6 +1918,93 @@ fn blink_at(t: f32) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hover_delays_wait_cancel_and_close_at_configured_times() {
+        let mut notch = Notch::new(960.0);
+        notch.update_settings(|settings| { settings.hover_open_ms = 300; settings.hover_close_ms = 500; });
+        notch.hover(true);
+        notch.tick(Duration::from_millis(150));
+        assert!(!notch.is_open());
+        notch.hover(false);
+        notch.tick(Duration::from_millis(400));
+        assert!(!notch.is_open());
+        notch.hover(true);
+        notch.tick(Duration::from_millis(300));
+        assert!(notch.is_open());
+        notch.hover(false);
+        notch.tick(Duration::from_millis(250));
+        assert!(notch.is_open());
+        notch.hover(true);
+        notch.tick(Duration::from_millis(400));
+        assert!(notch.is_open());
+        notch.hover(false);
+        notch.tick(Duration::from_millis(500));
+        assert!(!notch.is_open());
+    }
+
+    #[test]
+    fn per_category_alert_switches_suppress_only_their_alerts() {
+        let cases: &[(Alert, fn(&mut Settings))] = &[
+            (Alert::Charging { percent: 60 }, |settings| settings.alert_power = false),
+            (Alert::Offline, |settings| settings.alert_network = false),
+            (Alert::Headphones, |settings| settings.alert_headphones = false),
+            (Alert::Controller(true), |settings| settings.alert_controller = false),
+            (Alert::DownloadDone, |settings| settings.alert_downloads = false),
+            (Alert::TimerDone, |settings| settings.alert_timer = false),
+            (Alert::TodoDue, |settings| settings.alert_tasks = false),
+            (Alert::Meeting { mins: 5 }, |settings| settings.alert_meetings = false),
+            (Alert::UpdateAvailable, |settings| settings.alert_updates = false),
+            (Alert::CapsLock(true), |settings| settings.alert_controls = false),
+        ];
+        for (alert, disable) in cases {
+            let mut notch = Notch::new(960.0);
+            notch.update_settings(*disable);
+            notch.alert(*alert);
+            assert!(notch.alert_kind().is_none());
+            notch.set_settings(Settings::default());
+            notch.alert(*alert);
+            assert_eq!(notch.alert_kind(), Some(*alert));
+        }
+    }
+
+    #[test]
+    fn accent_modes_choose_media_mascot_or_fixed_colors() {
+        let mut notch = Notch::new(960.0);
+        notch.handle(Event::Media(MediaInfo { has_session: true, playing: true,
+            art: Some(std::sync::Arc::new(crate::Art { size: 2, rgba: [230, 40, 20, 255].repeat(4), id: 44 })), ..Default::default() }));
+        assert_ne!(notch.theme_target(), notch.settings.eye_iris.0.map(f32::from));
+        notch.update_settings(|settings| settings.accent_mode = "mascot".into());
+        assert_eq!(notch.theme_target(), notch.settings.eye_iris.0.map(f32::from));
+        notch.update_settings(|settings| { settings.accent_mode = "fixed".into(); settings.accent_color = crate::Rgb([30, 200, 80]); });
+        assert_eq!(notch.theme_target(), [30.0, 200.0, 80.0]);
+    }
+
+    #[test]
+    fn reduced_motion_uses_immediate_settings_transitions() {
+        let mut notch = Notch::new(960.0);
+        notch.update_settings(|settings| settings.reduced_motion = true);
+        notch.open_settings();
+        notch.tick(Duration::from_millis(16));
+        assert_eq!(notch.shape().rect.w, 860.0);
+        assert_eq!(notch.shape().rect.h, 720.0);
+        notch.close_settings();
+        notch.tick(Duration::from_millis(16));
+        assert!(!notch.settings_is_visible());
+        assert!(notch.shape().rect.h < 100.0);
+    }
+
+    #[test]
+    fn outer_padding_changes_only_the_outer_space() {
+        let mut notch = Notch::new(960.0);
+        notch.set_closed_clock_width(60.0);
+        notch.update_settings(|settings| settings.mascot = false);
+        settle(&mut notch);
+        let width = notch.shape().rect.w;
+        notch.update_settings(|settings| settings.outer_padding = 24.0);
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.w, width + 16.0);
+    }
 
     fn settle(n: &mut Notch) {
         for _ in 0..600 {
@@ -2011,6 +2193,44 @@ mod tests {
         n.end_drag();
         n.set_controls(Controls { volume: 0.2, has_volume: true, ..Controls::default() });
         assert!((n.controls().volume - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn larger_battery_ring_grows_only_its_visible_slot() {
+        let mut notch = Notch::new(960.0);
+        notch.handle(Event::Power { on_ac: false, percent: 72 });
+        settle(&mut notch);
+        let original = notch.shape().rect;
+        notch.update_settings(|settings| settings.battery_ring_size = 32.0);
+        settle(&mut notch);
+        let enlarged = notch.shape().rect;
+        assert_eq!(enlarged.w, original.w + 32.0);
+        assert!(enlarged.h >= 45.0);
+        assert_eq!(notch.settings().clock_size, 20.0);
+        notch.update_settings(|settings| settings.show_battery = false);
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.w, original.w - 28.0);
+        assert_eq!(notch.shape().rect.h, original.h);
+    }
+
+    #[test]
+    fn hiding_battery_reclaims_space_unless_timer_needs_it() {
+        let mut notch = Notch::new(960.0);
+        notch.handle(Event::Power { on_ac: false, percent: 72 });
+        settle(&mut notch);
+        let width = notch.shape().rect.w;
+        notch.update_settings(|settings| settings.show_battery = false);
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.w, width - 28.0);
+        notch.toggle_timer();
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.w, width);
+        notch.reset_timer();
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.w, width - 28.0);
+        notch.update_settings(|settings| settings.show_battery = true);
+        settle(&mut notch);
+        assert_eq!(notch.shape().rect.w, width);
     }
 
     #[test]

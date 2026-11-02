@@ -87,7 +87,7 @@ struct App {
     cursor: (f32, f32),
     shown: bool,
     focus_requested: bool,
-    last_region: Option<(i32, i32, i32, i32)>,
+    last_region: Option<(i32, i32, i32, i32, i32)>,
     last_cursor: Option<(i32, i32)>,
     last_tick: Instant,
     next_frame: Instant,
@@ -142,17 +142,20 @@ impl App {
                 (r.w * scale).ceil() as i32,
                 (r.h * scale).ceil() as i32,
                 (radius * scale) as i32,
+                (r.y * scale).floor() as i32,
             );
             // While animating the region only grows, so it changes once instead of every frame.
             if let (true, Some(prev)) = (animating, self.last_region) {
                 let left = region.0.min(prev.0);
                 let right = (region.0 + region.1).max(prev.0 + prev.1);
-                region = (left, right - left, region.2.max(prev.2), region.3);
+                let top = region.4.min(prev.4);
+                let bottom = (region.4 + region.2).max(prev.4 + prev.2);
+                region = (left, right - left, bottom - top, region.3, top);
             }
             // SetWindowRgn repaints the window, so repeating it every frame makes it flicker.
             if self.last_region != Some(region) {
                 self.last_region = Some(region);
-                platform::set_window_region(self.hwnd, region.0, 0, region.1, region.2, region.3);
+                platform::set_window_region(self.hwnd, region.0, region.4, region.1, region.2, region.3);
             }
         }
     }
@@ -498,6 +501,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.run_outcome(el, out);
             }
         }
+        ui::sync_closed_layout(&mut self.notch, &self.text);
         self.notch.tick(dt.min(Duration::from_millis(50)));
         store::sync(&mut self.notch);
 
@@ -555,6 +559,13 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
         return;
     }
     let mut notch = Notch::new(WIN_W);
+    if let Ok(style) = std::env::var("VISUS_PILL") {
+        notch.update_settings(|settings| settings.pill_style = match style.as_str() {
+            "floating" => visus_core::PillStyle::Floating,
+            "soft" => visus_core::PillStyle::Soft,
+            _ => visus_core::PillStyle::Attached,
+        });
+    }
     notch.hover(true);
     for _ in 0..200 {
         notch.tick(Duration::from_millis(16));
@@ -738,6 +749,7 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
             on_ac: state != "unplugged",
             percent: percent.parse::<u8>().unwrap_or(76).min(100),
         });
+        ui::sync_closed_layout(&mut notch, &text::Text::new());
         for i in 0..400 {
             notch.set_audio_level(Some(0.25 + 0.2 * (i as f32 * 0.35).sin().abs() + 0.15 * (i as f32 * 0.9).cos().abs()));
             notch.tick(Duration::from_millis(16));
@@ -764,10 +776,13 @@ fn snapshot(page: &str, out: &str, query: Option<&str>) {
                 cpu_temp: Some(71.0),
                 gpu: Some(0.80 + 0.12 * (t * 6.0).sin() * (1.0 - t * 0.3)),
                 gpu_temp: Some(76.0),
+                gpu_vram_used_gb: Some(6.5),
+                gpu_vram_total_gb: Some(24.0),
                 ram: 0.38,
                 ram_used_gb: 12.1,
                 fps: Some(fps),
                 frame_ms: Some(1000.0 / fps),
+                ..Default::default()
             }));
         }
         for _ in 0..300 {

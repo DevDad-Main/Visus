@@ -30,7 +30,7 @@
       img.classList.add("swap");
       setTimeout(() => {
         img.onload = () => img.classList.remove("swap");
-        img.src = btn.dataset.src || `assets/shots/${btn.dataset.shot}.webp?v=${btn.dataset.v || "1.11.0"}`;
+        img.src = btn.dataset.src || `assets/shots/${btn.dataset.shot}.webp?v=${btn.dataset.v || "1.12.0"}`;
         img.width = btn.dataset.w;
         img.height = btn.dataset.h;
         img.alt = btn.dataset.alt || `Visus ${btn.textContent.toLowerCase()}`;

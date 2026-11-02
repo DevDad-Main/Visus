@@ -179,6 +179,7 @@ impl State {
                 self.notch.set_stats(s.sample());
             }
         }
+        ui::sync_closed_layout(&mut self.notch, &self.text);
         self.notch.tick(dt.min(Duration::from_millis(50)));
         store::sync(&mut self.notch);
 
@@ -317,7 +318,7 @@ impl State {
         // Only the pill takes input; everything around it is click-through.
         let r = ui::hit_rect(&self.notch);
         if let Ok(region) = Region::new(&self.compositor) {
-            region.add(r.x.floor() as i32, 0, r.w.ceil() as i32, r.h.ceil() as i32);
+            region.add(r.x.floor() as i32, r.y.floor() as i32, r.w.ceil() as i32, r.h.ceil() as i32);
             self.layer.set_input_region(Some(region.wl_region()));
         }
 

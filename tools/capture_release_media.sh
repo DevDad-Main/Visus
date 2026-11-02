@@ -5,8 +5,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 for executable in cargo magick ffmpeg; do
     command -v "$executable" >/dev/null
 done
-cargo build -p visus-app
-binary="$PWD/target/debug/visus-app"
+cargo build --profile dev-fast -p visus-app
+binary="$PWD/target/dev-fast/visus-app"
 capture_dir="$(mktemp -d)"
 trap 'rm -rf "$capture_dir"' EXIT
 
@@ -38,11 +38,21 @@ for style in classic flip led; do
     VISUS_ART=1,2,3 VISUS_CLOCK="$style" capture music "$capture_dir/open_$style.png"
     magick "$capture_dir/open_$style.png" -trim +repage -resize 1004x -quality 92 "docs/assets/shots/open_$style.webp"
 done
-for section in Clock Appearance Mascot Gaming Integrations; do
+for section in Clock Appearance Mascot Gaming Integrations Behavior Alerts; do
     capture settings "$capture_dir/settings_$section.png" "$section"
     magick "$capture_dir/settings_$section.png" -trim +repage -resize 888x -quality 94 "docs/assets/shots/settings_${section,,}.webp"
 done
 cp docs/assets/shots/settings_clock.webp docs/assets/shots/settings.webp
+for style in attached floating soft; do
+    VISUS_PILL="$style" VISUS_PLAYING=0 capture closed "$capture_dir/style_$style.png" unplugged:72
+    magick "$capture_dir/style_$style.png" -background '#35383b' -alpha remove -crop 720x160+600+0 +repage -resize 720x160 -quality 94 "docs/assets/shots/style_$style.webp"
+done
+for style in eye sauron cat robot; do
+    VISUS_FRAMES=24 VISUS_STEP_MS=100 capture "$style" "$capture_dir/mascot_$style.png" 52
+    ffmpeg -y -loglevel error -threads 1 -filter_complex_threads 1 -framerate 10 -i "$capture_dir/mascot_${style}_%03d.png" \
+        -filter_complex 'crop=320:80:800:0,scale=560:140:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse=dither=bayer' \
+        -loop 0 "docs/assets/gifs/$style.gif"
+done
 "$binary" --settings-preview docs/assets/shots/settings_sidebar_clock.png Clock
 "$binary" --settings-morph-preview "$capture_dir/morph"
 ffmpeg -y -loglevel error -threads 1 -filter_complex_threads 1 -framerate 60 -i "$capture_dir/morph-%03d.png" \

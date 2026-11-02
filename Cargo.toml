@@ -2,6 +2,14 @@
 resolver = "2"
 members = ["crates/visus-core", "crates/visus-app", "crates/visus-platform"]
 
+[profile.dev-fast]
+inherits = "dev"
+opt-level = 2
+debug = 1
+
+[profile.dev-fast.package."*"]
+opt-level = 3
+
 [profile.release]
 lto = true
 codegen-units = 1

@@ -1,5 +1,14 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PillStyle {
+    #[default]
+    Attached,
+    Floating,
+    Soft,
+}
+
 /// Layout of the in-game HUD.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -109,19 +118,41 @@ impl<'de> Deserialize<'de> for Rgb {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub pill_style: PillStyle,
     /// Closed pill collapses to a thin line (for thick bezels).
     pub minimal: bool,
     /// Silences pop-up alerts (timers and reminders still show).
     pub quiet: bool,
+    pub reduced_motion: bool,
+    pub animation_intensity: f32,
+    pub accent_mode: String,
+    pub accent_color: Rgb,
+    pub outer_padding: f32,
+    pub hover_open_ms: u32,
+    pub hover_close_ms: u32,
+    pub alert_power: bool,
+    pub alert_network: bool,
+    pub alert_headphones: bool,
+    pub alert_controller: bool,
+    pub alert_downloads: bool,
+    pub alert_timer: bool,
+    pub alert_tasks: bool,
+    pub alert_meetings: bool,
+    pub alert_updates: bool,
+    pub alert_controls: bool,
     /// 24-hour clock in the pill; false shows 12-hour time.
     pub clock_24h: bool,
     pub clock_style: ClockStyle,
     pub clock_size: f32,
     pub header_clock_size: f32,
+    pub clock_dimmed: bool,
     /// Equalizer bars on the closed pill while music plays.
     pub visualizer: bool,
     /// Battery ring on the closed pill when the machine has a battery.
     pub show_battery: bool,
+    pub battery_ring_size: f32,
+    pub battery_match_clock: bool,
+    pub ring_clock_gap: f32,
     /// Show network speed in bits (Kbps/Mbps) instead of bytes (KB/s, MB/s).
     pub net_bits: bool,
     /// Remember recent clipboard text (memory only, never written to disk).
@@ -140,8 +171,9 @@ pub struct Settings {
     /// Show the idle eye when nothing has happened for a while.
     pub mascot: bool,
     pub idle_secs: u32,
-    /// Overall size multiplier for the pill and its content.
+    /// Size multiplier for the closed pill and its content.
     pub scale: f32,
+    pub open_scale: f32,
     /// Closed pill size in logical pixels, before `scale`.
     #[serde(skip)]
     pub closed_width: f32,
@@ -165,8 +197,16 @@ impl Settings {
     /// Keeps hand-edited values inside what the layout can render.
     pub fn clamped(mut self) -> Self {
         self.scale = self.scale.clamp(Self::SCALE_RANGE.0, Self::SCALE_RANGE.1);
+        self.open_scale = if self.open_scale.is_finite() { self.open_scale.clamp(Self::SCALE_RANGE.0, Self::SCALE_RANGE.1) } else { 1.0 };
         self.clock_size = if self.clock_size.is_finite() { self.clock_size.clamp(12.0, 32.0) } else { 20.0 };
         self.header_clock_size = if self.header_clock_size.is_finite() { self.header_clock_size.clamp(16.0, 30.0) } else { 22.0 };
+        self.battery_ring_size = if self.battery_ring_size.is_finite() { self.battery_ring_size.clamp(12.0, 32.0) } else { 16.0 };
+        self.ring_clock_gap = if self.ring_clock_gap.is_finite() { self.ring_clock_gap.clamp(4.0, 32.0) } else { 12.0 };
+        self.animation_intensity = if self.animation_intensity.is_finite() { self.animation_intensity.clamp(0.3, 1.5) } else { 1.0 };
+        self.outer_padding = if self.outer_padding.is_finite() { self.outer_padding.clamp(8.0, 32.0) } else { 16.0 };
+        self.hover_open_ms = self.hover_open_ms.min(1000);
+        self.hover_close_ms = self.hover_close_ms.clamp(50, 2000);
+        if !matches!(self.accent_mode.as_str(), "media" | "mascot" | "fixed") { self.accent_mode = "media".into(); }
         self.closed_width = self.closed_width.clamp(140.0, 400.0);
         self.closed_height = self.closed_height.clamp(24.0, 80.0);
         self.idle_secs = self.idle_secs.clamp(5, 3600);
@@ -178,14 +218,36 @@ impl Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            pill_style: PillStyle::Attached,
             minimal: false,
             quiet: false,
+            reduced_motion: false,
+            animation_intensity: 1.0,
+            accent_mode: "media".into(),
+            accent_color: Rgb([40, 110, 230]),
+            outer_padding: 16.0,
+            hover_open_ms: 0,
+            hover_close_ms: 250,
+            alert_power: true,
+            alert_network: true,
+            alert_headphones: true,
+            alert_controller: true,
+            alert_downloads: true,
+            alert_timer: true,
+            alert_tasks: true,
+            alert_meetings: true,
+            alert_updates: true,
+            alert_controls: true,
             clock_24h: true,
             clock_style: ClockStyle::Classic,
             clock_size: 20.0,
             header_clock_size: 22.0,
+            clock_dimmed: false,
             visualizer: true,
             show_battery: true,
+            battery_ring_size: 16.0,
+            battery_match_clock: false,
+            ring_clock_gap: 12.0,
             net_bits: false,
             clipboard_history: true,
             eye_moods: true,
@@ -198,6 +260,7 @@ impl Default for Settings {
             mascot: true,
             idle_secs: 45,
             scale: 1.0,
+            open_scale: 1.0,
             closed_width: 172.0,
             closed_height: 32.0,
             timer_minutes: 25,
@@ -215,6 +278,17 @@ impl Default for Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn battery_size_is_bounded_and_independent() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.battery_ring_size, 16.0);
+        for (requested, expected) in [(0.0, 12.0), (40.0, 32.0), (f32::NAN, 16.0)] {
+            let settings = Settings { battery_ring_size: requested, clock_size: 30.0, ..Default::default() }.clamped();
+            assert_eq!(settings.battery_ring_size, expected);
+            assert_eq!(settings.clock_size, 30.0);
+        }
+    }
 
     #[test]
     fn clock_sizes_are_independent_and_bounded() {

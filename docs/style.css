@@ -120,6 +120,8 @@ h2 { font-size: clamp(32px, 5vw, 56px); margin-bottom: 22px; }
 .settingssec { padding: 120px 0 20px; }
 .settings-show { aspect-ratio: 6 / 5; min-height: 0; max-width: 960px; background: #2f3136; }
 .settings-show img { max-height: 94%; max-width: 96%; object-fit: contain; }
+.pill-styles-title { margin-top: 54px; font-size: 22px; font-weight: 500; }
+.pill-style-show { min-height: 160px; margin-top: 24px; background: #35383b; border-radius: 8px; }
 @media (min-width: 641px) and (max-width: 920px) {
   .nav { gap: 16px; }
   .nav nav { gap: 12px; font-size: 12px; }

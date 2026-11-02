@@ -15,7 +15,7 @@ out of the way. Native Rust, no web engine, near-zero CPU when idle.
   Card and Compact show FPS/frame time when a source is available. Linux reads active MangoHud logs.
 - **Idle eye** that blinks, looks around and follows your cursor. Classic, Sauron, Cat, or Robot styles.
 - **Expanding settings** (gear in the open pill): the notch inflates into sidebar sections for appearance, clock, mascot, behavior,
-  gaming, integrations, and updates. Live previews, independent closed/header clock sizes, sliders and
+  gaming, integrations, updates, and alerts. Live previews, independent closed/header clock sizes, sliders and
   typed values, explicit style choices, and per-section reset. Close or Escape collapses it back into
   the pill. Changes save automatically.
 
@@ -23,17 +23,58 @@ out of the way. Native Rust, no web engine, near-zero CPU when idle.
 
 | Section | Available controls |
 | --- | --- |
-| Appearance | Pill scale (0.60-1.25x), battery ring, music visualizer, minimal pill, network units |
-| Clock | Classic/Flip/LED, closed clock size (12-32 px), header clock size (16-30 px), 12/24-hour time |
-| Mascot | Enable, four styles, idle delay (5-300 seconds), expressions, iris and eye color swatches |
-| Behavior | Fullscreen hiding, quiet alerts, clipboard history, focus duration, start at login |
+| Appearance | Attached/Floating/Soft styles, independent closed/open sizes, padding, accent modes and fixed colors, battery/visualizer/minimal toggles, network units |
+| Clock | Classic/Flip/LED, closed clock size (12-32 px), header clock size (16-30 px), battery ring size (12-32 px), 12/24-hour time, optional dim clock |
+| Mascot | Enable, four styles, idle delay, expressions, iris/eye colors, animation intensity, reduced motion, reaction guide |
+| Behavior | Fullscreen hiding, quiet alerts, clipboard history, focus duration, start at login, hover-open/close delays |
 | Gaming | HUD on/off and Pills/Bars/Card/Compact layout selection |
 | Integrations | Weather city, calendar URL/file, file-manager command, launcher folders |
 | Updates | Automatic checks, manual check, install an available update |
+| Alerts | Independent switches for power, network, headphones, controllers, downloads, timer/tasks/meetings, updates, and control HUDs |
 
-Clock sizes can be changed without moving the pill-scale slider. Larger clocks grow the pill's minimum
+Closed pill size and open tabbed UI size are independent, with a smooth transition between them.
+Minimal mode previews only the thin notch; the visualizer preview uses sample playback and its hint
+explains that live bars require media playback. Clock sizes can be changed independently. Larger clocks grow the pill's minimum
 bounds to avoid overlap. Style selectors and switches apply immediately; numeric sliders also accept
 typed values. Settings are saved locally, with per-section reset and live closed/header/mascot/game previews.
+Hiding the battery ring reclaims its space and centers an otherwise standalone clock. Editing a closed
+or header control automatically selects that preview view. Clock brightness stays full by default;
+enable Dim clock for a softer clock in both views.
+Battery ring size is independent of clock size; its status icon scales with the ring and the pill grows
+to keep it inside. The timer ring is unaffected. Editing battery size selects the closed preview.
+The idle pill fits the measured clock width with 16 px outer padding. Clock settings also include a
+Ring-clock gap slider (4-32 px, default 12 px); this spacing is removed when no ring is visible.
+The settings preview uses the machine's live battery percentage and charging status. Enable
+Match ring to clock to align the ring's outer height with the clock face; disable it for manual sizing.
+Longer sections show a scrollbar and a clickable More below cue. The Mascot section includes a
+style-specific reaction guide below its controls, with idle-expression previews and event meanings.
+Robot glitch/flicker and pink pulse are decorative idle moods, not app errors or hardware warnings.
+Settings sliders and selection highlights follow the live media theme while the surface stays black.
+Appearance includes an Attached / Floating / Soft pill-style selector. Floating leaves a 12 px gap above
+the capsule; Soft removes the flared top edges and uses broader lower corners. Previews and expanded
+settings use the selected silhouette, and pointer input follows the floating offset.
+Appearance also has Media/Mascot/Fixed accent modes, fixed color swatches, and outer padding (8-32 px).
+Mascot includes animation intensity (0.3-1.5x) and Reduced motion for static mascot effects and immediate
+size transitions. Behavior has separate hover-open (0-1000 ms) and hover-close (50-2000 ms) delays.
+The Alerts section independently controls power, network, headphones, controllers, completed downloads,
+timer, tasks, meetings, updates, and keyboard/audio HUD notifications. Quiet mode remains an additional
+filter; explicitly disabled timer/task notifications stay disabled even though Quiet normally allows them.
+
+### Cloud Gaming Telemetry
+
+Visus adapts the collection strategy used in SalsaStats without modifying or depending on that app.
+Windows tries NVIDIA's NVAPI driver interface, `nvidia-smi`, then bounded WMI/CIM GPU performance
+counters. GPU load, temperature, and dedicated VRAM are optional and independent; unavailable
+temperature no longer hides a valid GPU reading. Transient collection failures are retried.
+
+On GeForce NOW/SalsaNow, run Visus **inside the Windows cloud rig** to read that rig's GPU and VRAM.
+A Visus instance on your local streaming client can only measure the local machine. Provider driver
+and permission restrictions may still hide individual counters; Visus does not invent missing values.
+Pills/Bars/Card display VRAM when available; Compact remains the FPS-only layout. Linux keeps NVIDIA
+and AMD collection with dedicated VRAM where exposed. Real cloud-rig validation is still required.
+Sauron has molten trails and lid flames clipped inside the notch. Cat has breathing, slow blinks and
+visual purring; Robot has a gentle bob and reply-light pulses. These effects are silent. Expressions
+controls the extra purr/reply flourishes; awake animated styles redraw at up to 20 FPS.
 
 Not every visual dimension is independently adjustable: font family, page text sizes, spacing, button
 dimensions, and individual visualizer geometry remain fixed. Hardware readings, startup integration,
@@ -61,6 +102,19 @@ calendar URLs you configure, and update checks/downloads. Automatic update check
 Settings. No accounts, no analytics.
 
 ## Build
+
+### Local Development
+
+On Linux, stop the installed Visus instance, then run `bash tools/dev-watch.sh` or use the VS Code
+task **Visus: Development Watch**. Requires `inotify-tools` (`inotifywait`). Saving Rust source,
+crate assets, or Cargo manifests rebuilds the debug app and restarts it automatically. Failed builds
+leave the last working instance running. Stop the task with Ctrl+C to stop the watcher and its app.
+
+Watch mode uses the optimized `dev-fast` profile, keeping incremental builds and debug information
+without the slow unoptimized software renderer. Its first build takes longer while dependencies compile.
+This is rebuild-and-restart, not state-preserving hot reload. Settings persist, but transient state
+resets on restart. The development executable stays in `target/dev-fast`; the installed release at
+`~/.local/bin/visus` is unchanged. Do not run both copies at once because Visus is single-instance.
 
 ```
 cargo run -p visus-app            # run

@@ -49,6 +49,21 @@ impl Text {
     }
 
     /// Shortens with an ellipsis so the text fits in `max` pixels.
+    pub fn vertical_bounds(&self, text: &str, size: f32) -> (f32, f32) {
+        let font = self.font.as_scaled(size);
+        let mut top = f32::INFINITY;
+        let mut bottom = f32::NEG_INFINITY;
+        for character in text.chars() {
+            let glyph = font.glyph_id(character).with_scale_and_position(size, point(0.0, 0.0));
+            if let Some(outline) = self.font.outline_glyph(glyph) {
+                let bounds = outline.px_bounds();
+                top = top.min(bounds.min.y);
+                bottom = bottom.max(bounds.max.y);
+            }
+        }
+        if top.is_finite() { (top, bottom) } else { (-size * 0.7, 0.0) }
+    }
+
     pub fn fit(&self, s: &str, px: f32, max: f32) -> String {
         if self.width(s, px) <= max {
             return s.to_string();
