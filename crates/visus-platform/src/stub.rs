@@ -58,3 +58,7 @@ pub fn rescan_apps(_emit: crate::Emit) {}
 pub fn list_drives() -> Vec<String> {
     Vec::new()
 }
+
+pub fn uninstall() -> bool {
+    false
+}

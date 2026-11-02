@@ -1,6 +1,6 @@
 [package]
 name = "visus-app"
-version = "1.10.0"
+version = "1.10.1"
 edition = "2024"
 
 [dependencies]
@@ -17,7 +17,6 @@ ureq = "3"
 visus-core = { version = "0.1.0", path = "../visus-core" }
 visus-platform = { version = "0.1.0", path = "../visus-platform" }
 winit = "0.30"
-zip = { version = "9.2.1", default-features = false, features = ["deflate"] }
 
 [target."cfg(windows)".dependencies]
 tray-icon = "0.26.1"

@@ -19,7 +19,7 @@ out of the way. Native Rust, no web engine, near-zero CPU when idle.
 
 Download from [Releases](https://github.com/DevDad-Main/Visus/releases):
 
-- Windows: run `Visus-Setup.exe` (per-user install, no admin needed; optional start at login and desktop shortcut; uninstall from Settings > Apps). Or unzip `Visus-windows-x64.zip` and run `Visus.exe`. Unsigned: SmartScreen > More info > Run anyway.
+- Windows: run `Visus-Setup.exe` (per-user install, no admin needed; optional start at login and desktop shortcut; uninstall from the tray menu or Settings > Apps). Or unzip `Visus-windows-x64.zip` and run `Visus.exe`. If SmartScreen shows a notice, choose More info > Run anyway.
 - Linux (Wayland, wlr-layer-shell compositors such as Hyprland/Sway): extract `Visus-linux-x64.tar.gz`, run `visus/visus`.
   Hyprland launcher key: `bind = SUPER, space, exec, /path/to/visus --toggle-palette`.
 
@@ -36,3 +36,8 @@ cargo run -p visus-app            # run
 cargo test                        # tests
 visus-app --snapshot settings out.png   # render a page headlessly
 ```
+
+Release builds are code-signed when `WINDOWS_CERT_PFX` (a base64-encoded PFX) and
+`WINDOWS_CERT_PASSWORD` are set as repository secrets. Both `Visus.exe` and `Visus-Setup.exe`
+(including its uninstaller) are signed; without the secrets the workflow still produces unsigned
+artifacts.

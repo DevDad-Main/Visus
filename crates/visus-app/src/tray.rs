@@ -29,6 +29,7 @@ const EYE_COLOURS: [(&str, [u8; 3]); 6] = [
 enum Action {
     Setting(Change),
     Autostart,
+    Uninstall,
     Quit,
 }
 
@@ -73,6 +74,10 @@ pub fn create(proxy: EventLoopProxy<UserEvent>, s: &Settings) -> Option<Tray> {
     menu.append(&eye).ok()?;
     menu.append(&PredefinedMenuItem::separator()).ok()?;
 
+    let uninstall = MenuItem::new("Uninstall Visus\u{2026}", true, None);
+    menu.append(&uninstall).ok()?;
+    actions.push((uninstall.id().clone(), Action::Uninstall));
+
     let quit = MenuItem::new("Exit Visus", true, None);
     menu.append(&quit).ok()?;
     actions.push((quit.id().clone(), Action::Quit));
@@ -82,6 +87,7 @@ pub fn create(proxy: EventLoopProxy<UserEvent>, s: &Settings) -> Option<Tray> {
         let ev = match action {
             Action::Setting(c) => UserEvent::Setting(*c),
             Action::Autostart => UserEvent::ToggleAutostart,
+            Action::Uninstall => UserEvent::Uninstall,
             Action::Quit => UserEvent::Quit,
         };
         let _ = proxy.send_event(ev);

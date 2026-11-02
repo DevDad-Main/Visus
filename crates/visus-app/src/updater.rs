@@ -13,8 +13,8 @@ const USER_AGENT: &str = concat!("Visus/", env!("CARGO_PKG_VERSION"), " (https:/
 #[cfg_attr(not(windows), allow(dead_code))]
 struct Release {
     page: String,
-    zip: Option<String>,
-    sha: Option<String>,
+    setup: Option<String>,
+    setup_sha: Option<String>,
 }
 
 static LATEST: Mutex<Option<Release>> = Mutex::new(None);
@@ -47,8 +47,8 @@ fn fetch_latest() -> Result<(String, Release), String> {
     };
     let release = Release {
         page: rel["html_url"].as_str().unwrap_or("https://github.com/DevDad-Main/Visus/releases").to_string(),
-        zip: asset("Visus-windows-x64.zip"),
-        sha: asset("Visus.exe.sha256"),
+        setup: asset("Visus-Setup.exe"),
+        setup_sha: asset("Visus-Setup.exe.sha256"),
     };
     Ok((tag, release))
 }
@@ -81,7 +81,7 @@ fn check_inner(emit: Emit, silent: bool) {
 
 pub fn install(emit: Emit) {
     std::thread::spawn(move || match install_inner() {
-        // The new copy is already running.
+        // The installer has taken over and will restart Visus when it is done.
         Ok(()) => std::process::exit(0),
         Err(e) => emit(Event::Update(UpdateStatus::Failed(e))),
     });
@@ -97,32 +97,46 @@ fn install_inner() -> Result<(), String> {
 #[cfg(windows)]
 fn install_inner() -> Result<(), String> {
     use sha2::{Digest, Sha256};
-    use std::io::Read;
 
     let rel = LATEST.lock().unwrap().clone().ok_or("Check for updates first")?;
-    let (zip_url, sha_url) = rel.zip.zip(rel.sha).ok_or("Release has no Windows build")?;
-    let get = http_get;
-    let zip_bytes = get(&zip_url)?;
-    let expected = String::from_utf8_lossy(&get(&sha_url)?).split_whitespace().next().unwrap_or("").to_lowercase();
 
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).map_err(|e| e.to_string())?;
-    let mut exe = Vec::new();
-    archive.by_name("Visus.exe").map_err(|e| e.to_string())?.read_to_end(&mut exe).map_err(|e| e.to_string())?;
+    if let Some((setup_url, sha_url)) = rel.setup.as_ref().zip(rel.setup_sha.as_ref()) {
+        let setup = http_get(setup_url)?;
+        let expected = String::from_utf8_lossy(&http_get(sha_url)?)
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+        let actual: String = Sha256::digest(&setup).iter().map(|b| format!("{b:02x}")).collect();
+        if actual != expected {
+            return Err("Checksum mismatch, update not installed".into());
+        }
 
-    let actual: String = Sha256::digest(&exe).iter().map(|b| format!("{b:02x}")).collect();
-    if actual != expected {
-        return Err("Checksum mismatch, update not installed".into());
+        // Run the per-user installer rather than overwriting the running exe. This works even when
+        // the current copy lives somewhere write-protected (for example Program Files) and never
+        // asks for administrator rights.
+        let setup_path = std::env::temp_dir().join(format!("Visus-Setup-{}.exe", std::process::id()));
+        std::fs::write(&setup_path, &setup).map_err(|e| format!("Could not save the update: {e}"))?;
+
+        let mut cmd = std::process::Command::new(&setup_path);
+        cmd.args([
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/SP-",
+            "/CLOSEAPPLICATIONS",
+            "/FORCECLOSEAPPLICATIONS",
+            "/MERGETASKS=!autostart,!desktopicon",
+            "/RESTART=1",
+        ]);
+        std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
+        if let Err(e) = cmd.spawn() {
+            visus_platform::open_url(&rel.page);
+            return Err(format!("Could not start the installer ({e}). Opened the release page."));
+        }
+        return Ok(());
     }
 
-    // A running exe can be renamed but not overwritten.
-    let current = std::env::current_exe().map_err(|e| e.to_string())?;
-    let old = current.with_extension("old");
-    let _ = std::fs::remove_file(&old);
-    std::fs::rename(&current, &old).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::write(&current, &exe) {
-        let _ = std::fs::rename(&old, &current);
-        return Err(e.to_string());
-    }
-    std::process::Command::new(&current).spawn().map_err(|e| e.to_string())?;
-    Ok(())
+    visus_platform::open_url(&rel.page);
+    Err("No Windows installer found in this release. Opened the release page.".into())
 }

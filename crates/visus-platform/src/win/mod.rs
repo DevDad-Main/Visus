@@ -6,11 +6,13 @@ mod autostart;
 mod events;
 mod media;
 mod network;
+mod uninstall;
 mod window;
 mod winlist;
 pub use winlist::{focus_window, list_windows};
 
 pub use apps::{launch, open_path, open_url, screenshot};
+pub use uninstall::uninstall;
 
 /// Loads an app's icon off-thread and reports it as an event (None when the shell has none).
 pub fn request_icon(app: visus_core::App, emit: crate::Emit) {

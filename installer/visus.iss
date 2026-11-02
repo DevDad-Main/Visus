@@ -20,6 +20,13 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\Visus.exe
 SetupIconFile=..\crates\visus-app\assets\visus.ico
 ArchitecturesInstallIn64BitMode=x64compatible
+CloseApplications=yes
+RestartApplications=no
+#ifdef SIGN
+SignTool=visus_sign
+SignedUninstaller=yes
+SignToolRetryCount=3
+#endif
 
 [Tasks]
 Name: "autostart"; Description: "Start Visus when I sign in"; GroupDescription: "Options:"
@@ -36,7 +43,7 @@ Name: "{autodesktop}\Visus"; Filename: "{app}\Visus.exe"; Tasks: desktopicon
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Visus"; ValueData: """{app}\Visus.exe"""; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
-Filename: "{app}\Visus.exe"; Description: "Launch Visus"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Visus.exe"; Description: "Launch Visus"; Flags: nowait postinstall; Check: ShouldLaunch
 
 [Code]
 procedure StopVisus();
@@ -52,8 +59,22 @@ begin
   Result := '';
 end;
 
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  RunValue: String;
+begin
+  if CurStep = ssPostInstall then
+    if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Visus', RunValue) then
+      RegWriteStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Visus', '"' + ExpandConstant('{app}\Visus.exe') + '"');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
     StopVisus();
+end;
+
+function ShouldLaunch(): Boolean;
+begin
+  Result := (not WizardSilent()) or (ExpandConstant('{param:RESTART|0}') = '1');
 end;

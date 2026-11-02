@@ -67,6 +67,8 @@ pub enum UserEvent {
     Os(Event),
     Setting(Change),
     ToggleAutostart,
+    #[cfg(windows)]
+    Uninstall,
     Quit,
 }
 
@@ -360,6 +362,13 @@ impl ApplicationHandler<UserEvent> for App {
                 #[cfg(windows)]
                 if let Some(t) = &self.tray {
                     t.set_autostart_checked(platform::autostart_enabled());
+                }
+            }
+            #[cfg(windows)]
+            UserEvent::Uninstall => {
+                // The installer's uninstaller shows its own confirmation and stops Visus.
+                if !platform::uninstall() {
+                    platform::open_path("ms-settings:appsfeatures");
                 }
             }
             UserEvent::Quit => el.exit(),
