@@ -1,7 +1,7 @@
 # Visus
-Latest development milestone: v1.12.0 adds three selectable pill silhouettes, independent sizing,
-motion/accent/alert customization, black cached settings with live previews, livelier mascots, and
-optional cloud-rig GPU/VRAM fallback telemetry adapted from SalsaStats (reference-only, unchanged).
+Latest development milestone: v1.14.0 adds bundled, PID-filtered PresentMon capture for Windows game
+FPS, temporary CSV cleanup, and a manual override; v1.12.0's pill silhouettes, independent sizing,
+motion/accent/alert customization, and cloud-rig GPU/VRAM telemetry remain part of the current app.
 Windows/GeForce NOW/SalsaNow runtime checks remain a release validation task for real rigs.
 
 

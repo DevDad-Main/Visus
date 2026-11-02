@@ -9,7 +9,21 @@ const MAX_SAMPLES: usize = 240;
 const STALE: Duration = Duration::from_secs(5);
 
 static CONFIG: Mutex<Option<PathBuf>> = Mutex::new(None);
+static AUTO_LOG: Mutex<Option<PathBuf>> = Mutex::new(None);
 static NOTE: Mutex<String> = Mutex::new(String::new());
+
+#[cfg(windows)]
+pub fn set_auto_log(path: Option<PathBuf>) {
+    *AUTO_LOG.lock().unwrap_or_else(|error| error.into_inner()) = path;
+}
+
+#[cfg(windows)]
+pub(super) fn set_source_note(message: &str) { note(message); }
+
+#[cfg(windows)]
+pub fn manual_log_configured() -> bool {
+    CONFIG.lock().unwrap_or_else(|error| error.into_inner()).is_some()
+}
 
 pub fn set_frame_log(path: Option<&str>) {
     *CONFIG.lock().unwrap_or_else(|error| error.into_inner()) = path
@@ -46,7 +60,8 @@ impl Source {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .clone();
-        let path = configured.or_else(|| {
+        let automatic = AUTO_LOG.lock().unwrap_or_else(|error| error.into_inner()).clone();
+        let path = configured.or(automatic.clone()).or_else(|| {
             std::env::var_os("VISUS_PRESENTMON_CSV")
                 .filter(|path| !path.is_empty())
                 .map(PathBuf::from)
@@ -58,14 +73,18 @@ impl Source {
             };
         }
         let Some(path) = self.path.clone() else {
-            note("PresentMon CSV is not configured");
+            if !cfg!(target_os = "windows") { note("PresentMon CSV is not configured"); }
             return None;
         };
         let result = self.read(&path);
         match result {
             Ok(value) => value,
             Err(message) => {
-                note(message);
+                if message == "PresentMon CSV cannot be opened" && automatic.as_ref() == self.path.as_ref() {
+                    note("Bundled PresentMon is running but has produced no CSV yet; capture permission may be restricted");
+                } else {
+                    note(message);
+                }
                 None
             }
         }
@@ -145,7 +164,7 @@ impl Source {
         if self.last_sample.is_none_or(|time| time.elapsed() > STALE) {
             return Err("PresentMon CSV has no recent valid frame samples");
         }
-        note("PresentMon CSV: rolling mean of dominant PID/swapchain (not foreground matched)");
+        note("PresentMon CSV: rolling mean of the dominant PID/swapchain stream");
         Ok(self.value)
     }
 }
@@ -169,7 +188,7 @@ impl Columns {
             })
         };
         let columns = Self {
-            milliseconds: find("CPUFrameTime").or_else(|| find("MsBetweenPresents")),
+            milliseconds: find("MsBetweenPresents").or_else(|| find("CPUFrameTime")),
             fps: find("FPS"),
             pid: find("ProcessID").or_else(|| find("PID")),
             swapchain: find("SwapChainAddress").or_else(|| find("SwapChain")),
@@ -290,6 +309,14 @@ mod tests {
         assert_eq!(parse("FPS\n100\n"), Some((100.0, 10.0)));
         assert_eq!(parse("GPUTime\n10\n"), None);
         assert_eq!(parse("CPUFrameTime\n0\nNaN\ninf\n-10\n"), None);
+    }
+
+    #[test]
+    fn game_presentmon_prefers_present_interval_for_fps() {
+        assert_eq!(
+            parse("CPUFrameTime,MsBetweenPresents\n8,16\n8,16\n"),
+            Some((62.5, 16.0))
+        );
     }
 
     #[test]

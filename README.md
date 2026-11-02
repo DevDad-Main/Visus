@@ -77,13 +77,15 @@ and permission restrictions may still hide individual counters; Visus does not i
 Pills/Bars/Card display VRAM when available; Compact remains the FPS-only layout. Linux keeps NVIDIA
 and AMD collection with dedicated VRAM where exposed. Real cloud-rig validation is still required.
 
-Windows FPS/frame-time collection accepts an existing live PresentMon CSV. Set its path under
-Settings -> Gaming -> Frame-time CSV, or set `VISUS_PRESENTMON_CSV`. Visus reads CPUFrameTime or
-MsBetweenPresents samples, groups PID/swapchain streams, and computes a recent mean frame time and
-reciprocal FPS. Use a game-filtered, continuously flushed capture where possible. Missing, invalid,
-or stale data shows `--` and a source status, not fabricated FPS. Visus does not bundle, launch, or
-elevate PresentMon; capture permissions and cloud-provider restrictions still apply. Capture timings
-are not guaranteed displayed-frame or frame-generation FPS. GPU temperature is not frame time.
+Windows packages include PresentMon 2.6.0 and its MIT license. Visus starts a capture filtered to
+the active game process and stores the CSV under the system temporary directory; it stops the capture
+and removes the CSV when the game ends, the active game changes, or Visus exits. PresentMon tracing
+permissions and cloud-provider restrictions still apply; Visus does not elevate itself. An optional
+manual CSV path under Settings -> Gaming -> Manual frame-time CSV override, or `VISUS_PRESENTMON_CSV`,
+takes precedence. Visus groups rows by PID/swapchain, prefers `MsBetweenPresents`, falls back to
+`CPUFrameTime`, and computes FPS as 1000 divided by the rolling mean interval in milliseconds. Missing, invalid, or stale data shows `--`
+and a source status, not fabricated FPS. Capture timings are not guaranteed displayed-frame or
+frame-generation FPS. GPU temperature is not frame time.
 
 The settings sidebar footer always shows the running app version and Visus's own CPU/RAM usage.
 CPU is normalized to total machine capacity; RAM is resident memory in decimal MB. These readings

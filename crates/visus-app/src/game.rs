@@ -9,6 +9,10 @@ use visus_platform::Emit;
 #[path = "game_gpu.rs"]
 mod gpu;
 
+#[cfg(windows)]
+#[path = "game_presentmon.rs"]
+mod presentmon;
+
 #[cfg(any(target_os = "windows", test))]
 #[path = "game_fps.rs"]
 mod frame_log;
@@ -39,7 +43,11 @@ pub fn frame_source_note() -> String {
 }
 
 /// Called every frame; the sampler thread starts on first use and idles while no game is running.
-pub fn set_active(on: bool, emit: &Emit) {
+pub fn set_active(on: bool, process_id: Option<u32>, emit: &Emit) {
+    #[cfg(windows)]
+    presentmon::set_active(on, process_id);
+    #[cfg(not(windows))]
+    let _ = process_id;
     static START: std::sync::Once = std::sync::Once::new();
     ACTIVE.store(on, Ordering::Relaxed);
     if on {
@@ -48,6 +56,11 @@ pub fn set_active(on: bool, emit: &Emit) {
             std::thread::spawn(move || run(emit));
         });
     }
+}
+
+pub fn shutdown() {
+    #[cfg(windows)]
+    presentmon::shutdown();
 }
 
 fn run(emit: Emit) {

@@ -42,7 +42,7 @@ impl Field {
             "hide_in_fullscreen" => Some("Game HUD can remain visible during games"),
             "clipboard_history" => Some("Recent text stays in memory, not on disk"),
             "app_folders" => Some("Separate folder paths with semicolons"),
-            "frame_time_csv" => Some("Windows: a live PresentMon capture CSV"),
+            "frame_time_csv" => Some("Optional manual override; Visus captures automatically otherwise"),
             "outer_padding" => Some("Space outside the closed ring and clock"),
             "accent_mode" => Some("Media artwork, mascot iris, or fixed color"),
             "accent_color" => Some("Used when Accent mode is Fixed"),
@@ -106,7 +106,7 @@ pub static SECTIONS: &[Section] = &[
     Section { title: "Gaming", fields: &[
         Field { key: "game_hud", label: "Game HUD", control: Control::Switch },
         Field { key: "game_style", label: "Layout", control: Control::Choice(&["Pills", "Bars", "Card", "Compact"]) },
-        Field { key: "frame_time_csv", label: "Frame-time CSV", control: Control::Text },
+        Field { key: "frame_time_csv", label: "Manual frame-time CSV override", control: Control::Text },
     ] },
     Section { title: "Integrations", fields: &[
         Field { key: "city", label: "Weather city", control: Control::Text },

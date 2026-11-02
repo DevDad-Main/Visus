@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.14.0 - 2026-11-02
+
+- Bundle PresentMon 2.6.0 in Windows ZIP and installer packages, pinning and verifying its SHA-256 during release builds; include its MIT license.
+- Automatically capture only the active game PID. Stop PresentMon and remove its temporary CSV when the game changes or ends, or Visus exits.
+- Prefer PresentMon's `MsBetweenPresents` interval for FPS, fall back to `CPUFrameTime`, and calculate FPS as the reciprocal of the mean interval.
+- Keep manual CSV and `VISUS_PRESENTMON_CSV` overrides, with capture status and permission failures shown in Gaming settings.
+- Require Windows Performance Log Users tracing permissions where applicable; Visus does not self-elevate. Cloud-rig validation remains necessary.
+
 ## 1.13.0 - 2026-11-02
 
 - Add Windows DWM live thumbnails to open-window cards, preserving aspect ratio and title fallback. Previews are removed when the page is hidden. Protected/minimized windows may not provide a usable thumbnail; Linux retains title cards.

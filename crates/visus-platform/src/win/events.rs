@@ -39,6 +39,7 @@ static EMIT: OnceLock<Emit> = OnceLock::new();
 static HWND_RAW: AtomicIsize = AtomicIsize::new(0);
 static FULLSCREEN: AtomicBool = AtomicBool::new(false);
 static GAME: AtomicBool = AtomicBool::new(false);
+static GAME_PID: AtomicU32 = AtomicU32::new(0);
 static LAYOUT: AtomicU32 = AtomicU32::new(0);
 
 const WM_KEY_CAPS: u32 = WM_APP + 1;
@@ -284,9 +285,14 @@ fn report_fullscreen() {
         emit(Event::Fullscreen(full));
     }
     // Borderless-windowed games report no fullscreen state, so also check that the foreground window fills the screen.
-    let game = (full || foreground_fills_screen()) && foreground_exe().is_some_and(|p| crate::is_game_path(&p));
-    if GAME.swap(game, Ordering::Relaxed) != game {
-        emit(Event::Game(game));
+    let foreground = foreground_process();
+    let process_id = if full || foreground_fills_screen() {
+        foreground.filter(|(_, path)| crate::is_game_path(path)).map(|(pid, _)| pid)
+    } else { None };
+    let game = process_id.is_some();
+    let previous_pid = GAME_PID.swap(process_id.unwrap_or(0), Ordering::Relaxed);
+    if GAME.swap(game, Ordering::Relaxed) != game || previous_pid != process_id.unwrap_or(0) {
+        emit(Event::GameSession { active: game, process_id });
     }
 }
 
@@ -315,7 +321,7 @@ fn foreground_fills_screen() -> bool {
 }
 
 /// Full path of the foreground window's executable.
-fn foreground_exe() -> Option<String> {
+fn foreground_process() -> Option<(u32, String)> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
@@ -330,7 +336,7 @@ fn foreground_exe() -> Option<String> {
         let mut len = buf.len() as u32;
         let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
         let _ = CloseHandle(handle);
-        ok.then(|| String::from_utf16_lossy(&buf[..len as usize]))
+        ok.then(|| (pid, String::from_utf16_lossy(&buf[..len as usize])))
     }
 }
 

@@ -157,6 +157,7 @@ pub struct Notch {
     hidden: bool,
     fullscreen: bool,
     game: bool,
+    game_pid: Option<u32>,
     game_stats: crate::GameStats,
     game_hist: Vec<crate::GameStats>,
     timer: Timer,
@@ -244,6 +245,7 @@ impl Notch {
             hidden: false,
             fullscreen: false,
             game: false,
+            game_pid: None,
             game_stats: crate::GameStats::default(),
             game_hist: Vec::new(),
             timer: Timer::new(FOCUS),
@@ -390,10 +392,22 @@ impl Notch {
                     self.game_stats = crate::GameStats::default();
                 }
                 self.game = g;
+                self.game_pid = None;
                 self.refresh_hidden();
                 if self.game_active() {
                     self.mode = Mode::Closed;
                 }
+                self.retarget();
+            }
+            Event::GameSession { active, process_id } => {
+                if active != self.game || process_id != self.game_pid {
+                    self.game_hist.clear();
+                    self.game_stats = crate::GameStats::default();
+                }
+                self.game = active;
+                self.game_pid = active.then_some(process_id).flatten();
+                self.refresh_hidden();
+                if self.game_active() { self.mode = Mode::Closed; }
                 self.retarget();
             }
             Event::GameStats(s) => {
@@ -441,6 +455,8 @@ impl Notch {
     pub fn game_active(&self) -> bool {
         self.game && self.settings.game_hud && !self.settings.minimal
     }
+
+    pub fn game_pid(&self) -> Option<u32> { self.game_pid }
 
     fn refresh_hidden(&mut self) {
         self.hidden = self.fullscreen && self.settings.hide_in_fullscreen && !self.game_active();

@@ -48,6 +48,8 @@ pub enum Event {
     Fullscreen(bool),
     /// A game took the foreground (true) or ended (false).
     Game(bool),
+    /// Windows foreground game identity for per-process frame capture.
+    GameSession { active: bool, process_id: Option<u32> },
     GameStats(crate::GameStats),
     /// Installed applications the launcher can start.
     Apps(Arc<Vec<App>>),

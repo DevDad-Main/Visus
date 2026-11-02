@@ -34,6 +34,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "..\Visus.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\PresentMon.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\PresentMon-LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Visus"; Filename: "{app}\Visus.exe"

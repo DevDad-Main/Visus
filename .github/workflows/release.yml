@@ -33,6 +33,16 @@ jobs:
       - name: Stage executable
         shell: pwsh
         run: Copy-Item target/release/visus-app.exe Visus.exe
+      - name: Fetch and verify PresentMon
+        shell: pwsh
+        run: |
+          $url = "https://github.com/GameTechDev/PresentMon/releases/download/v2.6.0/PresentMon-2.6.0-x64.exe"
+          Invoke-WebRequest -Uri $url -OutFile PresentMon.exe
+          $actual = (Get-FileHash PresentMon.exe -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne "b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af") {
+            throw "PresentMon checksum mismatch: $actual"
+          }
+          Copy-Item installer/PresentMon-LICENSE.txt PresentMon-LICENSE.txt
       - name: Sign executable
         if: env.SIGNING_PFX != ''
         shell: pwsh
@@ -43,7 +53,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          Compress-Archive -Path Visus.exe -DestinationPath Visus-windows-x64.zip
+          Compress-Archive -Path Visus.exe, PresentMon.exe, PresentMon-LICENSE.txt -DestinationPath Visus-windows-x64.zip
           (Get-FileHash Visus.exe -Algorithm SHA256).Hash.ToLower() + "  Visus.exe" | Out-File -Encoding ascii Visus.exe.sha256
       - name: Installer
         shell: pwsh

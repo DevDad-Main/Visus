@@ -936,4 +936,5 @@ fn main() {
         tray: None,
     };
     el.run_app(&mut app).expect("run");
+    game::shutdown();
 }
